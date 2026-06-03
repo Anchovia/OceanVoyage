@@ -1,0 +1,33 @@
+# ---- Build output (CMake + FetchContent로 받은 GLFW/GLM 전부 포함) ----
+build/
+out/
+
+# ---- Visual Studio ----
+.vs/
+*.user
+*.suo
+*.sln.docstates
+CMakeSettings.json
+
+# ---- CMake ----
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake.stamp
+
+# ---- 컴파일 산출물 ----
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.spv
+
+# ---- OS ----
+Thumbs.db
+Desktop.ini
+.DS_Store
