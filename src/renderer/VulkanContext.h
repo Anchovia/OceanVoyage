@@ -214,6 +214,7 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
+    void copySceneColorForWater(VkCommandBuffer cmd);
     void copySceneDepthForWater(VkCommandBuffer cmd);
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
@@ -384,6 +385,10 @@ private:
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+    std::vector<VkImage>        m_sceneColorCopyImage;
+    std::vector<VkDeviceMemory> m_sceneColorCopyMemory;
+    std::vector<VkImageView>    m_sceneColorCopyView;
+    std::vector<bool>           m_sceneColorCopyReady;
 
     // Planar water reflection: mirrored scene color sampled by the ocean shader.
     std::vector<VkFramebuffer>   m_reflectionFramebuffers;

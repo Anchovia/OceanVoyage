@@ -663,7 +663,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[7]{};
+    VkDescriptorSetLayoutBinding bindings[8]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -704,9 +704,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[6].descriptorCount = 1;
     bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Pre-water scene color copy — sampled by water for screen-space refraction.
+    bindings[7].binding         = 8;
+    bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[7].descriptorCount = 1;
+    bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 7;
+    info.bindingCount = 8;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -1890,10 +1896,14 @@ void VulkanContext::createOffscreenResources() {
     m_offscreenImage.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneColorCopyImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneColorCopyMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneColorCopyView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneColorCopyReady.assign(MAX_FRAMES_IN_FLIGHT, false);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
             VK_IMAGE_TILING_OPTIMAL,
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
             m_offscreenImage[i], m_offscreenMemory[i]);
 
@@ -1907,6 +1917,16 @@ void VulkanContext::createOffscreenResources() {
         v.subresourceRange.layerCount     = 1;
         if (vkCreateImageView(m_device, &v, nullptr, &m_offscreenView[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create offscreen image view");
+
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_sceneColorCopyImage[i], m_sceneColorCopyMemory[i]);
+
+        v.image = m_sceneColorCopyImage[i];
+        if (vkCreateImageView(m_device, &v, nullptr, &m_sceneColorCopyView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create scene color copy image view");
     }
 }
 
@@ -3472,7 +3492,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 6; // reflection + 2 normal maps + displacement + slope + scene depth
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 7; // reflection + 2 normal maps + displacement + slope + scene depth/color
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3533,7 +3553,12 @@ void VulkanContext::updateOceanDescriptors() {
         sceneDepthInfo.imageView   = m_sceneDepthCopyView[i];
         sceneDepthInfo.sampler     = m_sceneDepthSampler;
 
-        VkWriteDescriptorSet writes[7]{};
+        VkDescriptorImageInfo sceneColorInfo{};
+        sceneColorInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneColorInfo.imageView   = m_sceneColorCopyView[i];
+        sceneColorInfo.sampler     = m_postSampler;
+
+        VkWriteDescriptorSet writes[8]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3583,7 +3608,14 @@ void VulkanContext::updateOceanDescriptors() {
         writes[6].descriptorCount = 1;
         writes[6].pImageInfo      = &sceneDepthInfo;
 
-        vkUpdateDescriptorSets(m_device, 7, writes, 0, nullptr);
+        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[7].dstSet          = m_oceanDescriptorSets[i];
+        writes[7].dstBinding      = 8;
+        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[7].descriptorCount = 1;
+        writes[7].pImageInfo      = &sceneColorInfo;
+
+        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
     }
 }
 

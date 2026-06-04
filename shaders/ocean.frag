@@ -23,6 +23,7 @@ layout(binding = 3) uniform sampler2D oceanNormalB;
 layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement (z = height), w = whitecap seed
 layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
 layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
+layout(binding = 8) uniform sampler2D sceneColor;            // pre-water scene color copy for refraction
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -179,7 +180,7 @@ void main() {
 
     const vec3 deepColor       = vec3(0.010, 0.065, 0.105);
     const vec3 midWaterColor   = vec3(0.030, 0.185, 0.230);
-    const vec3 shallowColor    = vec3(0.090, 0.410, 0.455);
+    const vec3 shallowColor    = vec3(0.060, 0.270, 0.320);
     const vec3 scatterColor    = vec3(0.105, 0.300, 0.335);
 
     // Reflected view direction across the wave-perturbed surface.
@@ -214,6 +215,10 @@ void main() {
     float shallowWater = exp(-waterThickness * 0.060) * depthResolved;
     float thinWater = exp(-waterThickness * 0.115) * depthResolved;
     float depthFade = mix(1.0, 1.0 - exp(-waterThickness * 0.045), depthResolved);
+    vec3 refractionTransmittance = mix(
+        vec3(1.0),
+        exp(-waterThickness * vec3(0.090, 0.040, 0.024)),
+        depthResolved);
 
     // Water body: Beer-Lambert style absorption, now anchored by copied scene depth where
     // opaque terrain exists below the surface. Open ocean keeps the long-view approximation.
@@ -223,7 +228,7 @@ void main() {
     float sunScatter = pow(max(dot(N, L), 0.0), 1.8) * smoothstep(0.03, 0.85, dayFactor);
     float facingScatter = smoothstep(0.15, 0.95, NdotV);
     vec3 water = mix(deepColor, midWaterColor, absorption);
-    water = mix(water, shallowColor, shallowWater * facingScatter * 0.70);
+    water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
     water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
     vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
@@ -240,7 +245,14 @@ void main() {
     float sceneDepthEdge = depthResolved * smoothstep(0.0, 0.0025, max(sceneDepthSample - gl_FragCoord.z, 0.0));
     float thicknessReflectance = reflectance * mix(0.58, 1.0, max(depthFade, 1.0 - thinWater));
     vec3 color = mix(water, reflection, thicknessReflectance) + sunSpec;
-    color += shallowColor * thinWater * facingScatter * (1.0 - reflectance) * 0.18;
+
+    float refractionStrength = thinWater * facingScatter * (1.0 - reflectance);
+    vec2 refractionOffset = N.xy * mix(0.004, 0.018, shallowWater) * refractionStrength;
+    vec3 refractedScene = texture(sceneColor, clamp(screenUV + refractionOffset, vec2(0.0), vec2(1.0))).rgb;
+    vec3 refractedWater = mix(refractedScene * refractionTransmittance, shallowColor, shallowWater * 0.10);
+    color = mix(color, refractedWater, refractionStrength * 0.62);
+
+    color += shallowColor * thinWater * facingScatter * (1.0 - reflectance) * 0.035;
     color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.080, sceneDepthEdge);
 
     // Daylight modulation (night = dim).

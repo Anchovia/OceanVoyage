@@ -291,7 +291,10 @@ VkFormat VulkanContext::findSceneColorFormat() {
     return findSupportedFormat(
         {VK_FORMAT_R16G16B16A16_SFLOAT},
         VK_IMAGE_TILING_OPTIMAL,
-        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
 }
 
 void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format,
@@ -347,6 +350,11 @@ void VulkanContext::cleanupSwapchain() {
         vkDestroyImageView(m_device, m_offscreenView[i],   nullptr);
         vkDestroyImage    (m_device, m_offscreenImage[i],  nullptr);
         vkFreeMemory      (m_device, m_offscreenMemory[i], nullptr);
+    }
+    for (size_t i = 0; i < m_sceneColorCopyImage.size(); i++) {
+        vkDestroyImageView(m_device, m_sceneColorCopyView[i],   nullptr);
+        vkDestroyImage    (m_device, m_sceneColorCopyImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_sceneColorCopyMemory[i], nullptr);
     }
     for (size_t i = 0; i < m_reflectionImage.size(); i++) {
         vkDestroyImageView(m_device, m_reflectionView[i],   nullptr);

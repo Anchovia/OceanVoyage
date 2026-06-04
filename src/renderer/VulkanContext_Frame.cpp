@@ -113,6 +113,73 @@ void VulkanContext::writeDevTimestamp(VkCommandBuffer cmd, uint32_t index) {
 // ============================================================
 //  Command buffer recording
 // ============================================================
+void VulkanContext::copySceneColorForWater(VkCommandBuffer cmd) {
+    VkImageMemoryBarrier colorToCopy{};
+    colorToCopy.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    colorToCopy.srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    colorToCopy.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+    colorToCopy.oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    colorToCopy.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorToCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorToCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorToCopy.image               = m_offscreenImage[m_currentFrame];
+    colorToCopy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorToCopy.subresourceRange.levelCount = 1;
+    colorToCopy.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier copyToDst{};
+    copyToDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    copyToDst.srcAccessMask       = m_sceneColorCopyReady[m_currentFrame] ? VK_ACCESS_SHADER_READ_BIT : 0;
+    copyToDst.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyToDst.oldLayout           = m_sceneColorCopyReady[m_currentFrame]
+        ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        : VK_IMAGE_LAYOUT_UNDEFINED;
+    copyToDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.image               = m_sceneColorCopyImage[m_currentFrame];
+    copyToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyToDst.subresourceRange.levelCount = 1;
+    copyToDst.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier toCopyBarriers[] = { colorToCopy, copyToDst };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, toCopyBarriers);
+
+    VkImageCopy copy{};
+    copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.srcSubresource.layerCount = 1;
+    copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.dstSubresource.layerCount = 1;
+    copy.extent = { m_swapchainExtent.width, m_swapchainExtent.height, 1 };
+    vkCmdCopyImage(cmd,
+        m_offscreenImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_sceneColorCopyImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copy);
+
+    VkImageMemoryBarrier colorBack = colorToCopy;
+    colorBack.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    colorBack.dstAccessMask = 0;
+    colorBack.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorBack.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier copyReadable = copyToDst;
+    copyReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    copyReadable.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyReadable.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier readableBarriers[] = { colorBack, copyReadable };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, readableBarriers);
+
+    m_sceneColorCopyReady[m_currentFrame] = true;
+}
+
 void VulkanContext::copySceneDepthForWater(VkCommandBuffer cmd) {
     VkImageMemoryBarrier depthToCopy{};
     depthToCopy.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -526,7 +593,23 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         }
     }
 
+    // Refraction/depth seed for water. The ship is drawn again after the ocean for final
+    // visibility, but including it in the pre-water buffers gives the water shader real
+    // scene color/depth to refract around the hull instead of sampling only empty sky.
+    if (worldVisible && m_shipMesh.count > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_shipPipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &m_shipModel);
+        VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+        VkDeviceSize sOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+        vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
+    }
+
     vkCmdEndRenderPass(cmd); // end pre-water opaque pass
+    copySceneColorForWater(cmd);
     copySceneDepthForWater(cmd);
 
     VkRenderPassBeginInfo waterRp = rp;
