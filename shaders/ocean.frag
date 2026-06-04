@@ -59,15 +59,22 @@ vec3 unpackNormal(vec3 c) {
     return normalize(c * 2.0 - 1.0);
 }
 
+struct OceanFrame {
+    vec3 tangentX;
+    vec3 tangentY;
+    vec3 normal;
+    vec2 sourceXY;
+};
+
 vec3 oceanDisplacedPoint(vec2 sourceXY) {
     vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
     return vec3(sourceXY + d.xy, d.z);
 }
 
-// Base wave normal from the full FFT displacement, evaluated per fragment so detail is not
+// Base wave frame from the full FFT displacement, evaluated per fragment so detail is not
 // limited by the ocean mesh tessellation. The rendered ocean is horizontally displaced
-// (choppy), so the normal must come from the displaced surface tangents, not height alone.
-vec3 oceanBaseNormal(vec2 worldXY) {
+// (choppy), so normals and detail waves must use the displaced surface tangents.
+OceanFrame oceanBaseFrame(vec2 worldXY) {
     vec2 sourceXY = worldXY;
     for (int i = 0; i < 2; ++i) {
         vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
@@ -79,11 +86,17 @@ vec3 oceanBaseNormal(vec2 worldXY) {
     vec3 pR = oceanDisplacedPoint(sourceXY + vec2(step, 0.0));
     vec3 pD = oceanDisplacedPoint(sourceXY - vec2(0.0, step));
     vec3 pU = oceanDisplacedPoint(sourceXY + vec2(0.0, step));
-    return normalize(cross(pR - pL, pU - pD));
+
+    OceanFrame frame;
+    frame.tangentX = normalize(pR - pL);
+    frame.tangentY = normalize(pU - pD);
+    frame.normal   = normalize(cross(frame.tangentX, frame.tangentY));
+    frame.sourceXY = sourceXY;
+    return frame;
 }
 
-vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
-    vec2 p = worldPos.xy;
+vec3 oceanDetailNormal(OceanFrame frame, float t) {
+    vec2 p = frame.sourceXY;
 
     vec2 uvA0 = p * 0.035 + vec2( 0.018,  0.007) * t;
     vec2 uvA1 = vec2(p.y, -p.x) * 0.052 + vec2(-0.014,  0.019) * t;
@@ -100,11 +113,13 @@ vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
                      + nB0.xy * 0.075
                      + nB1.xy * 0.045;
 
-    return normalize(vec3(baseN.xy + detailSlope, max(baseN.z, 0.08)));
+    return normalize(frame.normal
+                   + frame.tangentX * detailSlope.x
+                   + frame.tangentY * detailSlope.y);
 }
 
 void main() {
-    vec3  N = oceanDetailNormal(oceanBaseNormal(fragWorldPos.xy), fragWorldPos, ubo.animationParams.x);
+    vec3  N = oceanDetailNormal(oceanBaseFrame(fragWorldPos.xy), ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
