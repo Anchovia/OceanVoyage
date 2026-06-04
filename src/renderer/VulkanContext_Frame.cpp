@@ -125,6 +125,10 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 #endif
 
+    // FFT ocean simulation (compute) — animate the wave spectrum for this frame before
+    // the render passes. Runs on the graphics queue; barriers order it ahead of sampling.
+    recordOceanFFT(cmd);
+
     // Shadow pass — render chunk depth from sun's perspective
     {
         VkClearValue shadowClear{};
@@ -725,6 +729,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         m_shadowCenter = frame.playerPosition;
     }
 
+    m_oceanTime = frame.gameTime;
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);

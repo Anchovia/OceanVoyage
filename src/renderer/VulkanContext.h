@@ -212,7 +212,9 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
-    void createOceanFFT();   // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
+    void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
+    void createOceanFFTSim();  // per-frame spectrum animation resources
+    void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
@@ -311,6 +313,15 @@ private:
     VkDescriptorSet       m_oceanSpectrumDescriptorSet       = VK_NULL_HANDLE;
     VkPipelineLayout      m_oceanSpectrumPipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanSpectrumPipeline            = VK_NULL_HANDLE;
+    // Per-frame animated spectrum H(k,t): rg = Dy+i·Dx, ba = Dz.
+    VkImage               m_oceanSpectrumImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanSpectrumMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanSpectrumView   = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_oceanUpdateDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanUpdateDescriptorSet       = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanUpdatePipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanUpdatePipeline            = VK_NULL_HANDLE;
+    float                 m_oceanTime = 0.0f; // game time fed to the FFT spectrum each frame
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
