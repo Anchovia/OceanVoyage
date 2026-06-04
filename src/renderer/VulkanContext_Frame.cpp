@@ -815,6 +815,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor); // w = dayFactor (0=night, 1=noon)
     ubo.lightMVP = m_lightMVP;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
+    ubo.clipPlane = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
@@ -833,6 +834,7 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor);
     ubo.lightMVP = m_lightMVP;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
+    ubo.clipPlane = glm::vec4(0.0f, 0.0f, 1.0f, -WATER_REFLECTION_PLANE_Z);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(reflectionCameraPos, 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;

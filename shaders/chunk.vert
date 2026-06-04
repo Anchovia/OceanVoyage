@@ -7,7 +7,13 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 lightDir;
     mat4 lightMVP;
     vec4 fogColor;
+    vec4 clipPlane;
 } ubo;
+
+out gl_PerVertex {
+    vec4 gl_Position;
+    float gl_ClipDistance[1];
+};
 
 layout(location = 0) in vec3  inPosition;
 layout(location = 1) in vec3  inNormal;
@@ -25,6 +31,7 @@ layout(location = 5) flat out float fragLayer;
 void main() {
     vec4 viewPos      = ubo.view * vec4(inPosition, 1.0);
     gl_Position       = ubo.proj * viewPos;
+    gl_ClipDistance[0] = dot(inPosition, ubo.clipPlane.xyz) + ubo.clipPlane.w;
     fragNormal        = inNormal;
     fragColor         = inColor;
     fragPosLightSpace = ubo.lightMVP * vec4(inPosition, 1.0);

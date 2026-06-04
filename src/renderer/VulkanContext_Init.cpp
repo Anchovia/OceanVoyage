@@ -207,6 +207,9 @@ void VulkanContext::createLogicalDevice() {
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(m_physicalDevice, &supported);
     VkPhysicalDeviceFeatures features{};
+    if (!supported.shaderClipDistance)
+        throw std::runtime_error("shaderClipDistance is required for planar water reflection clipping");
+    features.shaderClipDistance = VK_TRUE;
     if (supported.samplerAnisotropy) {
         features.samplerAnisotropy = VK_TRUE;
         m_anisotropyEnabled = true;

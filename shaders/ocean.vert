@@ -12,6 +12,7 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 lightDir;        // xyz = toward sun, w = dayFactor
     mat4 lightMVP;
     vec4 fogColor;        // rgb = sky color
+    vec4 clipPlane;
     vec4 animationParams; // x = game time seconds
     vec4 cameraPos;       // xyz = camera world position
     mat4 reflectionViewProj;

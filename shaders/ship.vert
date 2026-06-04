@@ -11,7 +11,13 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 lightDir;
     mat4 lightMVP;
     vec4 fogColor;
+    vec4 clipPlane;
 } ubo;
+
+out gl_PerVertex {
+    vec4 gl_Position;
+    float gl_ClipDistance[1];
+};
 
 layout(push_constant) uniform ShipPush {
     mat4 model; // ship world transform: translate * orient(wave normal, heading)
@@ -34,6 +40,7 @@ void main() {
     vec4 worldPos     = pc.model * vec4(inPosition, 1.0);
     vec4 viewPos      = ubo.view * worldPos;
     gl_Position       = ubo.proj * viewPos;
+    gl_ClipDistance[0] = dot(worldPos.xyz, ubo.clipPlane.xyz) + ubo.clipPlane.w;
     fragNormal        = mat3(pc.model) * inNormal; // orientation is orthonormal (no skew)
     fragColor         = inColor;
     fragPosLightSpace = ubo.lightMVP * worldPos;
