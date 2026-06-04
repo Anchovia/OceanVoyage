@@ -143,9 +143,10 @@ void main() {
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);
 
-    // Distance fog to the sky color (matches the chunk shader).
-    const float FOG_START = 27.0;
-    const float FOG_END   = 57.0;
-    float fogFactor = clamp((FOG_END - fragViewDepth) / (FOG_END - FOG_START), 0.0, 1.0);
+    // Long-range atmospheric extinction for the sailing camera. Terrain/grass still use
+    // short-range fog, but the ocean mesh runs to the horizon.
+    const float FOG_DENSITY = 0.00078;
+    float fogDepth = fragViewDepth * FOG_DENSITY;
+    float fogFactor = exp2(-fogDepth * fogDepth * 1.442695);
     outColor = vec4(mix(ubo.fogColor.rgb, color, fogFactor), 1.0);
 }
