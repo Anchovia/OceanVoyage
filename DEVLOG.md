@@ -1,10 +1,19 @@
-# DEVLOG — Pastel Farm Engine
+# DEVLOG — OceanVoyage
 
 Vulkan 공부 겸 엔진 개발 기록.
 
 ---
 
 ## 구현 기록
+
+### 2026-06-04 — RTX 3060 / AAA급 해양 렌더링 원칙 재명문화
+
+- 반복적으로 저사양 임시 기법이나 화면 도색식 fake 효과가 들어가는 문제를 막기 위해 프로젝트 최상위 개발 원칙을 다시 명문화했다.
+- 1원칙: OceanVoyage의 모든 개발과 구현은 **RTX 3060급 하드웨어에서 AAA/AA급 사실적 해양 게임을 만든다**는 기준을 따른다.
+- 2원칙: 실제 상용 게임과 엔진에서 쓰이는 **안정적이고 확장 가능한 표준 기법**을 우선한다. Vulkan 정공법, 수명/동기화 안정성, 최종 렌더러로 성장 가능한 구조를 선택 기준으로 삼는다.
+- 금지: 화면에 흰 선을 그리는 wake, 저해상도 노이즈 foam, 타일 블롭, flat color stand-in, "일단 보이게만" 하는 저품질 셰이더 꼼수.
+- wake/foam의 올바른 방향: 선박/파도/해안 입력을 별도 mask나 simulation target에 기록하고, advection/decay/diffusion을 거쳐 ocean shader가 샘플하는 구조. 단순 fragment shader 도색은 폐기한다.
+- `AGENTS.md`, `claude.md`, `README.md`, `DESIGN.md`, `docs/ARCHITECTURE.md`에 같은 원칙을 반복 기재했다.
 
 ### 2026-06-04 — 세이브 무결성 + 견고성 (Phase 0)
 > 외부 LLM(Codex) 리뷰를 코드로 검증해 "렌더 품질보다 세이브/진행도 견고성이 더 시급"으로 우선순위를 재배치한 결과. 상세 진단은 `ARCHITECTURE` "게임 견고성·데이터 무결성".
@@ -19,7 +28,8 @@ Vulkan 공부 겸 엔진 개발 기록.
 ### 2026-06-03 — 그림자 품질 패스 + 품질/정공법 원칙 명문화
 
 **렌더링 방향 리셋 (문서/메모리):** 매 세션 저사양 워크어라운드로 회귀하던 문제를 구조적으로 차단.
-- `README`/`ARCHITECTURE`/`CLAUDE.md`/`AGENTS.md`에 **"품질 기본값"**(권장 1660 Super 예산으로 고품질 기법 기본값, 저사양 워크어라운드·제거·가짜·축소 금지)과 **"정공법 우선"**(표준·Vulkan idiomatic·확장성, 표준 기법의 스킵/무시/컷오프 금지) 원칙 명문화. "Simplicity First"는 *코드 구조*에만 적용되고 *렌더링 품질·표준성*엔 적용 안 됨을 못박음.
+- 당시에는 권장 1660 Super 예산으로 고품질 기본값을 문서화했으나, 이 기준은 2026-06-04 OceanVoyage RTX 3060 / AAA-AA급 사실적 해양 렌더링 원칙으로 대체됐다.
+- 현재 기준은 `AGENTS.md`/`CLAUDE.md`/`README.md`/`DESIGN.md`/`docs/ARCHITECTURE.md`/`VULKAN_REFERENCES.md`의 RTX 3060 원칙을 따른다. "Simplicity First"는 *코드 구조*에만 적용되고 *렌더링 품질·표준성*엔 적용 안 됨을 못박음.
 - AAA 2.5D 관행 교차검증으로 ARCHITECTURE에 **"2.5D 고품질 잔디·룩 레시피"** 결정 블록 추가: 잔디 셰이딩 스택(개체 색 랜덤 → height gradient → base AO → translucency/backlight → wind → fade), 그림자 정책(캐릭터/나무/오브젝트만 실시간 shadow, 잔디는 받기만·안 쏨 + ground contact AO로 그라운딩), terrain blending, GPU-driven은 *규모상* 보류.
 
 **그림자 떨림(shimmering)/acne 작업 (uncommitted):**
@@ -59,7 +69,7 @@ Vulkan 공부 겸 엔진 개발 기록.
 다음 세션 권장 판단:
 - 현재 `shadow_grass` 실험은 그대로 두고 먼저 높이/알파/거리/확률 제한을 강하게 걸어 본다.
 - 그래도 길쭉한 얼룩이 남으면 grass shadow pass를 제거하고, grass root shading + ground grass texture/detail + 낮은 대비 material breakup으로 방향을 바꾼다.
-- GTX 1660 Super 권장 사양 기준으로 풀은 품질 투자처지만, 화면에 티 나는 가짜 얼룩이나 과도한 개별 풀 그림자는 목표 스타일과 맞지 않는다.
+- 현재 OceanVoyage 기준에서는 RTX 3060급 예산을 사용한다. 화면에 티 나는 가짜 얼룩이나 과도한 개별 풀 그림자는 목표 품질과 맞지 않는다.
 
 ### Vulkan 초기화 + 첫 삼각형
 - GLFW 창 생성 (`Window` 클래스, RAII 방식)
@@ -803,7 +813,7 @@ Vulkan 공부 겸 엔진 개발 기록.
 ### Vegetation alpha card 투자 판단 (Tier 2 비주얼 방향)
 - 현재 기하 기반 풀 clump는 풀밭의 방향성 검증에는 유용하지만, 얇은 삼각형 실루엣 때문에 멀리서 삐쭉한 바늘처럼 보이는 한계가 확인됨.
 - 참고 이미지에 가까운 풀은 alpha texture card가 더 적합. 목표는 낮고 풍성한 X자/부채꼴 card clump, 색/높이/회전 variation, 밀도 rule, 약한 wind sway.
-- GTX 1050 Ti 최소 기준에서도 grass는 투자 가치가 있음. 조건은 성능 예산을 DevUI/GPU timing으로 보면서 shadow 제외, alpha test/clip 우선, 거리/밀도/LOD를 조절하는 것.
+- 현재 OceanVoyage 기준은 RTX 3060급으로 상향됐다. grass 같은 부가 요소도 저사양 회피보다 안정적인 품질 기법과 GPU timing 기반 검증을 우선한다.
 - 새 텍스처와 alpha 파이프라인이 들어가므로 구현 전 설계안 필요. 텍스처 0개 원칙의 첫 예외가 될 수 있으나 vegetation은 ROI가 높은 예외로 판단.
 
 ### 절차 grass alpha 텍스처 리소스 추가 (Vegetation alpha card Step 1)
@@ -880,9 +890,9 @@ Vulkan 공부 겸 엔진 개발 기록.
 - 유저 빌드 검증 결과: 셰이더 컴파일·실행 정상. grass 반복감이 약간 줄고, ground dressing cleanup 상태도 유지됨.
 
 ### 렌더링 품질/성능 기준 재정렬
-- 프로젝트 성능 기준을 **최소 GTX 1050 Ti / 1080p / 60fps**, **권장 GTX 1660 Super급**으로 명확히 정리.
-- Pastel Farm은 초저사양 로우폴리 데모나 플래시게임식 단순화를 목표로 하지 않는다. 최적화·리팩토링·모듈성은 계속 핵심이지만, 품질을 낮추기 위한 보수주의는 피한다.
-- 목표 그래픽은 고품질 스타일라이즈드 상용 게임과 견줄 만한 화면이다. 로우폴리와 플랫 셰이딩은 저품질 제약이 아니라 미학적 선택이다.
+- 당시 Pastel-Farm 기준으로는 **최소 GTX 1050 Ti / 1080p / 60fps**, **권장 GTX 1660 Super급**을 정리했다.
+- 이 기준은 OceanVoyage 전환 이후 폐기됐다. 현재 기준은 **RTX 3060급 / 1080p~1440p / 60fps / AAA-AA급 사실적 해양 렌더링**이다.
+- 과거의 스타일라이즈드/로우폴리 판단은 Pastel-Farm 기록으로만 남기며, OceanVoyage의 현재 렌더링 판단 기준으로 사용하지 않는다.
 - 문서 기준을 수정: `README.md`, `DESIGN.md`, `ARCHITECTURE.md`, `VULKAN_REFERENCES.md`에서 GTX 750 Ti/통합 GPU급, 텍스처 최소화, PBR 전면 배제처럼 너무 보수적으로 보이던 문장을 정리.
 - 다음 렌더링 방향은 FXAA/SMAA 실제 적용, terrain/object texture mapping, material-lite, high-quality grass(wind/LOD/variant), shadow quality options, ground dressing 텍스처화로 재정렬.
 - 실행 순서도 정리: 현재 변경분 커밋 → FXAA 실제 적용 → SMAA → TextureResource helper → terrain/object texture mapping → material-lite → high-quality grass. 다음 세션은 PBR/render graph 같은 대형 시스템보다 FXAA부터 시작하는 것이 맞다.

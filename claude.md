@@ -4,6 +4,23 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## 0. Non-Negotiable Rendering Direction
+
+**First principle: OceanVoyage targets AAA/AA-quality realistic ocean visuals on RTX 3060-class hardware.**
+
+- All development decisions, implementation choices, visual tuning, and technical tradeoffs must treat RTX 3060 / 1080p-1440p / 60fps as the working performance budget.
+- The target is not low-spec, placeholder, mobile, casual, or "good enough" rendering. The target is high-quality realistic ocean presentation comparable in ambition to modern commercial naval/ocean games.
+- Do not implement fake low-quality visual shortcuts such as screen-space white lines for wakes, tiled noise blobs for foam, low-resolution masks presented as final effects, flat color stand-ins, or cheap hacks that real AA/AAA games would not ship.
+- If a feature requires a real high-quality foundation, build that foundation or propose it explicitly. Do not silently substitute a cheap approximation.
+- When a temporary placeholder is unavoidable, label it as a placeholder, keep it out of the final-quality path, and ask before implementing it.
+
+**Second principle: use stable, production-proven game techniques.**
+
+- Prefer techniques used in real games and established engines: multi-scale FFT/Tessendorf ocean, physically based water shading, SSR/planar/cubemap reflection stacks, temporal accumulation where needed, wake/foam simulation masks with advection/decay, authored or high-resolution procedural textures, PBR materials, CSM shadows, mipmaps, anisotropic filtering, and robust Vulkan synchronization.
+- Prefer mainstream, extensible, Vulkan-idiomatic implementations over clever one-off tricks.
+- Every rendering feature must be judged by stability, extensibility, and whether it can grow into the final OceanVoyage renderer.
+- Do not add code that paints over symptoms while blocking the correct future implementation.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**

@@ -4,6 +4,23 @@ Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-s
 
 **Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
 
+## 0. Non-Negotiable Rendering Direction
+
+**First principle: OceanVoyage targets AAA/AA-quality realistic ocean visuals on RTX 3060-class hardware.**
+
+- All development decisions, implementation choices, visual tuning, and technical tradeoffs must treat RTX 3060 / 1080p-1440p / 60fps as the working performance budget.
+- The target is not low-spec, placeholder, mobile, casual, or "good enough" rendering. The target is high-quality realistic ocean presentation comparable in ambition to modern commercial naval/ocean games.
+- Do not implement fake low-quality visual shortcuts such as screen-space white lines for wakes, tiled noise blobs for foam, low-resolution masks presented as final effects, flat color stand-ins, or cheap hacks that real AA/AAA games would not ship.
+- If a feature requires a real high-quality foundation, build that foundation or propose it explicitly. Do not silently substitute a cheap approximation.
+- When a temporary placeholder is unavoidable, label it as a placeholder, keep it out of the final-quality path, and ask before implementing it.
+
+**Second principle: use stable, production-proven game techniques.**
+
+- Prefer techniques used in real games and established engines: multi-scale FFT/Tessendorf ocean, physically based water shading, SSR/planar/cubemap reflection stacks, temporal accumulation where needed, wake/foam simulation masks with advection/decay, authored or high-resolution procedural textures, PBR materials, CSM shadows, mipmaps, anisotropic filtering, and robust Vulkan synchronization.
+- Prefer mainstream, extensible, Vulkan-idiomatic implementations over clever one-off tricks.
+- Every rendering feature must be judged by stability, extensibility, and whether it can grow into the final OceanVoyage renderer.
+- Do not add code that paints over symptoms while blocking the correct future implementation.
+
 ## 1. Think Before Coding
 
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
@@ -27,7 +44,7 @@ Before implementing:
 
 Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-**Scope — applies to code architecture, NOT rendering quality.** For visual/rendering work, default to the proper high-quality technique within the GTX 1660 Super budget (high-resolution / CSM shadows, mipmaps + anisotropic filtering, authored textures, soft shadows, material-lite). Do NOT cheapen visuals or remove/fake features to be "simple" or "low-spec" — the minimal-looking code (64² textures, flat shading, 2048 shadow map) is placeholder, and the target is high-quality stylized (README 목표 / DESIGN: 덕코프류 north star). If a cheaper visual path is genuinely better, say so explicitly and let the user decide — never pick it silently.
+**Scope — applies to code architecture, NOT rendering quality.** For visual/rendering work, default to the proper high-quality technique within the RTX 3060-class budget (multi-scale ocean, high-resolution reflections, CSM shadows, mipmaps + anisotropic filtering, authored textures, soft shadows, PBR/material-lite as appropriate). Do NOT cheapen visuals or remove/fake features to be "simple" or "low-spec" — the minimal-looking code is placeholder only, and the target is high-quality realistic ocean rendering (README 목표 / DESIGN: Visual North Star). If a cheaper visual path is genuinely better, say so explicitly and let the user decide — never pick it silently.
 
 **Conventional over clever — and "simple" means standard, not hacky.** Use the mainstream, Vulkan-idiomatic, well-documented implementation that most engines / references use (SaschaWillems, Khronos Vulkan-Samples, LearnOpenGL — see VULKAN_REFERENCES.md), and that future features can mesh into cleanly. Prioritize stability + extensibility + compatibility. Do NOT skip, ignore, or cut off parts of a standard technique to make it "easier" if that yields a non-standard, fragile, or hard-to-extend result — implement it properly. "Simplest" = the standard well-trodden path, not a novel shortcut.
 
