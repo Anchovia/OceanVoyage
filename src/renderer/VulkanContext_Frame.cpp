@@ -280,7 +280,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
             glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
             glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
 
             VkBuffer     vBuf[] = { data.vertexBuffer };
             VkDeviceSize offs[] = { 0 };
@@ -295,7 +295,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
             glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
             glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
 
             if (m_groundPatchMesh.count > 0 && data.groundPatchCount > 0) {
                 VkBuffer     bufs[] = { m_groundPatchMesh.vbuf, data.groundPatchBuffer };
@@ -327,7 +327,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
             glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
             glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
 
             VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
             VkDeviceSize offs[] = { 0, 0 };
@@ -818,6 +818,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
+    m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 

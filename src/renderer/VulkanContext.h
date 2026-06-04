@@ -425,6 +425,7 @@ private:
     };
     std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
     Frustum                  m_frustum;
+    Frustum                  m_reflectionFrustum;
 
     // Shared low-poly object meshes, indexed by ObjectType (instanced per Object)
     struct ObjectMesh {
