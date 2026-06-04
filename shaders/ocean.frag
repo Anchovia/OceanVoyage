@@ -40,6 +40,10 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - saturate(cosTheta), 5.0);
 }
 
+float luminance(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
 float distributionGGX(float NdotH, float roughness) {
     float a  = roughness * roughness;
     float a2 = a * a;
@@ -162,10 +166,11 @@ void main() {
     // Schlick Fresnel (F0 ~ 0.02 for water): grazing angles reflect the sky.
     float NdotV = max(dot(N, V), 0.0);
     vec3  Fv = fresnelSchlick(NdotV, WATER_F0);
-    float F = Fv.r;
+    float F = saturate(Fv.r + smoothstep(0.55, 0.98, 1.0 - NdotV) * 0.12);
 
-    const vec3 deepColor    = vec3(0.02, 0.10, 0.16);
-    const vec3 shallowColor = vec3(0.10, 0.28, 0.34);
+    const vec3 deepColor       = vec3(0.010, 0.065, 0.105);
+    const vec3 midWaterColor   = vec3(0.030, 0.185, 0.230);
+    const vec3 scatterColor    = vec3(0.105, 0.300, 0.335);
 
     // Reflected view direction across the wave-perturbed surface.
     vec3 R = reflect(-V, N);
@@ -181,14 +186,22 @@ void main() {
     vec3  Fs    = fresnelSchlick(VdotH, WATER_F0);
     vec3  sunColor = vec3(1.0, 0.92, 0.70);
     float sunGate = smoothstep(0.02, 0.70, dayFactor);
-    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.055);
-    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.16);
+    float distanceRoughness = smoothstep(90.0, 620.0, fragViewDepth);
+    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.050, 0.082, distanceRoughness));
+    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.150, 0.220, distanceRoughness));
     float grazingPath = pow(saturate(dot(R, L)), 18.0) * clamp(1.0 - NdotV, 0.0, 1.0);
-    vec3  sunSpec = (tightSun * 0.42 + broadSun * 0.18 + grazingPath * 0.55)
+    vec3  sunSpec = (tightSun * 0.32 + broadSun * 0.15 + grazingPath * 0.45)
                   * Fs * sunColor * NdotL * sunGate;
+    sunSpec = min(sunSpec, vec3(3.0));
 
-    // Water body: deeper/darker looking straight down, lighter at grazing angles.
-    vec3 water = mix(shallowColor, deepColor, NdotV);
+    // Water body: a compact Beer-Lambert style approximation without a scene-depth buffer.
+    // Looking through a longer path darkens the body; sun-facing wave slopes add cyan scatter.
+    float viewPath = clamp(1.0 / max(NdotV, 0.16), 1.0, 6.0);
+    float absorption = exp(-viewPath * 0.42);
+    float sunScatter = pow(max(dot(N, L), 0.0), 1.8) * smoothstep(0.03, 0.85, dayFactor);
+    float facingScatter = smoothstep(0.15, 0.95, NdotV);
+    vec3 water = mix(deepColor, midWaterColor, absorption);
+    water = mix(water, scatterColor, sunScatter * facingScatter * 0.28);
 
     vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
     vec2 reflUV   = reflProj.xy * 0.5 + 0.5;
@@ -197,11 +210,17 @@ void main() {
     float validRefl = step(0.0, reflUV.x) * step(reflUV.x, 1.0)
                     * step(0.0, reflUV.y) * step(reflUV.y, 1.0)
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
-    vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.72), validRefl);
-    vec3 color = mix(water, reflection, F) + sunSpec;
+    vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.68), validRefl);
+    float horizonReflection = smoothstep(0.35, 0.98, 1.0 - NdotV);
+    reflection += skyRefl * horizonReflection * 0.10 * smoothstep(0.02, 0.95, dayFactor);
+    float reflectance = saturate(F * mix(0.82, 1.0, horizonReflection));
+    vec3 color = mix(water, reflection, reflectance) + sunSpec;
+    color += scatterColor * sunScatter * (1.0 - reflectance) * 0.055;
 
     // Daylight modulation (night = dim).
-    color *= mix(0.25, 1.0, dayFactor);
+    color *= mix(0.22, 1.0, dayFactor);
+    color = max(color, water * mix(0.55, 0.92, dayFactor));
+    color = mix(color, vec3(luminance(color)), smoothstep(520.0, 1200.0, fragViewDepth) * 0.08);
 
     // Long-range atmospheric extinction for the sailing camera. Terrain/grass still use
     // short-range fog, but the ocean mesh runs to the horizon.
