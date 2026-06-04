@@ -117,6 +117,9 @@ VulkanContext::~VulkanContext() {
     destroyOceanFFT();
     m_oceanNormalB.destroy();
     m_oceanNormalA.destroy();
+    m_shipSpecularTex.destroy();
+    m_shipNormalTex.destroy();
+    m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
     m_grassClumpMesh.vbuf.destroy();
     m_grassCardMesh.vbuf.destroy();

@@ -22,6 +22,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <sstream>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
@@ -68,6 +69,56 @@ LoadedImageRGBA8 loadImageRGBA8(const std::string& path) {
 
 bool fileExists(const std::string& path) {
     return std::ifstream(path, std::ios::binary).good();
+}
+
+uint32_t readLe32(const std::vector<uint8_t>& bytes, size_t offset) {
+    if (offset + 4 > bytes.size())
+        throw std::runtime_error("Unexpected end of binary file");
+    return (uint32_t)bytes[offset]
+         | ((uint32_t)bytes[offset + 1] << 8)
+         | ((uint32_t)bytes[offset + 2] << 16)
+         | ((uint32_t)bytes[offset + 3] << 24);
+}
+
+std::vector<uint8_t> readBinaryFile(const std::string& path) {
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
+    if (!file.is_open())
+        throw std::runtime_error("Cannot open binary file: " + path);
+    const size_t size = (size_t)file.tellg();
+    std::vector<uint8_t> bytes(size);
+    file.seekg(0);
+    file.read(reinterpret_cast<char*>(bytes.data()), (std::streamsize)size);
+    return bytes;
+}
+
+glm::vec3 importShipPosition(glm::vec3 p) {
+    return glm::vec3(-p.z, p.x, p.y);
+}
+
+glm::vec3 importShipDirection(glm::vec3 v) {
+    glm::vec3 mapped(-v.z, v.x, v.y);
+    if (glm::length(mapped) <= 0.00001f)
+        return glm::vec3(0.0f, 0.0f, 1.0f);
+    return glm::normalize(mapped);
+}
+
+struct ObjIndex {
+    int v = -1;
+    int vt = -1;
+    int vn = -1;
+};
+
+ObjIndex parseObjIndex(const std::string& token) {
+    ObjIndex idx;
+    size_t first = token.find('/');
+    size_t second = first == std::string::npos ? std::string::npos : token.find('/', first + 1);
+
+    idx.v = std::stoi(token.substr(0, first)) - 1;
+    if (first != std::string::npos && second > first + 1)
+        idx.vt = std::stoi(token.substr(first + 1, second - first - 1)) - 1;
+    if (second != std::string::npos && second + 1 < token.size())
+        idx.vn = std::stoi(token.substr(second + 1)) - 1;
+    return idx;
 }
 }
 
@@ -210,6 +261,9 @@ void VulkanContext::createLogicalDevice() {
     if (!supported.shaderClipDistance)
         throw std::runtime_error("shaderClipDistance is required for planar water reflection clipping");
     features.shaderClipDistance = VK_TRUE;
+    if (!supported.textureCompressionBC)
+        throw std::runtime_error("BC texture compression is required for imported ship DDS materials");
+    features.textureCompressionBC = VK_TRUE;
     if (supported.samplerAnisotropy) {
         features.samplerAnisotropy = VK_TRUE;
         m_anisotropyEnabled = true;
@@ -918,16 +972,15 @@ void VulkanContext::createShipPipeline() {
 
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/ship.vert.spv";
-    cfg.fragPath   = "shaders/chunk.frag.spv"; // reuse chunk fragment shader
+    cfg.fragPath   = "shaders/ship.frag.spv";
     cfg.bindings   = {
-        { 0, sizeof(ChunkVertex), VK_VERTEX_INPUT_RATE_VERTEX },
+        { 0, sizeof(ShipVertex), VK_VERTEX_INPUT_RATE_VERTEX },
     };
     cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)    },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal) },
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)  },
-        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)     },
-        { 4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)  },
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ShipVertex, pos)     },
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ShipVertex, normal)  },
+        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ShipVertex, tangent) },
+        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ShipVertex, uv)      },
     };
     cfg.cullMode   = VK_CULL_MODE_NONE;  // procedural hull mesh — winding not guaranteed
     cfg.depthTest  = true;
@@ -971,6 +1024,114 @@ void VulkanContext::createUIBuffer() {
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         vkMapMemory(m_device, m_uiBuffer[i].memory, 0, size, 0, &m_uiBuffer[i].mapped);
     }
+}
+
+void VulkanContext::loadImportedShipMesh() {
+    const std::string base = "assets/models/ships/lsv018/";
+    const std::string objPath = base + "LSV018.obj";
+
+    m_shipAlbedoTex   = createDDSBC1Texture(base + "LSV018_a.dds", true);
+    m_shipNormalTex   = createDDSBC1Texture(base + "LSV018_n.dds", false);
+    m_shipSpecularTex = createDDSBC1Texture(base + "LSV018_s.dds", false);
+
+    std::ifstream file(objPath);
+    if (!file.is_open())
+        throw std::runtime_error("Cannot open ship OBJ: " + objPath);
+
+    std::vector<glm::vec3> positions;
+    std::vector<glm::vec2> texcoords;
+    std::vector<glm::vec3> normals;
+    std::vector<ShipVertex> verts;
+    verts.reserve(90000);
+
+    auto makeVertex = [&](const ObjIndex& idx) {
+        if (idx.v < 0 || idx.v >= (int)positions.size())
+            throw std::runtime_error("Ship OBJ face references an invalid position");
+
+        ShipVertex v{};
+        v.pos = importShipPosition(positions[(size_t)idx.v]);
+        if (idx.vn >= 0 && idx.vn < (int)normals.size())
+            v.normal = importShipDirection(normals[(size_t)idx.vn]);
+        else
+            v.normal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        if (idx.vt >= 0 && idx.vt < (int)texcoords.size()) {
+            glm::vec2 uv = texcoords[(size_t)idx.vt];
+            v.uv = glm::vec2(uv.x, 1.0f - uv.y);
+        } else {
+            v.uv = glm::vec2(0.0f);
+        }
+        return v;
+    };
+
+    auto appendTriangle = [&](ShipVertex a, ShipVertex b, ShipVertex c) {
+        glm::vec3 edge1 = b.pos - a.pos;
+        glm::vec3 edge2 = c.pos - a.pos;
+        glm::vec2 duv1 = b.uv - a.uv;
+        glm::vec2 duv2 = c.uv - a.uv;
+        float det = duv1.x * duv2.y - duv1.y * duv2.x;
+        glm::vec3 tangent = glm::length(edge1) > 0.00001f ? glm::normalize(edge1) : glm::vec3(1.0f, 0.0f, 0.0f);
+        if (std::abs(det) > 0.000001f) {
+            tangent = glm::normalize((edge1 * duv2.y - edge2 * duv1.y) / det);
+        }
+
+        glm::vec3 faceNormal = glm::cross(edge1, edge2);
+        if (glm::length(faceNormal) > 0.00001f)
+            faceNormal = glm::normalize(faceNormal);
+        else
+            faceNormal = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        ShipVertex tri[3] = {a, b, c};
+        for (ShipVertex& v : tri) {
+            if (glm::length(v.normal) < 0.00001f)
+                v.normal = faceNormal;
+            v.tangent = tangent - v.normal * glm::dot(v.normal, tangent);
+            if (glm::length(v.tangent) > 0.00001f)
+                v.tangent = glm::normalize(v.tangent);
+            else
+                v.tangent = glm::vec3(1.0f, 0.0f, 0.0f);
+            verts.push_back(v);
+        }
+    };
+
+    std::string line;
+    while (std::getline(file, line)) {
+        std::istringstream iss(line);
+        std::string tag;
+        iss >> tag;
+        if (tag == "v") {
+            glm::vec3 p;
+            iss >> p.x >> p.y >> p.z;
+            positions.push_back(p);
+        } else if (tag == "vt") {
+            glm::vec2 uv;
+            iss >> uv.x >> uv.y;
+            texcoords.push_back(uv);
+        } else if (tag == "vn") {
+            glm::vec3 n;
+            iss >> n.x >> n.y >> n.z;
+            normals.push_back(n);
+        } else if (tag == "f") {
+            std::vector<ObjIndex> face;
+            std::string token;
+            while (iss >> token)
+                face.push_back(parseObjIndex(token));
+            for (size_t i = 1; i + 1 < face.size(); ++i)
+                appendTriangle(makeVertex(face[0]), makeVertex(face[i]), makeVertex(face[i + 1]));
+        }
+    }
+
+    if (verts.empty())
+        throw std::runtime_error("Ship OBJ produced no triangles: " + objPath);
+
+    m_shipMesh.count = (uint32_t)verts.size();
+    VkDeviceSize size = sizeof(ShipVertex) * verts.size();
+    m_shipMesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped;
+    vkMapMemory(m_device, m_shipMesh.vbuf.memory, 0, size, 0, &mapped);
+    memcpy(mapped, verts.data(), (size_t)size);
+    vkUnmapMemory(m_device, m_shipMesh.vbuf.memory);
 }
 
 // ============================================================
@@ -1138,41 +1299,8 @@ void VulkanContext::createObjectMeshes() {
     upload(ObjectType::STONE_FENCE, verts);
     }
 
-    // ---- SHIP (OceanVoyage placeholder): low-poly hull + bow wedge + mast + square sail.
-    // Forward is +X so object.vert's instanceRot aligns the bow with the player heading;
-    // the per-frame instance seats it on the sea surface. Untextured (LAYER_NONE). ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 hullColor = {0.40f, 0.26f, 0.14f};
-    const glm::vec3 deckColor = {0.50f, 0.36f, 0.20f};
-    const glm::vec3 mastColor = {0.32f, 0.22f, 0.12f};
-    const glm::vec3 sailColor = {0.88f, 0.86f, 0.80f};
-
-    // Hull body + a small stern cabin
-    pushBox(verts, {-0.70f, -0.24f, 0.00f}, { 0.55f, 0.24f, 0.26f}, hullColor, LAYER_NONE);
-    pushBox(verts, {-0.66f, -0.18f, 0.26f}, {-0.40f, 0.18f, 0.40f}, deckColor, LAYER_NONE);
-
-    // Bow wedge: taper the hull's front face (x=0.55) to a point ahead of the bow.
-    const glm::vec3 P   = { 0.92f,  0.00f, 0.13f};
-    const glm::vec3 ftl = { 0.55f, -0.24f, 0.26f}, ftr = { 0.55f, 0.24f, 0.26f};
-    const glm::vec3 fbl = { 0.55f, -0.24f, 0.00f}, fbr = { 0.55f, 0.24f, 0.00f};
-    const glm::vec3 hullCenter = {0.0f, 0.0f, 0.13f};
-    auto bowTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        if (glm::dot(n, (a + b + c) / 3.0f - hullCenter) < 0.0f) n = -n; // force outward
-        pushTri(verts, a, b, c, n, hullColor, LAYER_NONE);
-    };
-    bowTri(ftl, ftr, P); // top
-    bowTri(fbr, fbl, P); // bottom
-    bowTri(fbl, ftl, P); // port (-Y)
-    bowTri(ftr, fbr, P); // starboard (+Y)
-
-    // Mast + square sail (thin in X, spanning the width in Y)
-    pushBox(verts, {-0.03f, -0.03f, 0.26f}, {0.03f, 0.03f, 0.92f}, mastColor, LAYER_NONE);
-    pushBox(verts, {-0.02f, -0.28f, 0.34f}, {0.02f, 0.28f, 0.86f}, sailColor, LAYER_NONE);
-
-    uploadMesh(m_shipMesh, verts);
-    }
+    // ---- SHIP: imported textured hero asset (OBJ + BC1 DDS material maps). ----
+    loadImportedShipMesh();
 
     // ---- GROUND PATCH: thin visual-only dirt/dry-grass breakup decal ----
     {
@@ -2043,6 +2171,150 @@ TextureResource VulkanContext::createTexture(uint32_t width, uint32_t height, Vk
         if (vkCreateSampler(m_device, &si, nullptr, &tex.sampler) != VK_SUCCESS)
             throw std::runtime_error("Failed to create texture sampler");
     }
+
+    return tex;
+}
+
+TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool srgb) {
+    std::vector<uint8_t> bytes = readBinaryFile(path);
+    if (bytes.size() < 128 || bytes[0] != 'D' || bytes[1] != 'D' || bytes[2] != 'S' || bytes[3] != ' ')
+        throw std::runtime_error("Invalid DDS file: " + path);
+
+    const uint32_t height = readLe32(bytes, 12);
+    const uint32_t width  = readLe32(bytes, 16);
+    const uint32_t mipCountRaw = readLe32(bytes, 28);
+    const uint32_t fourCC = readLe32(bytes, 84);
+    const uint32_t dxt1 = (uint32_t)'D' | ((uint32_t)'X' << 8) | ((uint32_t)'T' << 16) | ((uint32_t)'1' << 24);
+    if (width == 0 || height == 0 || fourCC != dxt1)
+        throw std::runtime_error("Only DXT1/BC1 DDS textures are supported for ship materials: " + path);
+
+    const uint32_t mipLevels = std::max(1u, mipCountRaw);
+    const VkDeviceSize payloadSize = (VkDeviceSize)(bytes.size() - 128);
+    const uint8_t* payload = bytes.data() + 128;
+
+    GpuBuffer staging = createBuffer(payloadSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped;
+    vkMapMemory(m_device, staging.memory, 0, payloadSize, 0, &mapped);
+    memcpy(mapped, payload, (size_t)payloadSize);
+    vkUnmapMemory(m_device, staging.memory);
+
+    TextureResource tex;
+    tex.device = m_device;
+    const VkFormat format = srgb ? VK_FORMAT_BC1_RGB_SRGB_BLOCK : VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+    createImage(width, height, format, VK_IMAGE_TILING_OPTIMAL,
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, tex.image, tex.memory, mipLevels);
+
+    VkCommandBufferAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandPool        = m_commandPool;
+    allocInfo.commandBufferCount = 1;
+    VkCommandBuffer cmd;
+    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+
+    VkCommandBufferBeginInfo beginInfo{};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    vkBeginCommandBuffer(cmd, &beginInfo);
+
+    VkImageMemoryBarrier toDst{};
+    toDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toDst.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+    toDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toDst.image               = tex.image;
+    toDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toDst.subresourceRange.levelCount = mipLevels;
+    toDst.subresourceRange.layerCount = 1;
+    toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toDst);
+
+    std::vector<VkBufferImageCopy> copies;
+    copies.reserve(mipLevels);
+    VkDeviceSize offset = 0;
+    uint32_t mipW = width;
+    uint32_t mipH = height;
+    for (uint32_t mip = 0; mip < mipLevels; ++mip) {
+        const VkDeviceSize mipSize = (VkDeviceSize)std::max(1u, (mipW + 3u) / 4u)
+                                   * (VkDeviceSize)std::max(1u, (mipH + 3u) / 4u) * 8u;
+        if (offset + mipSize > payloadSize)
+            throw std::runtime_error("DDS mip chain is shorter than declared: " + path);
+
+        VkBufferImageCopy region{};
+        region.bufferOffset = offset;
+        region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        region.imageSubresource.mipLevel = mip;
+        region.imageSubresource.layerCount = 1;
+        region.imageExtent = {mipW, mipH, 1};
+        copies.push_back(region);
+
+        offset += mipSize;
+        mipW = std::max(1u, mipW / 2u);
+        mipH = std::max(1u, mipH / 2u);
+    }
+
+    vkCmdCopyBufferToImage(cmd, staging.buffer, tex.image,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, (uint32_t)copies.size(), copies.data());
+
+    VkImageMemoryBarrier toRead{};
+    toRead.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    toRead.oldLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    toRead.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    toRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    toRead.image               = tex.image;
+    toRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    toRead.subresourceRange.levelCount = mipLevels;
+    toRead.subresourceRange.layerCount = 1;
+    toRead.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    toRead.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &toRead);
+
+    vkEndCommandBuffer(cmd);
+
+    VkSubmitInfo submit{};
+    submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit.commandBufferCount = 1;
+    submit.pCommandBuffers    = &cmd;
+    VkFenceCreateInfo fenceInfo{};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    VkFence fence;
+    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
+    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkDestroyFence(m_device, fence, nullptr);
+    vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
+
+    VkImageViewCreateInfo vi{};
+    vi.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.image                       = tex.image;
+    vi.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format                      = format;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = mipLevels;
+    vi.subresourceRange.layerCount = 1;
+    if (vkCreateImageView(m_device, &vi, nullptr, &tex.view) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create DDS texture view: " + path);
+
+    VkSamplerCreateInfo si{};
+    si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    si.magFilter    = VK_FILTER_LINEAR;
+    si.minFilter    = VK_FILTER_LINEAR;
+    si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    si.minLod       = 0.0f;
+    si.maxLod       = (float)mipLevels;
+    si.anisotropyEnable = m_anisotropyEnabled ? VK_TRUE : VK_FALSE;
+    si.maxAnisotropy    = m_maxAnisotropy;
+    if (vkCreateSampler(m_device, &si, nullptr, &tex.sampler) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create DDS texture sampler: " + path);
 
     return tex;
 }
@@ -3248,7 +3520,7 @@ void VulkanContext::createShadowSampler() {
 //  Descriptor set layout
 // ============================================================
 void VulkanContext::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[5]{};
+    VkDescriptorSetLayoutBinding bindings[8]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3275,9 +3547,24 @@ void VulkanContext::createDescriptorSetLayout() {
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    bindings[5].binding         = 5; // imported ship albedo
+    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[6].binding         = 6; // imported ship normal
+    bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[7].binding         = 7; // imported ship specular
+    bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[7].descriptorCount = 1;
+    bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 5;
+    info.bindingCount = 8;
     info.pBindings    = bindings;
 
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
@@ -3319,7 +3606,7 @@ void VulkanContext::createDescriptorPool() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // main + reflection scene descriptors
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 14; // main + reflection scene descriptors
 
     VkDescriptorPoolCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3369,7 +3656,22 @@ void VulkanContext::createDescriptorSets() {
         terrainInfo.imageView   = m_terrainTex.view;
         terrainInfo.sampler     = m_terrainTex.sampler;
 
-        VkWriteDescriptorSet writes[5]{};
+        VkDescriptorImageInfo shipAlbedoInfo{};
+        shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
+        shipAlbedoInfo.sampler     = m_shipAlbedoTex.sampler;
+
+        VkDescriptorImageInfo shipNormalInfo{};
+        shipNormalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipNormalInfo.imageView   = m_shipNormalTex.view;
+        shipNormalInfo.sampler     = m_shipNormalTex.sampler;
+
+        VkDescriptorImageInfo shipSpecularInfo{};
+        shipSpecularInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipSpecularInfo.imageView   = m_shipSpecularTex.view;
+        shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
+
+        VkWriteDescriptorSet writes[8]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_descriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3405,7 +3707,28 @@ void VulkanContext::createDescriptorSets() {
         writes[4].descriptorCount = 1;
         writes[4].pImageInfo      = &grassOpacityInfo;
 
-        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet          = m_descriptorSets[i];
+        writes[5].dstBinding      = 5;
+        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].descriptorCount = 1;
+        writes[5].pImageInfo      = &shipAlbedoInfo;
+
+        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet          = m_descriptorSets[i];
+        writes[6].dstBinding      = 6;
+        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[6].descriptorCount = 1;
+        writes[6].pImageInfo      = &shipNormalInfo;
+
+        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[7].dstSet          = m_descriptorSets[i];
+        writes[7].dstBinding      = 7;
+        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[7].descriptorCount = 1;
+        writes[7].pImageInfo      = &shipSpecularInfo;
+
+        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
     }
 }
 
@@ -3447,7 +3770,22 @@ void VulkanContext::createReflectionDescriptorSets() {
         terrainInfo.imageView   = m_terrainTex.view;
         terrainInfo.sampler     = m_terrainTex.sampler;
 
-        VkWriteDescriptorSet writes[5]{};
+        VkDescriptorImageInfo shipAlbedoInfo{};
+        shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
+        shipAlbedoInfo.sampler     = m_shipAlbedoTex.sampler;
+
+        VkDescriptorImageInfo shipNormalInfo{};
+        shipNormalInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipNormalInfo.imageView   = m_shipNormalTex.view;
+        shipNormalInfo.sampler     = m_shipNormalTex.sampler;
+
+        VkDescriptorImageInfo shipSpecularInfo{};
+        shipSpecularInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        shipSpecularInfo.imageView   = m_shipSpecularTex.view;
+        shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
+
+        VkWriteDescriptorSet writes[8]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_reflectionDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3483,7 +3821,28 @@ void VulkanContext::createReflectionDescriptorSets() {
         writes[4].descriptorCount = 1;
         writes[4].pImageInfo      = &grassOpacityInfo;
 
-        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet          = m_reflectionDescriptorSets[i];
+        writes[5].dstBinding      = 5;
+        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].descriptorCount = 1;
+        writes[5].pImageInfo      = &shipAlbedoInfo;
+
+        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet          = m_reflectionDescriptorSets[i];
+        writes[6].dstBinding      = 6;
+        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[6].descriptorCount = 1;
+        writes[6].pImageInfo      = &shipNormalInfo;
+
+        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[7].dstSet          = m_reflectionDescriptorSets[i];
+        writes[7].dstBinding      = 7;
+        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[7].descriptorCount = 1;
+        writes[7].pImageInfo      = &shipSpecularInfo;
+
+        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
     }
 }
 

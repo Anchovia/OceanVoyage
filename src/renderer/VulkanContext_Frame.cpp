@@ -873,16 +873,15 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
         m_dayFactor = elevation; // 0 at midnight, 1 at noon
 
-        // Light frustum half-extent. Kept tight to the visible (un-fogged) range so
-        // the 2048 shadow map spends its resolution where it shows: fog fully hides
-        // geometry past ~57 units, so a smaller box ~doubles effective texel density
-        // and cuts the blocky-edge shimmer that crawls as the sun rotates.
-        const float range = 45.0f;
+        // Light frustum half-extent for the ship-scale chase camera. This keeps the
+        // enlarged hero ship inside the shadow box without throwing away too much of
+        // the 2048 shadow map's effective texel density.
+        const float range = 96.0f;
         glm::mat4 lightView = glm::lookAt(
-            frame.playerPosition + m_sunDir * 150.0f,
+            frame.playerPosition + m_sunDir * 240.0f,
             frame.playerPosition,
             glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 lightProj = glm::ortho(-range, range, -range, range, 1.0f, 300.0f);
+        glm::mat4 lightProj = glm::ortho(-range, range, -range, range, 1.0f, 480.0f);
         lightProj[1][1] *= -1.0f;
 
         // Texel snapping: anchor the shadow texel grid to world space so the projected
@@ -1081,7 +1080,8 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
     // its deck aligns with the surface normal and the bow points toward the heading.
     (void)gameTime; // wave phase now lives entirely in the GPU FFT
-    constexpr float DRAFT     = 0.08f;
+    constexpr float SHIP_WORLD_SCALE = 6.0f; // LSV018 source length 5.83 -> ~35 world units
+    constexpr float DRAFT     = 0.0f;
     constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
     const int   n        = (int)OCEAN_FFT_N;
     const int   cascades = (int)OCEAN_CASCADES;
@@ -1111,9 +1111,9 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     glm::vec3 fwd  = glm::normalize(glm::cross(left, up));  // ship +X (bow), perpendicular to up
 
     glm::mat4 m(1.0f);
-    m[0] = glm::vec4(fwd,  0.0f); // X column = bow
-    m[1] = glm::vec4(left, 0.0f); // Y column = port
-    m[2] = glm::vec4(up,   0.0f); // Z column = deck up
+    m[0] = glm::vec4(fwd  * SHIP_WORLD_SCALE, 0.0f); // X column = bow
+    m[1] = glm::vec4(left * SHIP_WORLD_SCALE, 0.0f); // Y column = port
+    m[2] = glm::vec4(up   * SHIP_WORLD_SCALE, 0.0f); // Z column = deck up
     m[3] = glm::vec4(pos,  1.0f); // translation
     m_shipModel = m;
 }

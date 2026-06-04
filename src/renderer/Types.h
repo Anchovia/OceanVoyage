@@ -183,6 +183,15 @@ struct ChunkVertex {
     float     layer;  // material texture-array layer; < 0 = untextured
 };
 
+// Imported hero ship vertex: textured material path with tangent-space normal mapping.
+struct ShipVertex {
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec3 tangent;
+    glm::vec2 uv;
+    float     pad = 0.0f; // keep 48-byte stride compatible with the current shadow pipeline
+};
+
 // Terrain texture-array layers — one material per layer. tileFaceLayer maps a tile
 // type + face to its layer index. Objects may reuse these material layers.
 static constexpr uint32_t TERRAIN_TEX_LAYERS = 9;

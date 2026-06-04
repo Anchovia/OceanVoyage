@@ -196,9 +196,11 @@ private:
     // Generic uploaded-texture helper: staging upload + image + view (+ optional sampler).
     TextureResource createTexture(uint32_t width, uint32_t height, VkFormat format,
         const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
+    TextureResource createDDSBC1Texture(const std::string& path, bool srgb);
     // Layered variant for a sampler2DArray (bytes laid out layer-major, all same size).
     TextureResource createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
+    void loadImportedShipMesh();
     void createObjectMeshes();
     void createGrassTexture();
     void createOceanNormalTextures();
@@ -456,8 +458,11 @@ private:
         uint32_t       count = 0;
     };
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
-    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via the ship pipeline)
+    ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
+    TextureResource m_shipAlbedoTex;
+    TextureResource m_shipNormalTex;
+    TextureResource m_shipSpecularTex;
     ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
