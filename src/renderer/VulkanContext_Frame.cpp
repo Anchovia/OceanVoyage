@@ -861,23 +861,32 @@ float halfToFloat(uint16_t h) {
     return f;
 }
 
-// Bilinear FFT wave height (displacement .z) from the host readback buffer at a world XY.
-// The map tiles every `patch` metres; horizontal choppiness is ignored (good enough to float).
-float sampleOceanHeight(const uint16_t* px, int n, float patch, float wx, float wy) {
+// Bilinear FFT displacement from the host readback buffer at a source-map world XY.
+glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, float patch, float wx, float wy) {
     float u = wx / patch; u -= std::floor(u);
     float v = wy / patch; v -= std::floor(v);
     float gx = u * (float)n - 0.5f;
     float gy = v * (float)n - 0.5f;
     int   x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
     float tx = gx - (float)x0,      ty = gy - (float)y0;
-    auto H = [&](int x, int y) {
+    auto D = [&](int x, int y) {
         x = ((x % n) + n) % n; y = ((y % n) + n) % n;
-        return halfToFloat(px[((size_t)y * n + x) * 4 + 2]); // .z = height (3rd of RGBA16F)
+        const uint16_t* p = &px[((size_t)y * n + x) * 4];
+        return glm::vec3(halfToFloat(p[0]), halfToFloat(p[1]), halfToFloat(p[2]));
     };
-    float h00 = H(x0, y0),     h10 = H(x0 + 1, y0);
-    float h01 = H(x0, y0 + 1), h11 = H(x0 + 1, y0 + 1);
-    return (h00 * (1.0f - tx) + h10 * tx) * (1.0f - ty)
-         + (h01 * (1.0f - tx) + h11 * tx) * ty;
+    glm::vec3 d00 = D(x0, y0),     d10 = D(x0 + 1, y0);
+    glm::vec3 d01 = D(x0, y0 + 1), d11 = D(x0 + 1, y0 + 1);
+    return (d00 * (1.0f - tx) + d10 * tx) * (1.0f - ty)
+         + (d01 * (1.0f - tx) + d11 * tx) * ty;
+}
+
+glm::vec2 solveOceanSourceXY(const uint16_t* px, int n, float patch, glm::vec2 worldXY) {
+    glm::vec2 sourceXY = worldXY;
+    for (int i = 0; i < 3; ++i) {
+        glm::vec3 d = sampleOceanDisplacement(px, n, patch, sourceXY.x, sourceXY.y);
+        sourceXY = worldXY - glm::vec2(d.x, d.y);
+    }
+    return sourceXY;
 }
 } // namespace
 
@@ -898,11 +907,13 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     glm::vec3 up(0.0f, 0.0f, 1.0f);
     if (px) {
         const float step = P / (float)n;
-        float hC  = sampleOceanHeight(px, n, P, position.x, position.y);
-        float hX0 = sampleOceanHeight(px, n, P, position.x - step, position.y);
-        float hX1 = sampleOceanHeight(px, n, P, position.x + step, position.y);
-        float hY0 = sampleOceanHeight(px, n, P, position.x, position.y - step);
-        float hY1 = sampleOceanHeight(px, n, P, position.x, position.y + step);
+        glm::vec2 worldXY(position.x, position.y);
+        glm::vec2 srcC = solveOceanSourceXY(px, n, P, worldXY);
+        float hC  = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y).z;
+        float hX0 = sampleOceanDisplacement(px, n, P, srcC.x - step, srcC.y).z;
+        float hX1 = sampleOceanDisplacement(px, n, P, srcC.x + step, srcC.y).z;
+        float hY0 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y - step).z;
+        float hY1 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y + step).z;
         height = SEA_LEVEL + hC;
         up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
     }
