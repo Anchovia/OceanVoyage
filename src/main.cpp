@@ -7,6 +7,7 @@
 #include <iostream>
 #include <array>
 #include <vector>
+#include <cmath>
 #include "game/Camera.h"
 
 static constexpr int LOAD_RADIUS   = 3;
@@ -360,8 +361,11 @@ int main() {
                 }
             }
 
+            const glm::vec2 facing = gameState.player().facingDirection();
+            const float playerHeading = std::atan2(facing.y, facing.x);
+
             ctx.drawFrame(FrameRenderData{
-                camera, gameState.player().position(), gameState.targetTile(),
+                camera, gameState.player().position(), playerHeading, gameState.targetTile(),
                 gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
                 gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode

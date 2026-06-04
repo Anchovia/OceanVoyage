@@ -222,16 +222,16 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 }
             }
 
-            // Player cube casts a shadow too (always inside the light box — no cull)
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPlayerPipeline);
+            // Ship (placeholder) casts a shadow too — instanced object shadow caster,
+            // always inside the light box (no cull).
+            if (m_shipMesh.count > 0) {
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowObjectPipeline);
                 vkCmdPushConstants(cmd, m_shadowPipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
-                VkBuffer     pBufs[] = { m_vertexBuffer, m_playerInstBuffer[m_currentFrame] };
-                VkDeviceSize pOffs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, pBufs, pOffs);
-                vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-                vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), 1, 0, 0, 0);
+                VkBuffer     sBufs[] = { m_shipMesh.vbuf, m_shipInstBuffer[m_currentFrame] };
+                VkDeviceSize sOffs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
+                vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
             }
         }
         vkCmdEndRenderPass(cmd);
@@ -357,22 +357,24 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdDrawIndexed(cmd, (uint32_t)kSelectorIndices.size(), 1, 0, 0, 0);
     }
 
-    // Player
-    if (worldVisible) {
-        VkBuffer     pBufs[] = {m_vertexBuffer, m_playerInstBuffer[m_currentFrame]};
-        VkDeviceSize pOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, pBufs, pOffs);
-        vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), 1, 0, 0, 0);
-    }
-
-    // Dropped items (small cubes, same instanced pipeline as the player)
+    // Dropped items (small cubes, same instanced pipeline as the selector)
     if (worldVisible && m_dropCount > 0) {
         VkBuffer     dBufs[] = {m_itemVertexBuffer, m_dropInstBuffer[m_currentFrame]};
         VkDeviceSize dOffs[] = {0, 0};
         vkCmdBindVertexBuffers(cmd, 0, 2, dBufs, dOffs);
         vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), m_dropCount, 0, 0, 0);
+    }
+
+    // Ship (placeholder) — replaces the player cube. Drawn with the rotation-capable
+    // object pipeline so the bow faces the player heading; the per-frame instance seats
+    // it on the sea surface. Drawn last in the scene pass; switches the bound pipeline.
+    if (worldVisible && m_shipMesh.count > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
+        VkBuffer     sBufs[] = {m_shipMesh.vbuf, m_shipInstBuffer[m_currentFrame]};
+        VkDeviceSize sOffs[] = {0, 0};
+        vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
+        vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
     }
 
     vkCmdEndRenderPass(cmd); // end scene pass (offscreen color now SHADER_READ_ONLY)
@@ -601,7 +603,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
-    updatePlayerInstanceBuffer(frame.playerPosition);
+    updateShipInstanceBuffer(frame.playerPosition, frame.playerHeading);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();
@@ -664,6 +666,13 @@ void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) 
     static const glm::vec3 kPlayerColor = {1.0f, 0.45f, 0.1f};
     InstanceData inst{playerPosition, kPlayerColor, kPlayerColor};
     memcpy(m_playerInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
+}
+
+void VulkanContext::updateShipInstanceBuffer(const glm::vec3& position, float heading) {
+    // Seat the placeholder ship on the flat sea surface (water top ~ z=0.5) and orient
+    // the bow to the player heading. Uses the object pipeline's ObjectInstance layout.
+    ObjectInstance inst{ glm::vec3(position.x, position.y, 0.5f), 1.0f, heading };
+    memcpy(m_shipInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
 void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& drops) {

@@ -816,6 +816,42 @@ void VulkanContext::createObjectMeshes() {
     upload(ObjectType::STONE_FENCE, verts);
     }
 
+    // ---- SHIP (OceanVoyage placeholder): low-poly hull + bow wedge + mast + square sail.
+    // Forward is +X so object.vert's instanceRot aligns the bow with the player heading;
+    // the per-frame instance seats it on the sea surface. Untextured (LAYER_NONE). ----
+    {
+    std::vector<ChunkVertex> verts;
+    const glm::vec3 hullColor = {0.40f, 0.26f, 0.14f};
+    const glm::vec3 deckColor = {0.50f, 0.36f, 0.20f};
+    const glm::vec3 mastColor = {0.32f, 0.22f, 0.12f};
+    const glm::vec3 sailColor = {0.88f, 0.86f, 0.80f};
+
+    // Hull body + a small stern cabin
+    pushBox(verts, {-0.70f, -0.24f, 0.00f}, { 0.55f, 0.24f, 0.26f}, hullColor, LAYER_NONE);
+    pushBox(verts, {-0.66f, -0.18f, 0.26f}, {-0.40f, 0.18f, 0.40f}, deckColor, LAYER_NONE);
+
+    // Bow wedge: taper the hull's front face (x=0.55) to a point ahead of the bow.
+    const glm::vec3 P   = { 0.92f,  0.00f, 0.13f};
+    const glm::vec3 ftl = { 0.55f, -0.24f, 0.26f}, ftr = { 0.55f, 0.24f, 0.26f};
+    const glm::vec3 fbl = { 0.55f, -0.24f, 0.00f}, fbr = { 0.55f, 0.24f, 0.00f};
+    const glm::vec3 hullCenter = {0.0f, 0.0f, 0.13f};
+    auto bowTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
+        if (glm::dot(n, (a + b + c) / 3.0f - hullCenter) < 0.0f) n = -n; // force outward
+        pushTri(verts, a, b, c, n, hullColor, LAYER_NONE);
+    };
+    bowTri(ftl, ftr, P); // top
+    bowTri(fbr, fbl, P); // bottom
+    bowTri(fbl, ftl, P); // port (-Y)
+    bowTri(ftr, fbr, P); // starboard (+Y)
+
+    // Mast + square sail (thin in X, spanning the width in Y)
+    pushBox(verts, {-0.03f, -0.03f, 0.26f}, {0.03f, 0.03f, 0.92f}, mastColor, LAYER_NONE);
+    pushBox(verts, {-0.02f, -0.28f, 0.34f}, {0.02f, 0.28f, 0.86f}, sailColor, LAYER_NONE);
+
+    uploadMesh(m_shipMesh, verts);
+    }
+
     // ---- GROUND PATCH: thin visual-only dirt/dry-grass breakup decal ----
     {
     std::vector<ChunkVertex> verts;
@@ -3033,6 +3069,17 @@ void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) 
     }
 
     updatePlayerInstanceBuffer(playerPosition);
+}
+
+void VulkanContext::createShipInstanceBuffer() {
+    VkDeviceSize size = sizeof(ObjectInstance);
+    m_shipInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_shipInstBuffer[i] = createBuffer(size,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkMapMemory(m_device, m_shipInstBuffer[i].memory, 0, size, 0, &m_shipInstBuffer[i].mapped);
+    }
 }
 
 void VulkanContext::createSelectorBuffers() {

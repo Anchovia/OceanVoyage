@@ -94,6 +94,7 @@ struct TextureResource {
 struct FrameRenderData {
     const Camera&                            camera;
     glm::vec3                                playerPosition;
+    float                                    playerHeading;  // radians; ship bow orientation
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
     const std::array<ItemStack, INV_SLOTS>&  inventory;
@@ -198,11 +199,13 @@ private:
     void createDropInstanceBuffer();
     void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
     void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
+    void createShipInstanceBuffer();
     void createUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
+    void updateShipInstanceBuffer(const glm::vec3& position, float heading);
     void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();
@@ -347,6 +350,7 @@ private:
         uint32_t       count = 0;
     };
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
+    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via object pipeline)
     ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
@@ -383,6 +387,7 @@ private:
     bool                     m_nearWorkbenchHud = false;
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
     std::vector<GpuBuffer>      m_playerInstBuffer;
+    std::vector<GpuBuffer>      m_shipInstBuffer;   // per-frame ObjectInstance for the placeholder ship
     GpuBuffer                m_selectorVertexBuffer;
     GpuBuffer                m_selectorIndexBuffer;
     std::vector<GpuBuffer>      m_selectorInstBuffer;

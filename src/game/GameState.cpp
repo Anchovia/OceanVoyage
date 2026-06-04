@@ -21,13 +21,10 @@ bool canOccupy(const World& world, const glm::vec3& position) {
 }
 
 GameState::GameState() {
-    // Starting inventory (slots 4..26 begin empty)
-    m_inventory[0] = { ItemType::TOOL_HOE,         1  };
-    m_inventory[1] = { ItemType::TOOL_WATERINGCAN, 1  };
-    m_inventory[2] = { ItemType::SEED_WHEAT,       10 };
-    m_inventory[3] = { ItemType::TOOL_AXE,         1  };
-    m_inventory[4] = { ItemType::TOOL_SICKLE,      1  };
-    m_inventory[5] = { ItemType::TOOL_PICKAXE,     1  };
+    // Inventory starts empty for OceanVoyage. The farm starting tools (hoe, watering
+    // can, seeds, axe, sickle, pickaxe) were removed in the farm-gameplay transition;
+    // a cargo/ship inventory will replace them later. m_inventory default-initializes
+    // every slot to NONE/0, so no explicit clearing is needed here.
 }
 
 void GameState::update(float dt, const PlayerInput& input, const Camera& camera, World& world) {

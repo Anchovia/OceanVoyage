@@ -66,6 +66,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createDropInstanceBuffer();
     rebuildDirtyChunks();
     createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
+    createShipInstanceBuffer();
     createUniformBuffers();
     createShadowSampler();
     createPostSampler();
@@ -95,11 +96,13 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_playerInstBuffer.clear();
+    m_shipInstBuffer.clear();
     m_selectorInstBuffer.clear();
     m_selectorIndexBuffer.destroy();
     m_selectorVertexBuffer.destroy();
     m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
     for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
+    m_shipMesh.vbuf.destroy();
     m_grassClumpMesh.vbuf.destroy();
     m_grassCardMesh.vbuf.destroy();
     m_groundPatchMesh.vbuf.destroy();
