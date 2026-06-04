@@ -1,7 +1,7 @@
 #version 450
 
-// Gerstner-wave ocean surface. A flat grid (binding 0) is displaced into rolling
-// waves; the grid follows the camera in world space so the sea always fills the view.
+// Gerstner-wave ocean surface. A concentric camera-centered mesh (binding 0) is
+// displaced into rolling waves so the sea covers both near water and the horizon.
 // Analytic normals are derived from the wave partial derivatives.
 
 layout(binding = 0) uniform UniformBufferObject {
@@ -16,7 +16,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 reflectionViewProj;
 } ubo;
 
-layout(location = 0) in vec3 inPos; // flat grid position centered on origin (z ignored)
+layout(location = 0) in vec3 inPos; // local ocean mesh position centered on origin (z ignored)
 
 layout(location = 0) out vec3  fragNormal;
 layout(location = 1) out vec3  fragWorldPos;
@@ -38,7 +38,7 @@ const vec4 waves[NWAVES] = vec4[NWAVES](
 );
 
 void main() {
-    // Snap the grid origin to the camera at the mesh cell size so the sea follows the
+    // Snap the mesh origin to the camera at the near-ring cell size so the sea follows the
     // view without sub-cell jitter relative to the world-locked wave phase.
     vec2  cameraSnap = floor(ubo.cameraPos.xy / GRID_SNAP) * GRID_SNAP;
     vec2  worldXY = inPos.xy + cameraSnap;

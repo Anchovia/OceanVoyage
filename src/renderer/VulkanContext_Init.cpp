@@ -672,31 +672,57 @@ void VulkanContext::createOceanPipeline() {
 }
 
 void VulkanContext::createOceanMesh() {
-    // Flat tessellated grid centered on the origin. The ocean vertex shader offsets it to
-    // follow the camera and displaces it into Gerstner waves. RTX 3060 target: keep the
-    // same visible footprint as the prototype, but double spatial density on each axis
-    // so near-field wave silhouettes and reflected highlights no longer read as coarse
-    // 1m cells. Future work: replace this uniform grid with a projected/concentric LOD.
-    constexpr int   CELLS     = 256;  // 256x256 quads
-    constexpr float CELL_SIZE = 0.5f; // 0.5 world-unit cells, extent [-64, 64]
-    constexpr float HALF      = (float)CELLS * CELL_SIZE * 0.5f;
+    // Camera-centered concentric ocean mesh: dense near the ship/camera, progressively
+    // larger triangles toward the horizon. This keeps silhouette quality close by while
+    // covering the long, grazing-angle view required by the sailing camera.
+    constexpr int   SECTORS = 512;
+    constexpr float TWO_PI  = 6.28318530718f;
+
+    std::vector<float> radii;
+    auto appendRings = [&radii](float endRadius, float step) {
+        float r = radii.empty() ? step : radii.back() + step;
+        for (; r <= endRadius + 0.001f; r += step)
+            radii.push_back(r);
+    };
+
+    appendRings(  48.0f,  0.5f);
+    appendRings( 128.0f,  1.0f);
+    appendRings( 384.0f,  4.0f);
+    appendRings(1024.0f,  8.0f);
+    appendRings(3072.0f, 24.0f);
+
     std::vector<glm::vec3> verts;
-    verts.reserve((CELLS + 1) * (CELLS + 1));
-    for (int j = 0; j <= CELLS; j++)
-        for (int i = 0; i <= CELLS; i++)
-            verts.push_back({ (float)i * CELL_SIZE - HALF, (float)j * CELL_SIZE - HALF, 0.0f });
+    verts.reserve(1 + radii.size() * SECTORS);
+    verts.push_back({ 0.0f, 0.0f, 0.0f });
+
+    for (float r : radii) {
+        for (int s = 0; s < SECTORS; s++) {
+            const float a = TWO_PI * (float)s / (float)SECTORS;
+            verts.push_back({ std::cos(a) * r, std::sin(a) * r, 0.0f });
+        }
+    }
 
     std::vector<uint32_t> indices;
-    indices.reserve(CELLS * CELLS * 6);
-    const int stride = CELLS + 1;
-    for (int j = 0; j < CELLS; j++)
-        for (int i = 0; i < CELLS; i++) {
-            uint32_t a = j * stride + i;
-            uint32_t b = a + 1;
-            uint32_t c = a + stride;
-            uint32_t d = c + 1;
-            indices.insert(indices.end(), { a, c, b,  b, c, d });
+    indices.reserve(SECTORS * 3 + (radii.size() - 1) * SECTORS * 6);
+
+    const uint32_t firstRing = 1;
+    for (int s = 0; s < SECTORS; s++) {
+        uint32_t b = firstRing + (uint32_t)s;
+        uint32_t c = firstRing + (uint32_t)((s + 1) % SECTORS);
+        indices.insert(indices.end(), { 0, b, c });
+    }
+
+    for (size_t ring = 1; ring < radii.size(); ring++) {
+        uint32_t prevBase = 1 + (uint32_t)(ring - 1) * SECTORS;
+        uint32_t currBase = 1 + (uint32_t)ring * SECTORS;
+        for (int s = 0; s < SECTORS; s++) {
+            uint32_t prev0 = prevBase + (uint32_t)s;
+            uint32_t prev1 = prevBase + (uint32_t)((s + 1) % SECTORS);
+            uint32_t curr0 = currBase + (uint32_t)s;
+            uint32_t curr1 = currBase + (uint32_t)((s + 1) % SECTORS);
+            indices.insert(indices.end(), { prev0, curr0, prev1,  prev1, curr0, curr1 });
         }
+    }
     m_oceanIndexCount = (uint32_t)indices.size();
 
     VkDeviceSize vSize = sizeof(glm::vec3) * verts.size();
