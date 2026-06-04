@@ -342,7 +342,7 @@ private:
     VkPipeline            m_oceanFFTPipeline            = VK_NULL_HANDLE;
 
     // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
-    // shader. xyz = (choppy x, choppy z, height).
+    // shader. xyz = (choppy x, choppy z, height), w = Jacobian whitecap seed.
     VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
     VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
     VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;

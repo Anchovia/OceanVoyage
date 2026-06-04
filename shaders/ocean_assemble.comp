@@ -3,26 +3,57 @@
 // Tessendorf FFT ocean — assemble the IFFT output into a world-space displacement map.
 // The IFFT result packs the height and horizontal displacement (.r = Dy height, .g = Dx,
 // .b = Dz). The (-1)^(x+y) factor undoes the centred-spectrum index shift, and choppiness
-// scales the horizontal displacement that sharpens wave crests.
+// scales the horizontal displacement that sharpens wave crests. Alpha stores a Jacobian
+// compression + crest-curvature whitecap seed for the later foam simulation path.
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba32f) uniform readonly  image2D fftResult;    // .r=Dy, .g=Dx, .b=Dz
-layout(binding = 1, rgba16f) uniform writeonly image2D displacement; // xyz = world displacement
+layout(binding = 1, rgba16f) uniform writeonly image2D displacement; // xyz = world displacement, a = whitecap seed
 
 const int   N          = 512;
+const float PATCH      = 256.0;
 const float CHOPPINESS  = 0.5; // horizontal displacement scale (crest sharpness)
+
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
+}
+
+vec3 loadDisplacement(ivec2 p) {
+    ivec2 q = ivec2((p.x + N) % N, (p.y + N) % N);
+    float sgn = (((q.x + q.y) & 1) == 0) ? 1.0 : -1.0;
+    vec4  r   = imageLoad(fftResult, q) * sgn;
+    return vec3(r.g * CHOPPINESS, r.b * CHOPPINESS, r.r);
+}
 
 void main() {
     ivec2 id = ivec2(gl_GlobalInvocationID.xy);
     if (id.x >= N || id.y >= N) return;
 
-    float sgn = (((id.x + id.y) & 1) == 0) ? 1.0 : -1.0;
-    vec4  r   = imageLoad(fftResult, id) * sgn;
+    vec3 c = loadDisplacement(id);
+    vec3 l = loadDisplacement(id - ivec2(1, 0));
+    vec3 r = loadDisplacement(id + ivec2(1, 0));
+    vec3 d = loadDisplacement(id - ivec2(0, 1));
+    vec3 u = loadDisplacement(id + ivec2(0, 1));
 
-    float height = r.r;
-    float dx     = r.g;
-    float dz     = r.b;
+    float invStep2 = 0.5 / (PATCH / float(N));
+    float dDxDx = (r.x - l.x) * invStep2;
+    float dDxDy = (u.x - d.x) * invStep2;
+    float dDzDx = (r.y - l.y) * invStep2;
+    float dDzDy = (u.y - d.y) * invStep2;
 
-    imageStore(displacement, id, vec4(dx * CHOPPINESS, dz * CHOPPINESS, height, 0.0));
+    float jacobian = (1.0 + dDxDx) * (1.0 + dDzDy) - dDxDy * dDzDx;
+    float compression = smoothstep(0.020, 0.14, 1.0 - jacobian);
+
+    vec2 heightSlope = vec2((r.z - l.z), (u.z - d.z)) * invStep2;
+    float steep = smoothstep(0.024, 0.10, length(heightSlope));
+
+    float neighborMean = (l.z + r.z + d.z + u.z) * 0.25;
+    float crest = smoothstep(0.016, 0.090, c.z - neighborMean);
+    float curvature = smoothstep(0.024, 0.120, abs(c.z - neighborMean));
+
+    float whitecap = saturate(compression * steep * 0.78 + crest * curvature * steep * 0.52);
+    whitecap = pow(whitecap, 1.45);
+
+    imageStore(displacement, id, vec4(c.xy, c.z, whitecap));
 }

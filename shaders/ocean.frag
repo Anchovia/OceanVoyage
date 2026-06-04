@@ -19,7 +19,7 @@ layout(binding = 0) uniform UniformBufferObject {
 layout(binding = 1) uniform sampler2D planarReflection;
 layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
-layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (z = height)
+layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (z = height), w = whitecap seed
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -148,7 +148,8 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
 }
 
 void main() {
-    vec3  N = oceanDetailNormal(oceanBaseFrame(fragWorldPos.xy), ubo.animationParams.x);
+    OceanFrame frame = oceanBaseFrame(fragWorldPos.xy);
+    vec3  N = oceanDetailNormal(frame, ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
@@ -195,6 +196,19 @@ void main() {
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
     vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.72), validRefl);
     vec3 color = mix(water, reflection, F) + sunSpec;
+
+    float whitecapSeed = texture(oceanDisplacement, frame.sourceXY / PATCH).a;
+    vec2 foamUv0 = frame.sourceXY * 0.33 + vec2(0.021, -0.017) * ubo.animationParams.x;
+    vec2 foamUv1 = vec2(frame.sourceXY.y, -frame.sourceXY.x) * 0.57
+                 + vec2(-0.039, 0.026) * ubo.animationParams.x;
+    vec3 foamN0 = unpackNormal(texture(oceanNormalB, foamUv0).rgb);
+    vec3 foamN1 = unpackNormal(texture(oceanNormalA, foamUv1).rgb);
+    float breakup = smoothstep(-0.35, 0.55, foamN0.x * 0.48 + foamN0.y * 0.32 + foamN1.x * 0.20);
+    breakup = mix(0.42, 1.0, breakup);
+    float whitecap = smoothstep(0.070, 0.38, whitecapSeed) * breakup
+                   * (1.0 - smoothstep(220.0, 520.0, fragViewDepth));
+    vec3 foamColor = mix(vec3(0.62, 0.78, 0.82), vec3(1.0, 0.96, 0.86), dayFactor);
+    color = mix(color, foamColor, whitecap * mix(0.18, 0.42, dayFactor));
 
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);

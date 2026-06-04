@@ -18,7 +18,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 reflectionViewProj;
 } ubo;
 
-layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (xy choppy, z height)
+layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement, w = whitecap seed
 
 layout(location = 0) in vec3 inPos; // local ocean mesh position centered on origin (z ignored)
 
