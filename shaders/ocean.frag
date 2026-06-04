@@ -1,7 +1,7 @@
 #version 450
 
-// Ocean surface shading: Fresnel planar reflection + tiled normal-map detail,
-// GGX sun specular, depth-tinted water body, then fog.
+// Ocean surface shading: per-fragment FFT normal + tiled normal-map detail, Fresnel planar
+// reflection, GGX sun specular, depth-tinted water body, then fog.
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -18,15 +18,17 @@ layout(binding = 0) uniform UniformBufferObject {
 layout(binding = 1) uniform sampler2D planarReflection;
 layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
+layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (z = height)
 
-layout(location = 0) in vec3  fragNormal;
-layout(location = 1) in vec3  fragWorldPos;
-layout(location = 2) in float fragViewDepth;
-layout(location = 3) in vec4  fragReflectionClip;
+layout(location = 0) in vec3  fragWorldPos;
+layout(location = 1) in float fragViewDepth;
+layout(location = 2) in vec4  fragReflectionClip;
 
 layout(location = 0) out vec4 outColor;
 
-const float PI = 3.14159265;
+const float PI    = 3.14159265;
+const float PATCH  = 256.0; // world size of one FFT tile (must match the compute shaders)
+const float FFT_N  = 256.0;
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
@@ -57,6 +59,19 @@ vec3 unpackNormal(vec3 c) {
     return normalize(c * 2.0 - 1.0);
 }
 
+// Base wave normal from the FFT displacement height, evaluated per fragment so detail is not
+// limited by the ocean mesh tessellation. Central differences one texel apart in world space.
+vec3 oceanBaseNormal(vec2 worldXY) {
+    vec2  uv    = worldXY / PATCH;
+    float e     = 1.0 / FFT_N;
+    float hL    = texture(oceanDisplacement, uv - vec2(e, 0.0)).z;
+    float hR    = texture(oceanDisplacement, uv + vec2(e, 0.0)).z;
+    float hD    = texture(oceanDisplacement, uv - vec2(0.0, e)).z;
+    float hU    = texture(oceanDisplacement, uv + vec2(0.0, e)).z;
+    float wStep = 2.0 * (PATCH / FFT_N);
+    return normalize(vec3(hL - hR, hD - hU, wStep));
+}
+
 vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
     vec2 p = worldPos.xy;
 
@@ -79,7 +94,7 @@ vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
 }
 
 void main() {
-    vec3  N = oceanDetailNormal(normalize(fragNormal), fragWorldPos, ubo.animationParams.x);
+    vec3  N = oceanDetailNormal(oceanBaseNormal(fragWorldPos.xy), fragWorldPos, ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
@@ -127,9 +142,6 @@ void main() {
 
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);
-
-    // Placeholder height-only whitecaps are disabled. Proper ocean foam should come
-    // from slope/curvature plus authored foam masks or flow/noise textures.
 
     // Distance fog to the sky color (matches the chunk shader).
     const float FOG_START = 27.0;

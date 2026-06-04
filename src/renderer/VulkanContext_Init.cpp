@@ -639,11 +639,12 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // FFT displacement map — sampled by the ocean vertex shader to displace the mesh.
+    // FFT displacement map — sampled by the vertex shader (mesh displacement) and the
+    // fragment shader (per-fragment wave normal).
     bindings[4].binding         = 4;
     bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[4].descriptorCount = 1;
-    bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;

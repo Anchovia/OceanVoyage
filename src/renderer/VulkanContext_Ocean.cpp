@@ -753,7 +753,7 @@ void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
     dispAvail.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
     dispAvail.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &dispAvail);
 
     // Copy the displacement back to a host-visible buffer so the CPU can float the ship on the
