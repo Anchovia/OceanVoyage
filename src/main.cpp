@@ -331,6 +331,10 @@ int main() {
             if (input.rotateLeft)  orbitAngle -= rotSpeed;
             if (input.rotateRight) orbitAngle += rotSpeed;
 
+            // Scroll wheel drives chase-camera zoom (scroll up = zoom in).
+            if (input.scrollDelta != 0)
+                camera.zoom((float)input.scrollDelta * 2.5f);
+
             // Ctrl+S save (edge-detect)
             if (worldSessionStarted && app.consumeSavePress(input.saveKey))
                 world.save("save.dat", gameState.player().position(), gameState.time(),
