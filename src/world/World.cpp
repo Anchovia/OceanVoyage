@@ -487,8 +487,10 @@ bool World::inBounds(int x, int y, int z) const {
 }
 
 bool World::isWalkable(int x, int y, int z) const {
+    // Ocean base: the sea surface is traversable — the avatar (placeholder ship) sails
+    // on water. Solid ground (future islands) is also walkable; AIR/crops are not.
     TileType t = getTile(x, y, z);
-    return t != TileType::AIR && t != TileType::WATER && t != TileType::WHEAT;
+    return t != TileType::AIR && t != TileType::WHEAT;
 }
 
 glm::ivec3 World::worldToTile(const glm::vec3& position) const {
