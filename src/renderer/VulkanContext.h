@@ -155,6 +155,7 @@ private:
     };
     VkPipeline createPipeline(const PipelineConfig& cfg);
     void createGraphicsPipeline();
+    void createSkyPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createCommandBuffers();
@@ -294,6 +295,7 @@ private:
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
     VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;
     VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / selector (instancing)
+    VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
     VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;

@@ -20,6 +20,7 @@ struct UniformBufferObject {
     glm::vec4 animationParams; // x = game time seconds, yzw reserved
     glm::vec4 cameraPos; // xyz = camera world position (ocean Fresnel / specular)
     glm::mat4 reflectionViewProj; // planar water reflection projection for ocean sampling
+    glm::mat4 invViewProj; // inverse camera projection-view for full-screen sky reconstruction
 };
 
 struct PostPushConstants {

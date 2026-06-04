@@ -548,6 +548,19 @@ void VulkanContext::createGraphicsPipeline() {
     m_pipeline = createPipeline(cfg);
 }
 
+void VulkanContext::createSkyPipeline() {
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/post.vert.spv";
+    cfg.fragPath   = "shaders/sky.frag.spv";
+    cfg.bindings   = {};
+    cfg.attributes = {};
+    cfg.cullMode   = VK_CULL_MODE_NONE;
+    cfg.depthTest  = false;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_pipelineLayout; // reuse the scene UBO descriptor set
+    m_skyPipeline = createPipeline(cfg);
+}
+
 void VulkanContext::createChunkPipeline() {
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/chunk.vert.spv";

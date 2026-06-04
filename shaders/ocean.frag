@@ -56,6 +56,12 @@ float geometrySmith(float NdotV, float NdotL, float roughness) {
     return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
 }
 
+float sunGlitterLobe(float NdotH, float NdotV, float NdotL, float roughness) {
+    float D = distributionGGX(NdotH, roughness);
+    float G = geometrySmith(NdotV, NdotL, roughness);
+    return D * G / max(4.0 * NdotV * NdotL, 0.0001);
+}
+
 vec3 unpackNormal(vec3 c) {
     return normalize(c * 2.0 - 1.0);
 }
@@ -138,13 +144,6 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
     float horizonAerial = exp(-viewUp * 7.5) * smoothstep(0.02, 0.75, dayFactor);
     sky += horizon * horizonAerial * 0.16;
 
-    float sunCos = saturate(dot(dir, sunDir));
-    float miePower = mix(14.0, 86.0, sunUp);
-    float sunGlow = pow(sunCos, miePower) * smoothstep(0.02, 0.70, dayFactor);
-    float sunDisc = smoothstep(0.99965, 0.99995, sunCos) * smoothstep(0.02, 0.35, dayFactor);
-    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
-    sky += sunTint * (sunGlow * mix(1.35, 0.62, sunUp) + sunDisc * 7.5);
-
     return max(sky, vec3(0.0));
 }
 
@@ -154,8 +153,7 @@ void main() {
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
 
-    const vec3  WATER_F0  = vec3(0.02);
-    const float ROUGHNESS = 0.12;
+    const vec3 WATER_F0 = vec3(0.02);
 
     // Schlick Fresnel (F0 ~ 0.02 for water): grazing angles reflect the sky.
     float NdotV = max(dot(N, V), 0.0);
@@ -176,12 +174,14 @@ void main() {
     float NdotL = max(dot(N, L), 0.0);
     float NdotH = max(dot(N, H), 0.0);
     float VdotH = max(dot(V, H), 0.0);
-    float D     = distributionGGX(NdotH, ROUGHNESS);
-    float G     = geometrySmith(NdotV, NdotL, ROUGHNESS);
     vec3  Fs    = fresnelSchlick(VdotH, WATER_F0);
     vec3  sunColor = vec3(1.0, 0.92, 0.70);
-    vec3  sunSpec = (D * G * Fs / max(4.0 * NdotV * NdotL, 0.0001))
-                  * sunColor * NdotL * smoothstep(0.02, 0.70, dayFactor) * 1.25;
+    float sunGate = smoothstep(0.02, 0.70, dayFactor);
+    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.055);
+    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.16);
+    float grazingPath = pow(saturate(dot(R, L)), 18.0) * clamp(1.0 - NdotV, 0.0, 1.0);
+    vec3  sunSpec = (tightSun * 0.42 + broadSun * 0.18 + grazingPath * 0.55)
+                  * Fs * sunColor * NdotL * sunGate;
 
     // Water body: deeper/darker looking straight down, lighter at grazing angles.
     vec3 water = mix(shallowColor, deepColor, NdotV);

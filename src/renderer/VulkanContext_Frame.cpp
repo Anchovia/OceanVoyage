@@ -372,6 +372,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
         m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
 
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+
     // Chunk mesh (hidden face culling, dedicated pipeline)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
     for (auto& [coord, data] : m_chunkBuffers) {
@@ -819,6 +822,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
+    ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
     m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
@@ -838,6 +842,7 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(reflectionCameraPos, 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
+    ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
