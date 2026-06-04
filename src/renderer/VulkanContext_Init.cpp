@@ -617,7 +617,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[2]{};
+    VkDescriptorSetLayoutBinding bindings[4]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -629,9 +629,19 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[3].binding         = 3;
+    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 2;
+    info.bindingCount = 4;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -704,6 +714,89 @@ void VulkanContext::createOceanMesh() {
     vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped);
     memcpy(iMapped, indices.data(), iSize);
     vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
+}
+
+void VulkanContext::createOceanNormalTextures() {
+    struct Wave {
+        float fx, fy;
+        float amp;
+        float phase;
+    };
+
+    auto makeNormalMap = [](uint32_t size, const std::vector<Wave>& waves, float strength) {
+        std::vector<uint8_t> pixels((size_t)size * (size_t)size * 4);
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                const float u = (float)x / (float)size;
+                const float v = (float)y / (float)size;
+                glm::vec2 slope(0.0f);
+
+                for (const Wave& w : waves) {
+                    const float phase = 6.2831853f * (w.fx * u + w.fy * v) + w.phase;
+                    const float c = std::cos(phase);
+                    slope.x += w.amp * w.fx * c;
+                    slope.y += w.amp * w.fy * c;
+                }
+
+                slope *= strength;
+                glm::vec3 n = glm::normalize(glm::vec3(-slope.x, -slope.y, 1.0f));
+                uint8_t* p = &pixels[((size_t)y * size + x) * 4];
+                p[0] = (uint8_t)(std::clamp(n.x * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[1] = (uint8_t)(std::clamp(n.y * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[2] = (uint8_t)(std::clamp(n.z * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[3] = 255;
+            }
+        }
+        return pixels;
+    };
+
+    auto uploadTiledNormalMap = [this](uint32_t width, uint32_t height, const std::vector<uint8_t>& pixels) {
+        TextureResource tex = createTexture(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+            pixels.data(), (VkDeviceSize)pixels.size(), /*withSampler=*/false, /*mipmapped=*/true);
+
+        const uint32_t mipLevels = (uint32_t)std::floor(std::log2((float)std::max(width, height))) + 1u;
+        VkSamplerCreateInfo si{};
+        si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter    = VK_FILTER_LINEAR;
+        si.minFilter    = VK_FILTER_LINEAR;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.minLod       = 0.0f;
+        si.maxLod       = (float)mipLevels;
+        si.anisotropyEnable = m_anisotropyEnabled ? VK_TRUE : VK_FALSE;
+        si.maxAnisotropy    = m_maxAnisotropy;
+        if (vkCreateSampler(m_device, &si, nullptr, &tex.sampler) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create ocean normal sampler");
+
+        return tex;
+    };
+
+    // Tileable multi-frequency normal maps. They are generated once, then sampled like
+    // ordinary authored ocean normals with mipmaps and anisotropic filtering.
+    static const std::vector<Wave> wavesA = {
+        {  6.0f,   2.0f, 0.095f, 0.20f },
+        { -4.0f,   9.0f, 0.055f, 1.70f },
+        { 13.0f,  -5.0f, 0.032f, 4.10f },
+        { 19.0f,  11.0f, 0.018f, 2.60f },
+        {-23.0f,  17.0f, 0.012f, 5.30f },
+    };
+    static const std::vector<Wave> wavesB = {
+        { 11.0f,  -3.0f, 0.070f, 3.00f },
+        { -8.0f, -13.0f, 0.046f, 0.80f },
+        { 21.0f,   7.0f, 0.025f, 2.20f },
+        {-29.0f,  19.0f, 0.014f, 4.70f },
+        { 35.0f, -31.0f, 0.009f, 1.30f },
+    };
+
+    const uint32_t A_SIZE = 1024;
+    const uint32_t B_SIZE = 512;
+    std::vector<uint8_t> normalA = makeNormalMap(A_SIZE, wavesA, 0.018f);
+    std::vector<uint8_t> normalB = makeNormalMap(B_SIZE, wavesB, 0.014f);
+
+    m_oceanNormalA = uploadTiledNormalMap(A_SIZE, A_SIZE, normalA);
+    m_oceanNormalB = uploadTiledNormalMap(B_SIZE, B_SIZE, normalB);
 }
 
 void VulkanContext::createShipPipeline() {
@@ -3245,7 +3338,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 3;
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3281,7 +3374,17 @@ void VulkanContext::updateOceanDescriptors() {
         reflectionInfo.imageView   = m_reflectionView[i];
         reflectionInfo.sampler     = m_postSampler;
 
-        VkWriteDescriptorSet writes[2]{};
+        VkDescriptorImageInfo normalAInfo{};
+        normalAInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalAInfo.imageView   = m_oceanNormalA.view;
+        normalAInfo.sampler     = m_oceanNormalA.sampler;
+
+        VkDescriptorImageInfo normalBInfo{};
+        normalBInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalBInfo.imageView   = m_oceanNormalB.view;
+        normalBInfo.sampler     = m_oceanNormalB.sampler;
+
+        VkWriteDescriptorSet writes[4]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3296,7 +3399,21 @@ void VulkanContext::updateOceanDescriptors() {
         writes[1].descriptorCount = 1;
         writes[1].pImageInfo      = &reflectionInfo;
 
-        vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_oceanDescriptorSets[i];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].descriptorCount = 1;
+        writes[2].pImageInfo      = &normalAInfo;
+
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = m_oceanDescriptorSets[i];
+        writes[3].dstBinding      = 3;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].descriptorCount = 1;
+        writes[3].pImageInfo      = &normalBInfo;
+
+        vkUpdateDescriptorSets(m_device, 4, writes, 0, nullptr);
     }
 }
 

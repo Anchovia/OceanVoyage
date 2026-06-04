@@ -65,6 +65,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createUIBuffer();
     createObjectMeshes();
     createOceanMesh();
+    createOceanNormalTextures();
     createGrassTexture();
     createTerrainTextureArray();
     createItemMesh();
@@ -111,6 +112,8 @@ VulkanContext::~VulkanContext() {
     m_selectorVertexBuffer.destroy();
     m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
     for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
+    m_oceanNormalB.destroy();
+    m_oceanNormalA.destroy();
     m_shipMesh.vbuf.destroy();
     m_grassClumpMesh.vbuf.destroy();
     m_grassCardMesh.vbuf.destroy();

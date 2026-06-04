@@ -1,7 +1,7 @@
 #version 450
 
-// Ocean surface shading: Fresnel planar reflection + GGX sun specular,
-// depth-tinted water body, whitecaps, then fog.
+// Ocean surface shading: Fresnel planar reflection + tiled normal-map detail,
+// GGX sun specular, depth-tinted water body, then fog.
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -16,6 +16,8 @@ layout(binding = 0) uniform UniformBufferObject {
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
+layout(binding = 2) uniform sampler2D oceanNormalA;
+layout(binding = 3) uniform sampler2D oceanNormalB;
 
 layout(location = 0) in vec3  fragNormal;
 layout(location = 1) in vec3  fragWorldPos;
@@ -51,8 +53,33 @@ float geometrySmith(float NdotV, float NdotL, float roughness) {
     return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
 }
 
+vec3 unpackNormal(vec3 c) {
+    return normalize(c * 2.0 - 1.0);
+}
+
+vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
+    vec2 p = worldPos.xy;
+
+    vec2 uvA0 = p * 0.035 + vec2( 0.018,  0.007) * t;
+    vec2 uvA1 = vec2(p.y, -p.x) * 0.052 + vec2(-0.014,  0.019) * t;
+    vec2 uvB0 = p * 0.110 + vec2(-0.041,  0.028) * t;
+    vec2 uvB1 = vec2(-p.y, p.x) * 0.170 + vec2( 0.067, -0.036) * t;
+
+    vec3 nA0 = unpackNormal(texture(oceanNormalA, uvA0).rgb);
+    vec3 nA1 = unpackNormal(texture(oceanNormalA, uvA1).rgb);
+    vec3 nB0 = unpackNormal(texture(oceanNormalB, uvB0).rgb);
+    vec3 nB1 = unpackNormal(texture(oceanNormalB, uvB1).rgb);
+
+    vec2 detailSlope = nA0.xy * 0.18
+                     + nA1.xy * 0.12
+                     + nB0.xy * 0.075
+                     + nB1.xy * 0.045;
+
+    return normalize(vec3(baseN.xy + detailSlope, max(baseN.z, 0.08)));
+}
+
 void main() {
-    vec3  N = normalize(fragNormal);
+    vec3  N = oceanDetailNormal(normalize(fragNormal), fragWorldPos, ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;

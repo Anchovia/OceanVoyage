@@ -199,6 +199,7 @@ private:
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
     void createObjectMeshes();
     void createGrassTexture();
+    void createOceanNormalTextures();
     void createTerrainTextureArray();
     void createItemMesh();
     void createDropInstanceBuffer();
@@ -388,6 +389,10 @@ private:
     // split out so foliage material maps can expand without repacking the color image.
     TextureResource m_grassTex;
     TextureResource m_grassOpacityTex;
+
+    // Multi-scale ocean normal maps (UNORM, mipmapped, anisotropic).
+    TextureResource m_oceanNormalA;
+    TextureResource m_oceanNormalB;
 
     // Terrain material texture array (sampler2DArray, one layer per tile material).
     TextureResource m_terrainTex;
