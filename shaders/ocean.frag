@@ -12,11 +12,15 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 fogColor;        // rgb = sky color
     vec4 animationParams;
     vec4 cameraPos;       // xyz = camera world position
+    mat4 reflectionViewProj;
 } ubo;
+
+layout(binding = 1) uniform sampler2D planarReflection;
 
 layout(location = 0) in vec3  fragNormal;
 layout(location = 1) in vec3  fragWorldPos;
 layout(location = 2) in float fragViewDepth;
+layout(location = 3) in vec4  fragReflectionClip;
 
 layout(location = 0) out vec4 outColor;
 
@@ -45,7 +49,16 @@ void main() {
 
     // Water body: deeper/darker looking straight down, lighter at grazing angles.
     vec3 water = mix(shallowColor, deepColor, NdotV);
-    vec3 color = mix(water, skyRefl, F);
+
+    vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
+    vec2 reflUV   = reflProj.xy * 0.5 + 0.5;
+    reflUV += N.xy * 0.035 * clamp(1.0 - NdotV, 0.0, 1.0);
+    vec3 sceneRefl = texture(planarReflection, clamp(reflUV, vec2(0.0), vec2(1.0))).rgb;
+    float validRefl = step(0.0, reflUV.x) * step(reflUV.x, 1.0)
+                    * step(0.0, reflUV.y) * step(reflUV.y, 1.0)
+                    * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
+    vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.72), validRefl);
+    vec3 color = mix(water, reflection, F);
 
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);

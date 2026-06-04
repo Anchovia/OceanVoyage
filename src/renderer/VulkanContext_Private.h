@@ -18,6 +18,7 @@ struct UniformBufferObject {
     glm::vec4 fogColor; // rgb = sky color at current time of day
     glm::vec4 animationParams; // x = game time seconds, yzw reserved
     glm::vec4 cameraPos; // xyz = camera world position (ocean Fresnel / specular)
+    glm::mat4 reflectionViewProj; // planar water reflection projection for ocean sampling
 };
 
 struct PostPushConstants {

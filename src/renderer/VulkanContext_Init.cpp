@@ -614,7 +614,35 @@ void VulkanContext::createObjectPipeline() {
     m_objectPipeline = createPipeline(cfg);
 }
 
+void VulkanContext::createOceanDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding bindings[2]{};
+
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo info{};
+    info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.bindingCount = 2;
+    info.pBindings    = bindings;
+    if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean descriptor set layout");
+}
+
 void VulkanContext::createOceanPipeline() {
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts    = &m_oceanDescriptorSetLayout;
+    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_oceanPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean pipeline layout");
+
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/ocean.vert.spv";
     cfg.fragPath   = "shaders/ocean.frag.spv";
@@ -627,7 +655,7 @@ void VulkanContext::createOceanPipeline() {
     cfg.cullMode   = VK_CULL_MODE_NONE;  // two-sided: visible from under a wave crest
     cfg.depthTest  = true;
     cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;   // reuse UBO + shadow descriptor layout
+    cfg.layout     = m_oceanPipelineLayout;
     m_oceanPipeline = createPipeline(cfg);
 }
 
@@ -1504,6 +1532,22 @@ void VulkanContext::createFramebuffers() {
             throw std::runtime_error("Failed to create scene framebuffer");
     }
 
+    // Planar reflection framebuffers — mirrored scene color + shared depth.
+    m_reflectionFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkImageView attachments[] = { m_reflectionView[i], m_depthImageView };
+        VkFramebufferCreateInfo info{};
+        info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass      = m_renderPass;
+        info.attachmentCount = 2;
+        info.pAttachments    = attachments;
+        info.width           = m_swapchainExtent.width;
+        info.height          = m_swapchainExtent.height;
+        info.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &info, nullptr, &m_reflectionFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create planar reflection framebuffer");
+    }
+
     // Post framebuffers — one per swapchain image
     m_postFramebuffers.resize(m_swapchainImageViews.size());
     for (size_t i = 0; i < m_swapchainImageViews.size(); i++) {
@@ -1654,6 +1698,30 @@ void VulkanContext::createOffscreenResources() {
         v.subresourceRange.layerCount     = 1;
         if (vkCreateImageView(m_device, &v, nullptr, &m_offscreenView[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create offscreen image view");
+    }
+}
+
+void VulkanContext::createPlanarReflectionResources() {
+    m_reflectionImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_reflectionMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_reflectionView.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_reflectionImage[i], m_reflectionMemory[i]);
+
+        VkImageViewCreateInfo v{};
+        v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        v.image                           = m_reflectionImage[i];
+        v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        v.format                          = m_swapchainFormat;
+        v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        v.subresourceRange.levelCount     = 1;
+        v.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &v, nullptr, &m_reflectionView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create planar reflection image view");
     }
 }
 
@@ -2978,21 +3046,33 @@ void VulkanContext::createUniformBuffers() {
     }
 }
 
+void VulkanContext::createReflectionUniformBuffers() {
+    VkDeviceSize size = sizeof(UniformBufferObject);
+    m_reflectionUniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_reflectionUniformBuffers[i] = createBuffer(size,
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped);
+    }
+}
+
 // ============================================================
 //  Descriptor pool + sets
 // ============================================================
 void VulkanContext::createDescriptorPool() {
     VkDescriptorPoolSize poolSizes[2]{};
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // shadow + grass color + terrain array + grass opacity
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // main + reflection scene descriptors
 
     VkDescriptorPoolCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     info.poolSizeCount = 2;
     info.pPoolSizes    = poolSizes;
-    info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    info.maxSets       = MAX_FRAMES_IN_FLIGHT * 2;
 
     if (vkCreateDescriptorPool(m_device, &info, nullptr, &m_descriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor pool");
@@ -3073,6 +3153,144 @@ void VulkanContext::createDescriptorSets() {
         writes[4].pImageInfo      = &grassOpacityInfo;
 
         vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+    }
+}
+
+void VulkanContext::createReflectionDescriptorSets() {
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_descriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool     = m_descriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    m_reflectionDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, m_reflectionDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate reflection descriptor sets");
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_reflectionUniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range  = sizeof(UniformBufferObject);
+
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        imageInfo.imageView   = m_shadowImageView;
+        imageInfo.sampler     = m_shadowSampler;
+
+        VkDescriptorImageInfo grassInfo{};
+        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        grassInfo.imageView   = m_grassTex.view;
+        grassInfo.sampler     = m_grassTex.sampler;
+
+        VkDescriptorImageInfo grassOpacityInfo{};
+        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
+        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
+
+        VkDescriptorImageInfo terrainInfo{};
+        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        terrainInfo.imageView   = m_terrainTex.view;
+        terrainInfo.sampler     = m_terrainTex.sampler;
+
+        VkWriteDescriptorSet writes[5]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_reflectionDescriptorSets[i];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo     = &bufferInfo;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_reflectionDescriptorSets[i];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &imageInfo;
+
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_reflectionDescriptorSets[i];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].descriptorCount = 1;
+        writes[2].pImageInfo      = &grassInfo;
+
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = m_reflectionDescriptorSets[i];
+        writes[3].dstBinding      = 3;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].descriptorCount = 1;
+        writes[3].pImageInfo      = &terrainInfo;
+
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = m_reflectionDescriptorSets[i];
+        writes[4].dstBinding      = 4;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].descriptorCount = 1;
+        writes[4].pImageInfo      = &grassOpacityInfo;
+
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+    }
+}
+
+void VulkanContext::createOceanDescriptors() {
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes    = poolSizes;
+    poolInfo.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_oceanDescriptorPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean descriptor pool");
+
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_oceanDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool     = m_oceanDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    m_oceanDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, m_oceanDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate ocean descriptor sets");
+
+    updateOceanDescriptors();
+}
+
+void VulkanContext::updateOceanDescriptors() {
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range  = sizeof(UniformBufferObject);
+
+        VkDescriptorImageInfo reflectionInfo{};
+        reflectionInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        reflectionInfo.imageView   = m_reflectionView[i];
+        reflectionInfo.sampler     = m_postSampler;
+
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_oceanDescriptorSets[i];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo     = &bufferInfo;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_oceanDescriptorSets[i];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &reflectionInfo;
+
+        vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
     }
 }
 

@@ -34,6 +34,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createPostRenderPass();
     createSmaaRenderPass();
     createDescriptorSetLayout();
+    createOceanDescriptorSetLayout();
     createGraphicsPipeline();
     createChunkPipeline();
     createUIPipeline();
@@ -45,6 +46,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createSmaaPipelines();
     createDepthResources();
     createOffscreenResources();
+    createPlanarReflectionResources();
     createSmaaResources();
     createShadowResources();
     createShadowPipeline();
@@ -70,10 +72,13 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     rebuildDirtyChunks();
     createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
     createUniformBuffers();
+    createReflectionUniformBuffers();
     createShadowSampler();
     createPostSampler();
     createDescriptorPool();
     createDescriptorSets();
+    createReflectionDescriptorSets();
+    createOceanDescriptors();
     createShadowGrassDescriptors();
     createPostDescriptors();
     createSmaaDescriptors();
@@ -96,7 +101,10 @@ VulkanContext::~VulkanContext() {
 
     m_uniformBuffers.clear();
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    vkDestroyDescriptorPool(m_device, m_oceanDescriptorPool, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_oceanDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+    m_reflectionUniformBuffers.clear();
     m_playerInstBuffer.clear();
     m_selectorInstBuffer.clear();
     m_selectorIndexBuffer.destroy();
@@ -121,6 +129,7 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline(m_device, m_shipPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_oceanPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_pipeline, nullptr);
@@ -303,6 +312,12 @@ void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format
 //  Swapchain cleanup / recreation
 // ============================================================
 void VulkanContext::cleanupSwapchain() {
+    for (auto fb : m_sceneFramebuffers)    vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_reflectionFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_smaaBlendFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage    (m_device, m_depthImage,     nullptr);
     vkFreeMemory      (m_device, m_depthImageMemory, nullptr);
@@ -310,6 +325,11 @@ void VulkanContext::cleanupSwapchain() {
         vkDestroyImageView(m_device, m_offscreenView[i],   nullptr);
         vkDestroyImage    (m_device, m_offscreenImage[i],  nullptr);
         vkFreeMemory      (m_device, m_offscreenMemory[i], nullptr);
+    }
+    for (size_t i = 0; i < m_reflectionImage.size(); i++) {
+        vkDestroyImageView(m_device, m_reflectionView[i],   nullptr);
+        vkDestroyImage    (m_device, m_reflectionImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_reflectionMemory[i], nullptr);
     }
     for (size_t i = 0; i < m_smaaEdgeImage.size(); i++) {
         vkDestroyImageView(m_device, m_smaaEdgeView[i],   nullptr);
@@ -321,10 +341,6 @@ void VulkanContext::cleanupSwapchain() {
         vkDestroyImage    (m_device, m_smaaBlendImage[i],  nullptr);
         vkFreeMemory      (m_device, m_smaaBlendMemory[i], nullptr);
     }
-    for (auto fb : m_sceneFramebuffers)    vkDestroyFramebuffer(m_device, fb, nullptr);
-    for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
-    for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
-    for (auto fb : m_smaaBlendFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto iv : m_swapchainImageViews)  vkDestroyImageView  (m_device, iv, nullptr);
     vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);
 }
@@ -342,9 +358,11 @@ void VulkanContext::recreateSwapchain() {
     createImageViews();
     createDepthResources();
     createOffscreenResources();
+    createPlanarReflectionResources();
     createSmaaResources();
     createFramebuffers();
     updatePostDescriptors();   // offscreen views were recreated
+    updateOceanDescriptors();  // planar reflection views were recreated
     updateSmaaDescriptors();   // SMAA intermediate views were recreated
 
     // Swapchain image count may have changed — recreate per-image present semaphores

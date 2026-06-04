@@ -242,6 +242,109 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     writeDevTimestamp(cmd, 1);
 #endif
 
+    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
+
+    // Planar reflection pass — render the scene once from a camera mirrored across the
+    // water plane. The ocean shader samples this color target with projected UVs.
+    if (worldVisible && !m_reflectionFramebuffers.empty()) {
+        VkClearValue reflClear[2];
+        reflClear[0].color        = {{m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f}};
+        reflClear[1].depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo reflRp{};
+        reflRp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        reflRp.renderPass      = m_renderPass;
+        reflRp.framebuffer     = m_reflectionFramebuffers[m_currentFrame];
+        reflRp.renderArea      = {{0, 0}, m_swapchainExtent};
+        reflRp.clearValueCount = 2;
+        reflRp.pClearValues    = reflClear;
+
+        vkCmdBeginRenderPass(cmd, &reflRp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport reflViewport{ 0.0f, 0.0f, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+        VkRect2D   reflScissor{ {0, 0}, m_swapchainExtent };
+        vkCmdSetViewport(cmd, 0, 1, &reflViewport);
+        vkCmdSetScissor(cmd, 0, 1, &reflScissor);
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_pipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            VkBuffer     vBuf[] = { data.vertexBuffer };
+            VkDeviceSize offs[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
+            vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
+        }
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (data.groundPatchCount == 0 && data.pebbleCount == 0 && data.objGroups.empty()) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            if (m_groundPatchMesh.count > 0 && data.groundPatchCount > 0) {
+                VkBuffer     bufs[] = { m_groundPatchMesh.vbuf, data.groundPatchBuffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, m_groundPatchMesh.count, data.groundPatchCount, 0, 0);
+            }
+
+            if (m_pebbleMesh.count > 0 && data.pebbleCount > 0) {
+                VkBuffer     bufs[] = { m_pebbleMesh.vbuf, data.pebbleBuffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, m_pebbleMesh.count, data.pebbleCount, 0, 0);
+            }
+
+            for (auto& g : data.objGroups) {
+                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
+                if (mesh.count == 0 || g.count == 0) continue;
+                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
+            }
+        }
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
+            VkDeviceSize offs[] = { 0, 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
+        }
+
+        if (m_shipMesh.count > 0) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_shipPipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
+            vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                0, sizeof(glm::mat4), &m_shipModel);
+            VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+            VkDeviceSize sOffs[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+            vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
+        }
+
+        vkCmdEndRenderPass(cmd);
+    }
+
     VkClearValue clearValues[2];
     clearValues[0].color        = {{m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f}};
     clearValues[1].depthStencil = {1.0f, 0};
@@ -346,12 +449,13 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     // Player / selector / drops — dynamic world entities, hidden in menu states
     // (MainMenu/Settings/Loading) so no orphan player cube shows behind the menu.
-    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
 
     // Ocean surface — Gerstner-wave grid that follows the camera. Opaque + depth-tested
     // so the ship and (future) islands occlude it correctly.
     if (worldVisible && m_oceanIndexCount > 0) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_oceanPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_oceanPipelineLayout, 0, 1, &m_oceanDescriptorSets[m_currentFrame], 0, nullptr);
         VkBuffer     oBufs[] = { m_oceanVertexBuffer };
         VkDeviceSize oOffs[] = { 0 };
         vkCmdBindVertexBuffers(cmd, 0, 1, oBufs, oOffs);
@@ -360,6 +464,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
     vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
     if (worldVisible && m_showSelector) {
@@ -620,6 +726,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
+    updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
@@ -667,8 +774,35 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 // ============================================================
 //  Per-frame update functions
 // ============================================================
+namespace {
+constexpr float WATER_REFLECTION_PLANE_Z = 0.5f;
+
+glm::vec3 reflectPointAcrossWater(const glm::vec3& p) {
+    return { p.x, p.y, 2.0f * WATER_REFLECTION_PLANE_Z - p.z };
+}
+
+glm::vec3 reflectVectorAcrossWater(const glm::vec3& v) {
+    return { v.x, v.y, -v.z };
+}
+
+glm::mat4 planarReflectionView(const Camera& camera, glm::vec3& outCameraPos) {
+    glm::mat4 invView = glm::inverse(camera.view());
+    glm::vec3 camPos  = glm::vec3(invView[3]);
+    glm::vec3 forward = -glm::vec3(invView[2]);
+    glm::vec3 up      =  glm::vec3(invView[1]);
+
+    outCameraPos = reflectPointAcrossWater(camPos);
+    glm::vec3 reflectedForward = glm::normalize(reflectVectorAcrossWater(forward));
+    glm::vec3 reflectedUp      = glm::normalize(reflectVectorAcrossWater(up));
+    return glm::lookAt(outCameraPos, outCameraPos + reflectedForward, reflectedUp);
+}
+} // namespace
+
 void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
     UniformBufferObject ubo{};
+    glm::vec3 reflectionCameraPos;
+    glm::mat4 reflectionView = planarReflectionView(camera, reflectionCameraPos);
+
     ubo.model    = glm::mat4(1.0f);
     ubo.view     = camera.view();
     ubo.proj     = camera.proj();
@@ -677,7 +811,25 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
     ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
+    ubo.reflectionViewProj = camera.proj() * reflectionView;
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+}
+
+void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
+    UniformBufferObject ubo{};
+    glm::vec3 reflectionCameraPos;
+    glm::mat4 reflectionView = planarReflectionView(camera, reflectionCameraPos);
+
+    ubo.model    = glm::mat4(1.0f);
+    ubo.view     = reflectionView;
+    ubo.proj     = camera.proj();
+    ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor);
+    ubo.lightMVP = m_lightMVP;
+    ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
+    ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
+    ubo.cameraPos       = glm::vec4(reflectionCameraPos, 1.0f);
+    ubo.reflectionViewProj = camera.proj() * reflectionView;
+    memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
 void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) {

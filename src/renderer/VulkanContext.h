@@ -173,12 +173,14 @@ private:
     void createUIBuffer();
     void updateHotbar();
     void createObjectPipeline();
+    void createOceanDescriptorSetLayout();
     void createOceanPipeline();
     void createOceanMesh();
     void createShipPipeline();
     void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
+    void createPlanarReflectionResources();
     void createPostPipeline();
     void createPostSampler();
     void createPostDescriptors();
@@ -203,9 +205,14 @@ private:
     void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
     void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
     void createUniformBuffers();
+    void createReflectionUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
+    void createReflectionDescriptorSets();
+    void createOceanDescriptors();
+    void updateOceanDescriptors();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
+    void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
     void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
     void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
@@ -284,6 +291,10 @@ private:
     VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
     VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
+    VkPipelineLayout         m_oceanPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout    m_oceanDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool         m_oceanDescriptorPool      = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanDescriptorSets;
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
@@ -298,6 +309,12 @@ private:
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+
+    // Planar water reflection: mirrored scene color sampled by the ocean shader.
+    std::vector<VkFramebuffer>   m_reflectionFramebuffers;
+    std::vector<VkImage>         m_reflectionImage;
+    std::vector<VkDeviceMemory>  m_reflectionMemory;
+    std::vector<VkImageView>     m_reflectionView;
 
     // SMAA 1x: scene color -> edge weights -> blend weights -> swapchain
     VkRenderPass             m_smaaRenderPass                 = VK_NULL_HANDLE;
@@ -430,6 +447,8 @@ private:
     std::vector<GpuBuffer>       m_uniformBuffers;
     VkDescriptorPool             m_descriptorPool   = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<GpuBuffer>       m_reflectionUniformBuffers;
+    std::vector<VkDescriptorSet> m_reflectionDescriptorSets;
 
     VkCommandPool            m_commandPool      = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;

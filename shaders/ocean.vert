@@ -13,6 +13,7 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 fogColor;        // rgb = sky color
     vec4 animationParams; // x = game time seconds
     vec4 cameraPos;       // xyz = camera world position
+    mat4 reflectionViewProj;
 } ubo;
 
 layout(location = 0) in vec3 inPos; // flat grid position centered on origin (z ignored)
@@ -20,6 +21,7 @@ layout(location = 0) in vec3 inPos; // flat grid position centered on origin (z 
 layout(location = 0) out vec3  fragNormal;
 layout(location = 1) out vec3  fragWorldPos;
 layout(location = 2) out float fragViewDepth;
+layout(location = 3) out vec4  fragReflectionClip;
 
 const float SEA_LEVEL = 0.5;
 const int   NWAVES    = 4;
@@ -77,4 +79,5 @@ void main() {
     fragNormal    = normal;
     fragWorldPos  = pos;
     fragViewDepth = -viewPos.z;
+    fragReflectionClip = ubo.reflectionViewProj * worldPos;
 }
