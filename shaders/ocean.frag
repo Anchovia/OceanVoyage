@@ -59,17 +59,27 @@ vec3 unpackNormal(vec3 c) {
     return normalize(c * 2.0 - 1.0);
 }
 
-// Base wave normal from the FFT displacement height, evaluated per fragment so detail is not
-// limited by the ocean mesh tessellation. Central differences one texel apart in world space.
+vec3 oceanDisplacedPoint(vec2 sourceXY) {
+    vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
+    return vec3(sourceXY + d.xy, d.z);
+}
+
+// Base wave normal from the full FFT displacement, evaluated per fragment so detail is not
+// limited by the ocean mesh tessellation. The rendered ocean is horizontally displaced
+// (choppy), so the normal must come from the displaced surface tangents, not height alone.
 vec3 oceanBaseNormal(vec2 worldXY) {
-    vec2  uv    = worldXY / PATCH;
-    float e     = 1.0 / FFT_N;
-    float hL    = texture(oceanDisplacement, uv - vec2(e, 0.0)).z;
-    float hR    = texture(oceanDisplacement, uv + vec2(e, 0.0)).z;
-    float hD    = texture(oceanDisplacement, uv - vec2(0.0, e)).z;
-    float hU    = texture(oceanDisplacement, uv + vec2(0.0, e)).z;
-    float wStep = 2.0 * (PATCH / FFT_N);
-    return normalize(vec3(hL - hR, hD - hU, wStep));
+    vec2 sourceXY = worldXY;
+    for (int i = 0; i < 2; ++i) {
+        vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
+        sourceXY = worldXY - d.xy;
+    }
+
+    float step = PATCH / FFT_N;
+    vec3 pL = oceanDisplacedPoint(sourceXY - vec2(step, 0.0));
+    vec3 pR = oceanDisplacedPoint(sourceXY + vec2(step, 0.0));
+    vec3 pD = oceanDisplacedPoint(sourceXY - vec2(0.0, step));
+    vec3 pU = oceanDisplacedPoint(sourceXY + vec2(0.0, step));
+    return normalize(cross(pR - pL, pU - pD));
 }
 
 vec3 oceanDetailNormal(vec3 baseN, vec3 worldPos, float t) {
