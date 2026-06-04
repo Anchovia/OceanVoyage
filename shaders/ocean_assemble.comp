@@ -4,39 +4,45 @@
 // The IFFT result packs the height and horizontal displacement (.r = Dy height, .g = Dx,
 // .b = Dz). The (-1)^(x+y) factor undoes the centred-spectrum index shift, and choppiness
 // scales the horizontal displacement that sharpens wave crests. Alpha stores a Jacobian
-// compression + crest-curvature whitecap seed for the later foam simulation path.
+// compression + crest-curvature whitecap seed for a future production foam/wake path.
+// One array layer per cascade (gl_GlobalInvocationID.z), each with its own patch size.
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0, rgba32f) uniform readonly  image2D fftResult;    // .r=Dy, .g=Dx, .b=Dz
-layout(binding = 1, rgba16f) uniform writeonly image2D displacement; // xyz = world displacement, a = whitecap seed
+layout(binding = 0, rgba32f) uniform readonly  image2DArray fftResult;    // .r=Dy, .g=Dx, .b=Dz
+layout(binding = 1, rgba16f) uniform writeonly image2DArray displacement; // xyz = world displacement, a = whitecap seed
+layout(binding = 2, rgba16f) uniform writeonly image2DArray slope;        // rg = world height gradient (dH/dx, dH/dy)
 
 const int   N          = 512;
-const float PATCH      = 256.0;
-const float CHOPPINESS  = 0.5; // horizontal displacement scale (crest sharpness)
+const int   CASCADES   = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0);
+const float CHOPPINESS  = 1.3; // horizontal displacement scale (crest sharpness)
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
 }
 
-vec3 loadDisplacement(ivec2 p) {
+vec3 loadDisplacement(ivec2 p, int layer) {
     ivec2 q = ivec2((p.x + N) % N, (p.y + N) % N);
     float sgn = (((q.x + q.y) & 1) == 0) ? 1.0 : -1.0;
-    vec4  r   = imageLoad(fftResult, q) * sgn;
+    vec4  r   = imageLoad(fftResult, ivec3(q, layer)) * sgn;
     return vec3(r.g * CHOPPINESS, r.b * CHOPPINESS, r.r);
 }
 
 void main() {
-    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-    if (id.x >= N || id.y >= N) return;
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+    if (gid.x >= N || gid.y >= N || gid.z >= CASCADES) return;
+    int   layer = gid.z;
+    ivec2 id    = gid.xy;
+    float cascadeL = CASCADE_L[layer];
 
-    vec3 c = loadDisplacement(id);
-    vec3 l = loadDisplacement(id - ivec2(1, 0));
-    vec3 r = loadDisplacement(id + ivec2(1, 0));
-    vec3 d = loadDisplacement(id - ivec2(0, 1));
-    vec3 u = loadDisplacement(id + ivec2(0, 1));
+    vec3 c = loadDisplacement(id, layer);
+    vec3 l = loadDisplacement(id - ivec2(1, 0), layer);
+    vec3 r = loadDisplacement(id + ivec2(1, 0), layer);
+    vec3 d = loadDisplacement(id - ivec2(0, 1), layer);
+    vec3 u = loadDisplacement(id + ivec2(0, 1), layer);
 
-    float invStep2 = 0.5 / (PATCH / float(N));
+    float invStep2 = 0.5 / (cascadeL / float(N));
     float dDxDx = (r.x - l.x) * invStep2;
     float dDxDy = (u.x - d.x) * invStep2;
     float dDzDx = (r.y - l.y) * invStep2;
@@ -55,5 +61,9 @@ void main() {
     float whitecap = saturate(compression * steep * 0.78 + crest * curvature * steep * 0.52);
     whitecap = pow(whitecap, 1.45);
 
-    imageStore(displacement, id, vec4(c.xy, c.z, whitecap));
+    imageStore(displacement, ivec3(id, layer), vec4(c.xy, c.z, whitecap));
+
+    // Exact texel-neighbour height gradient (world units). Sampled bilinearly by the water
+    // shader so the surface normal is smooth, not the derivative of a bilinear displacement.
+    imageStore(slope, ivec3(id, layer), vec4(heightSlope, 0.0, 0.0));
 }

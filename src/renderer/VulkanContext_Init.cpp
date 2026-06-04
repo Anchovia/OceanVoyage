@@ -633,7 +633,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[5]{};
+    VkDescriptorSetLayoutBinding bindings[6]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -662,9 +662,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Per-cascade surface-slope map — fragment builds smooth wave normals from it.
+    bindings[5].binding         = 6;
+    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[5].descriptorCount = 1;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 5;
+    info.bindingCount = 6;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -708,10 +714,12 @@ void VulkanContext::createOceanMesh() {
             radii.push_back(r);
     };
 
-    appendRings(  48.0f,  0.5f);
-    appendRings( 128.0f,  1.0f);
-    appendRings( 384.0f,  4.0f);
-    appendRings(1024.0f,  8.0f);
+    // Dense near/mid rings so the tall FFT waves are not faceted into visible triangles at the
+    // grazing sailing view; spacing grows gradually toward the horizon where detail is sub-pixel.
+    appendRings(  64.0f,  0.5f);
+    appendRings( 256.0f,  1.0f);
+    appendRings( 640.0f,  4.0f);
+    appendRings(1408.0f,  8.0f);
     appendRings(3072.0f, 24.0f);
 
     std::vector<glm::vec3> verts;
@@ -3387,7 +3395,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // reflection + 2 normal maps + displacement
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 5; // reflection + 2 normal maps + displacement + slope
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3438,7 +3446,12 @@ void VulkanContext::updateOceanDescriptors() {
         displacementInfo.imageView   = m_oceanDisplacementView;
         displacementInfo.sampler     = m_oceanDisplacementSampler;
 
-        VkWriteDescriptorSet writes[5]{};
+        VkDescriptorImageInfo slopeInfo{};
+        slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
+        slopeInfo.imageView   = m_oceanSlopeView;
+        slopeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared with displacement
+
+        VkWriteDescriptorSet writes[6]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3474,7 +3487,14 @@ void VulkanContext::updateOceanDescriptors() {
         writes[4].descriptorCount = 1;
         writes[4].pImageInfo      = &displacementInfo;
 
-        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[5].dstSet          = m_oceanDescriptorSets[i];
+        writes[5].dstBinding      = 6;
+        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[5].descriptorCount = 1;
+        writes[5].pImageInfo      = &slopeInfo;
+
+        vkUpdateDescriptorSets(m_device, 6, writes, 0, nullptr);
     }
 }
 

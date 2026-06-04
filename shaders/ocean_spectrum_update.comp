@@ -1,40 +1,43 @@
 #version 450
 
-// Tessendorf FFT ocean — per-frame spectrum h(k,t).
+// Tessendorf FFT ocean — per-frame spectrum h(k,t), multi-cascade.
 // Animates the static spectrum h0(k) to the current time, and packs the height and
 // horizontal-displacement spectra into a single RGBA32F texel so one complex IFFT per
 // channel pair recovers two real fields:
 //   rg = H1 = Dy + i*Dx   (IFFT real = height Dy, imag = x-displacement Dx)
 //   ba = H2 = Dz           (IFFT real = z-displacement Dz)
+// One array layer per cascade (gl_GlobalInvocationID.z), each with its own patch size.
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0, rgba32f) uniform readonly  image2D h0Tex;       // rg = h0(k), ba = conj(h0(-k))
-layout(binding = 1, rgba32f) uniform writeonly image2D spectrumTex; // rg = H1, ba = H2
+layout(binding = 0, rgba32f) uniform readonly  image2DArray h0Tex;       // rg = h0(k), ba = conj(h0(-k))
+layout(binding = 1, rgba32f) uniform writeonly image2DArray spectrumTex; // rg = H1, ba = H2
 
 layout(push_constant) uniform Push { float time; } pc;
 
-const int   N       = 512;
-const float PATCH    = 256.0;
+const int   N        = 512;
+const int   CASCADES = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0);
 const float GRAVITY  = 9.81;
 const float TWO_PI   = 6.28318530718;
 
 vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 
 void main() {
-    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
-    if (id.x >= N || id.y >= N) return;
+    ivec3 gid = ivec3(gl_GlobalInvocationID);
+    if (gid.x >= N || gid.y >= N || gid.z >= CASCADES) return;
+    float cascadeL = CASCADE_L[gid.z];
 
-    float n = float(id.x) - float(N) * 0.5;
-    float m = float(id.y) - float(N) * 0.5;
-    vec2  k = vec2(n, m) * (TWO_PI / PATCH);
+    float n = float(gid.x) - float(N) * 0.5;
+    float m = float(gid.y) - float(N) * 0.5;
+    vec2  k = vec2(n, m) * (TWO_PI / cascadeL);
     float kLen = length(k);
 
     // Deep-water dispersion ω = sqrt(g·|k|).
     float wt = sqrt(GRAVITY * max(kLen, 1e-6)) * pc.time;
     vec2  ew = vec2(cos(wt), sin(wt));
 
-    vec4 h0       = imageLoad(h0Tex, id);
+    vec4 h0       = imageLoad(h0Tex, gid);
     vec2 h0k      = h0.xy;
     vec2 h0mkConj = h0.zw;
 
@@ -51,5 +54,5 @@ void main() {
     vec2 H1 = vec2(h.x - Dx.y, h.y + Dx.x); // Dy + i·Dx
     vec2 H2 = Dz;                            // Dz (+ i·0)
 
-    imageStore(spectrumTex, id, vec4(H1, H2));
+    imageStore(spectrumTex, gid, vec4(H1, H2));
 }

@@ -19,7 +19,8 @@ layout(binding = 0) uniform UniformBufferObject {
 layout(binding = 1) uniform sampler2D planarReflection;
 layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
-layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (z = height), w = whitecap seed
+layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement (z = height), w = whitecap seed
+layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -28,8 +29,8 @@ layout(location = 2) in vec4  fragReflectionClip;
 layout(location = 0) out vec4 outColor;
 
 const float PI    = 3.14159265;
-const float PATCH  = 256.0; // world size of one FFT tile (must match the compute shaders)
-const float FFT_N  = 512.0;
+const int   CASCADES = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size per cascade (must match the compute shaders)
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
@@ -73,31 +74,33 @@ struct OceanFrame {
     vec2 sourceXY;
 };
 
-vec3 oceanDisplacedPoint(vec2 sourceXY) {
-    vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
-    return vec3(sourceXY + d.xy, d.z);
+// Sum the displacement of every cascade at a world position (each cascade tiles at its own
+// world size). This is the multi-scale surface the rest of the shader works from.
+vec3 oceanDispSum(vec2 xy) {
+    vec3 d = vec3(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        d += texture(oceanDisplacement, vec3(xy / CASCADE_L[c], float(c))).xyz;
+    return d;
 }
 
-// Base wave frame from the full FFT displacement, evaluated per fragment so detail is not
-// limited by the ocean mesh tessellation. The rendered ocean is horizontally displaced
-// (choppy), so normals and detail waves must use the displaced surface tangents.
+// Base wave frame, evaluated per fragment so detail is not limited by the ocean mesh.
+// The rendered ocean is horizontally displaced (choppy), so first invert the displacement to
+// find the source-map coordinate, then build the surface frame from the smooth slope map
+// (sum of per-cascade bilinearly-filtered height gradients) instead of differencing the
+// bilinear displacement — which would expose the texel grid.
 OceanFrame oceanBaseFrame(vec2 worldXY) {
     vec2 sourceXY = worldXY;
-    for (int i = 0; i < 2; ++i) {
-        vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
-        sourceXY = worldXY - d.xy;
-    }
+    for (int i = 0; i < 2; ++i)
+        sourceXY = worldXY - oceanDispSum(sourceXY).xy;
 
-    float step = PATCH / FFT_N;
-    vec3 pL = oceanDisplacedPoint(sourceXY - vec2(step, 0.0));
-    vec3 pR = oceanDisplacedPoint(sourceXY + vec2(step, 0.0));
-    vec3 pD = oceanDisplacedPoint(sourceXY - vec2(0.0, step));
-    vec3 pU = oceanDisplacedPoint(sourceXY + vec2(0.0, step));
+    vec2 grad = vec2(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        grad += texture(oceanSlope, vec3(sourceXY / CASCADE_L[c], float(c))).rg;
 
     OceanFrame frame;
-    frame.tangentX = normalize(pR - pL);
-    frame.tangentY = normalize(pU - pD);
-    frame.normal   = normalize(cross(frame.tangentX, frame.tangentY));
+    frame.tangentX = normalize(vec3(1.0, 0.0, grad.x));
+    frame.tangentY = normalize(vec3(0.0, 1.0, grad.y));
+    frame.normal   = normalize(vec3(-grad.x, -grad.y, 1.0));
     frame.sourceXY = sourceXY;
     return frame;
 }
@@ -196,19 +199,6 @@ void main() {
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
     vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.72), validRefl);
     vec3 color = mix(water, reflection, F) + sunSpec;
-
-    float whitecapSeed = texture(oceanDisplacement, frame.sourceXY / PATCH).a;
-    vec2 foamUv0 = frame.sourceXY * 0.33 + vec2(0.021, -0.017) * ubo.animationParams.x;
-    vec2 foamUv1 = vec2(frame.sourceXY.y, -frame.sourceXY.x) * 0.57
-                 + vec2(-0.039, 0.026) * ubo.animationParams.x;
-    vec3 foamN0 = unpackNormal(texture(oceanNormalB, foamUv0).rgb);
-    vec3 foamN1 = unpackNormal(texture(oceanNormalA, foamUv1).rgb);
-    float breakup = smoothstep(-0.35, 0.55, foamN0.x * 0.48 + foamN0.y * 0.32 + foamN1.x * 0.20);
-    breakup = mix(0.42, 1.0, breakup);
-    float whitecap = smoothstep(0.070, 0.38, whitecapSeed) * breakup
-                   * (1.0 - smoothstep(220.0, 520.0, fragViewDepth));
-    vec3 foamColor = mix(vec3(0.62, 0.78, 0.82), vec3(1.0, 0.96, 0.86), dayFactor);
-    color = mix(color, foamColor, whitecap * mix(0.18, 0.42, dayFactor));
 
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);

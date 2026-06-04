@@ -235,7 +235,7 @@ private:
     void createImage(uint32_t width, uint32_t height, VkFormat format,
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
-        uint32_t mipLevels = 1);
+        uint32_t mipLevels = 1, uint32_t arrayLayers = 1);
     VkFormat findSceneColorFormat();
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates,
@@ -309,7 +309,9 @@ private:
 
     // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
     static constexpr uint32_t OCEAN_FFT_N = 512;  // FFT resolution per axis (power of two)
-    static constexpr float    OCEAN_PATCH = 256.0f; // world size of one FFT tile (matches shaders)
+    static constexpr uint32_t OCEAN_CASCADES = 3;  // multi-scale FFT cascades (array layers)
+    // World size (m) of each cascade tile, largest → smallest. Must match the ocean shaders.
+    static constexpr float    OCEAN_CASCADE_L[OCEAN_CASCADES] = { 2048.0f, 512.0f, 128.0f };
     VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
     VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
     VkImageView           m_oceanH0View   = VK_NULL_HANDLE;
@@ -354,6 +356,15 @@ private:
     VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
     VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
+
+    // Per-cascade surface-slope map (RGBA16F, GENERAL): .rg = world height gradient (dH/dx, dH/dy).
+    // The assemble pass writes it from exact texel neighbours so the water shader can build smooth
+    // normals by bilinearly sampling the slope (no texel-grid artefacts from differencing the
+    // bilinear displacement). Shares the displacement sampler (linear, repeat).
+    VkImage               m_oceanSlopeImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanSlopeMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanSlopeView   = VK_NULL_HANDLE;
+
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 

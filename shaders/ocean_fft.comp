@@ -1,17 +1,19 @@
 #version 450
 
-// Tessendorf FFT ocean — one butterfly pass of a radix-2 Cooley-Tukey IFFT.
+// Tessendorf FFT ocean — one butterfly pass of a radix-2 Cooley-Tukey IFFT, multi-cascade.
 // A precomputed butterfly texture (width = log2(N) stages, height = N) supplies, per
 // stage and per index, the twiddle factor and the two source indices to combine. The
 // shader runs once per stage along one axis (horizontal then vertical), ping-ponging
 // between two work images. Two complex fields are carried per texel (rg and ba) so a
-// single chain transforms both the packed displacement spectra at once.
+// single chain transforms both the packed displacement spectra at once. Each cascade is an
+// independent transform on its own array layer (gl_GlobalInvocationID.z); the butterfly
+// texture is shared because every cascade has the same resolution N.
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0) uniform sampler2D butterfly;                 // (tw.re, tw.im, topIdx, botIdx)
-layout(binding = 1, rgba32f) uniform readonly  image2D srcTex;
-layout(binding = 2, rgba32f) uniform writeonly image2D dstTex;
+layout(binding = 0) uniform sampler2D butterfly;                      // (tw.re, tw.im, topIdx, botIdx)
+layout(binding = 1, rgba32f) uniform readonly  image2DArray srcTex;
+layout(binding = 2, rgba32f) uniform writeonly image2DArray dstTex;
 
 layout(push_constant) uniform Push {
     int stage;     // current butterfly stage 0..log2(N)-1
@@ -21,7 +23,8 @@ layout(push_constant) uniform Push {
 vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
 
 void main() {
-    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    ivec3 id    = ivec3(gl_GlobalInvocationID);
+    int   layer = id.z;
 
     // Index along the axis being transformed selects the butterfly entry.
     int axis = (pc.direction == 0) ? id.x : id.y;
@@ -30,8 +33,8 @@ void main() {
     int  topI = int(bf.z);
     int  botI = int(bf.w);
 
-    ivec2 topCoord = (pc.direction == 0) ? ivec2(topI, id.y) : ivec2(id.x, topI);
-    ivec2 botCoord = (pc.direction == 0) ? ivec2(botI, id.y) : ivec2(id.x, botI);
+    ivec3 topCoord = (pc.direction == 0) ? ivec3(topI, id.y, layer) : ivec3(id.x, topI, layer);
+    ivec3 botCoord = (pc.direction == 0) ? ivec3(botI, id.y, layer) : ivec3(id.x, botI, layer);
 
     vec4 top = imageLoad(srcTex, topCoord);
     vec4 bot = imageLoad(srcTex, botCoord);
