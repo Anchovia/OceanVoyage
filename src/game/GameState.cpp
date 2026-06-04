@@ -21,13 +21,10 @@ bool canOccupy(const World& world, const glm::vec3& position) {
 }
 
 GameState::GameState() {
-    // Starting inventory (slots 4..26 begin empty)
-    m_inventory[0] = { ItemType::TOOL_HOE,         1  };
-    m_inventory[1] = { ItemType::TOOL_WATERINGCAN, 1  };
-    m_inventory[2] = { ItemType::SEED_WHEAT,       10 };
-    m_inventory[3] = { ItemType::TOOL_AXE,         1  };
-    m_inventory[4] = { ItemType::TOOL_SICKLE,      1  };
-    m_inventory[5] = { ItemType::TOOL_PICKAXE,     1  };
+    // Inventory starts empty for OceanVoyage. The farm starting tools (hoe, watering
+    // can, seeds, axe, sickle, pickaxe) were removed in the farm-gameplay transition;
+    // a cargo/ship inventory will replace them later. m_inventory default-initializes
+    // every slot to NONE/0, so no explicit clearing is needed here.
 }
 
 void GameState::update(float dt, const PlayerInput& input, const Camera& camera, World& world) {
@@ -36,11 +33,8 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
     m_day = static_cast<int>(m_time / DAY_DURATION);
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
 
-    // Growth tick once per day
-    if (m_day != m_prevDay) {
-        world.growthTick(m_day);
-        m_prevDay = m_day;
-    }
+    // Crop growth tick removed for OceanVoyage transition (farm gameplay disabled).
+    // World::growthTick is kept as reference until the ocean systems replace it.
 
     // Inventory toggle (I key — edge-detect to avoid repeated triggers)
     if (input.toggleInventory && !m_prevToggleInv)
@@ -106,22 +100,7 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
     }
 
     if (input.windowWidth > 0 && input.windowHeight > 0) {
-        // Crafting clicks (inventory open) — edge-detected so holding doesn't repeat-craft.
-        if (m_inventoryOpen && input.leftClick && !m_prevCraftClick) {
-            int n = 0;
-            const Recipe* table = craftingRecipes(n);
-            for (int i = 0; i < n; i++) {
-                if (table[i].requiresWorkbench && !m_nearWorkbench) continue; // workbench-gated
-                float rx, ry, rw, rh;
-                craftRowRect(i, (float)input.windowWidth, (float)input.windowHeight, rx, ry, rw, rh);
-                if (input.mouseX >= rx && input.mouseX <= rx + rw &&
-                    input.mouseY >= ry && input.mouseY <= ry + rh) {
-                    craft(i);
-                    break;
-                }
-            }
-        }
-        m_prevCraftClick = input.leftClick;
+        // Crafting removed for OceanVoyage transition (farm recipes disabled).
 
         // World interaction — suppressed while inventory is open
         if (!m_inventoryOpen) {
@@ -159,83 +138,10 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
 
                     if (world.inBounds(finalTargetTile.x, finalTargetTile.y, finalTargetTile.z)) {
                         m_targetTile = finalTargetTile;
-
-                        if (input.leftClick) {
-                            const int tx = finalTargetTile.x;
-                            const int ty = finalTargetTile.y;
-                            const int tz = finalTargetTile.z;
-                            const ItemType sel = m_inventory[m_selectedSlot].type;
-
-                            // 1) World object (tree/rock) takes priority — harvest with matching tool
-                            glm::vec3 objPos; ItemType objDrop; int objCount;
-                            World::HarvestResult hr = world.tryHarvestObject(tx, ty, sel, objPos, objDrop, objCount);
-                            if (hr == World::HarvestResult::Harvested) {
-                                // objPos.z is the ground surface — lift the drop so the cube rests on top.
-                                for (int i = 0; i < objCount; i++) {
-                                    glm::vec3 dropPos = glm::vec3(objPos.x + 0.15f * i, objPos.y, objPos.z + 0.2f);
-                                    m_drops.push_back({ dropPos, objDrop, 1 });
-                                }
-                            }
-                            // 2) Object present but wrong tool → blocked (don't destroy ground beneath it)
-                            else if (hr == World::HarvestResult::WrongTool) {
-                                // no-op
-                            }
-                            // 3) No object — crop harvest only. Terrain is immutable
-                            //    (voxel destruction retired; see DESIGN "지형 불변").
-                            else if (world.getTile(tx, ty, tz) == TileType::WHEAT) {
-                                // Crops are protected: only a sickle can harvest, and only when ripe.
-                                TileState s = world.getTileState(tx, ty, tz);
-                                if (sel == ItemType::TOOL_SICKLE && s.growthStage == 3) {
-                                    world.setTile(tx, ty, tz, TileType::AIR);
-                                    glm::vec3 dropPos = glm::vec3(finalTargetTile) + glm::vec3(0.0f, 0.0f, -0.25f);
-                                    m_drops.push_back({ dropPos, ItemType::ITEM_WHEAT, 1 });
-                                }
-                            }
-                        }
-
-                        if (input.rightClick) {
-                            ItemStack& slot = m_inventory[m_selectedSlot];
-                            ItemType item = slot.type;
-                            const int tx = finalTargetTile.x;
-                            const int ty = finalTargetTile.y;
-                            const int tz = finalTargetTile.z;
-
-                            // Voxel block placement retired (DESIGN "지형 불변"); building is the
-                            // crafted-object layer. Right-click now only drives farming tools.
-                            if (item == ItemType::TOOL_HOE) {
-                                TileType cur = world.getTile(tx, ty, tz);
-                                if (cur == TileType::GRASS || cur == TileType::DIRT)
-                                    world.setTile(tx, ty, tz, TileType::FARMLAND);
-                            } else if (item == ItemType::SEED_WHEAT) {
-                                if (slot.count > 0 &&
-                                    world.getTile(tx, ty, tz) == TileType::FARMLAND &&
-                                    world.getTile(tx, ty, tz + 1) == TileType::AIR) {
-                                    world.setTile(tx, ty, tz + 1, TileType::WHEAT);
-                                    TileState s;
-                                    s.growthStage    = 0;
-                                    s.lastUpdatedDay = (uint32_t)m_day;
-                                    world.setTileState(tx, ty, tz + 1, s);
-                                    if (--slot.count <= 0) slot = ItemStack{}; // consume seed
-                                }
-                            } else if (item == ItemType::TOOL_WATERINGCAN) {
-                                // A planted crop occupies the tile above its soil, so the picked
-                                // tile is the WHEAT — water the FARMLAND directly beneath it.
-                                int fz = tz;
-                                if (world.getTile(tx, ty, fz) == TileType::WHEAT) fz -= 1;
-                                if (world.getTile(tx, ty, fz) == TileType::FARMLAND) {
-                                    TileState s = world.getTileState(tx, ty, fz);
-                                    s.watered = true;
-                                    world.setTileState(tx, ty, fz, s);
-                                }
-                            } else {
-                                // Placeable item (workbench / fence) → place it on the ground.
-                                ObjectType otype;
-                                if (itemToObjectType(item, otype) && slot.count > 0 &&
-                                    world.placeObject(tx, ty, otype)) {
-                                    if (--slot.count <= 0) slot = ItemStack{};
-                                }
-                            }
-                        }
+                        // Farm tile interaction (object harvest / crop harvest / hoe / plant /
+                        // water / object placement) removed for OceanVoyage transition. The
+                        // World methods (tryHarvestObject / placeObject / setTileState) are kept
+                        // as reference until the ocean interaction systems replace them.
                     }
                     else {
                         m_targetTile = std::nullopt;

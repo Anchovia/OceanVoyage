@@ -16,7 +16,11 @@ struct UniformBufferObject {
     glm::vec4 lightDir; // xyz = toward sun, w = dayFactor (0=night, 1=noon)
     glm::mat4 lightMVP; // light-space transform for shadow map lookup
     glm::vec4 fogColor; // rgb = sky color at current time of day
+    glm::vec4 clipPlane; // xyz = world-space plane normal, w = plane distance
     glm::vec4 animationParams; // x = game time seconds, yzw reserved
+    glm::vec4 cameraPos; // xyz = camera world position (ocean Fresnel / specular)
+    glm::mat4 reflectionViewProj; // planar water reflection projection for ocean sampling
+    glm::mat4 invViewProj; // inverse camera projection-view for full-screen sky reconstruction
 };
 
 struct PostPushConstants {

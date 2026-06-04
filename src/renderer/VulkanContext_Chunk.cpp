@@ -80,7 +80,9 @@ void VulkanContext::buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk) {
     for (int ly = 0; ly < CHUNK_SIZE;  ly++)
     for (int lx = 0; lx < CHUNK_SIZE;  lx++) {
         TileType t = chunk.tiles[z][ly][lx];
-        if (t == TileType::AIR) continue;
+        // WATER is drawn by the dedicated Gerstner ocean surface, not as voxels. Keep the
+        // tiles in the data model (collision / walkability) but emit no chunk geometry.
+        if (t == TileType::AIR || t == TileType::WATER) continue;
 
         const int wx = baseX + lx;
         const int wy = baseY + ly;

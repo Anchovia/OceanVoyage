@@ -94,6 +94,7 @@ struct TextureResource {
 struct FrameRenderData {
     const Camera&                            camera;
     glm::vec3                                playerPosition;
+    float                                    playerHeading;  // radians; ship bow orientation
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
     const std::array<ItemStack, INV_SLOTS>&  inventory;
@@ -154,6 +155,7 @@ private:
     };
     VkPipeline createPipeline(const PipelineConfig& cfg);
     void createGraphicsPipeline();
+    void createSkyPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createCommandBuffers();
@@ -172,9 +174,14 @@ private:
     void createUIBuffer();
     void updateHotbar();
     void createObjectPipeline();
+    void createOceanDescriptorSetLayout();
+    void createOceanPipeline();
+    void createOceanMesh();
+    void createShipPipeline();
     void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
+    void createPlanarReflectionResources();
     void createPostPipeline();
     void createPostSampler();
     void createPostDescriptors();
@@ -193,16 +200,29 @@ private:
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
     void createObjectMeshes();
     void createGrassTexture();
+    void createOceanNormalTextures();
     void createTerrainTextureArray();
     void createItemMesh();
     void createDropInstanceBuffer();
     void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
     void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
     void createUniformBuffers();
+    void createReflectionUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
+    void createReflectionDescriptorSets();
+    void createOceanDescriptors();
+    void updateOceanDescriptors();
+    void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
+    void createOceanFFTSim();  // per-frame spectrum animation resources
+    void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
+    void createOceanFFTAssemble();   // displacement map + assembly pipeline
+    void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
+    void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
+    void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
+    void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
     void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();
@@ -216,6 +236,7 @@ private:
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
         uint32_t mipLevels = 1);
+    VkFormat findSceneColorFormat();
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates,
         VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -264,6 +285,7 @@ private:
     VkSwapchainKHR           m_swapchain        = VK_NULL_HANDLE;
     std::vector<VkImage>     m_swapchainImages;
     VkFormat                 m_swapchainFormat  = VK_FORMAT_UNDEFINED;
+    VkFormat                 m_sceneColorFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D               m_swapchainExtent  = {};
     std::vector<VkImageView> m_swapchainImageViews;
     bool                     m_vsyncEnabled     = true;
@@ -273,11 +295,67 @@ private:
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
     VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;
     VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / selector (instancing)
+    VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
     VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
     VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
     VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
+    VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
+    VkPipelineLayout         m_oceanPipelineLayout = VK_NULL_HANDLE;
+    VkDescriptorSetLayout    m_oceanDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool         m_oceanDescriptorPool      = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanDescriptorSets;
+
+    // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
+    static constexpr uint32_t OCEAN_FFT_N = 512;  // FFT resolution per axis (power of two)
+    static constexpr float    OCEAN_PATCH = 256.0f; // world size of one FFT tile (matches shaders)
+    VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
+    VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
+    VkImageView           m_oceanH0View   = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_oceanSpectrumDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool      m_oceanFFTDescriptorPool           = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanSpectrumDescriptorSet       = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanSpectrumPipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanSpectrumPipeline            = VK_NULL_HANDLE;
+    // Per-frame animated spectrum H(k,t): rg = Dy+i·Dx, ba = Dz.
+    VkImage               m_oceanSpectrumImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanSpectrumMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanSpectrumView   = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_oceanUpdateDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanUpdateDescriptorSet       = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanUpdatePipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanUpdatePipeline            = VK_NULL_HANDLE;
+    float                 m_oceanTime = 0.0f; // game time fed to the FFT spectrum each frame
+
+    // Butterfly IFFT: the spectrum image doubles as one ping-pong buffer; m_oceanFFTPong
+    // is the other. The butterfly texture drives the radix-2 passes.
+    static constexpr uint32_t OCEAN_FFT_LOG2N = 9; // log2(OCEAN_FFT_N); 1<<9 == 512
+    VkImage               m_oceanFFTPongImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanFFTPongMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanFFTPongView   = VK_NULL_HANDLE;
+    TextureResource       m_oceanButterflyTex; // (tw.re, tw.im, topIdx, botIdx) per stage/index
+    VkDescriptorSetLayout m_oceanFFTDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanFFTSetPingToPong       = VK_NULL_HANDLE; // src=spectrum(ping), dst=pong
+    VkDescriptorSet       m_oceanFFTSetPongToPing       = VK_NULL_HANDLE; // src=pong, dst=spectrum(ping)
+    VkPipelineLayout      m_oceanFFTPipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanFFTPipeline            = VK_NULL_HANDLE;
+
+    // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
+    // shader. xyz = (choppy x, choppy z, height).
+    VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
+    VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;
+    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat
+    // Displacement copied back to host memory each frame so the CPU can float the ship on the
+    // actual FFT surface (one buffer per frame in flight; read with a 2-frame latency).
+    std::vector<GpuBuffer> m_oceanReadbackBuffers;
+    VkDescriptorSetLayout m_oceanAssembleDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
+    VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
+    VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
@@ -290,6 +368,12 @@ private:
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+
+    // Planar water reflection: mirrored scene color sampled by the ocean shader.
+    std::vector<VkFramebuffer>   m_reflectionFramebuffers;
+    std::vector<VkImage>         m_reflectionImage;
+    std::vector<VkDeviceMemory>  m_reflectionMemory;
+    std::vector<VkImageView>     m_reflectionView;
 
     // SMAA 1x: scene color -> edge weights -> blend weights -> swapchain
     VkRenderPass             m_smaaRenderPass                 = VK_NULL_HANDLE;
@@ -320,6 +404,9 @@ private:
 
     GpuBuffer                m_vertexBuffer;
     GpuBuffer                m_indexBuffer;
+    GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
+    GpuBuffer                m_oceanIndexBuffer;
+    uint32_t                 m_oceanIndexCount = 0;
     struct ChunkRenderData {
         GpuBuffer      vertexBuffer;
         GpuBuffer      indexBuffer;
@@ -340,6 +427,7 @@ private:
     };
     std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
     Frustum                  m_frustum;
+    Frustum                  m_reflectionFrustum;
 
     // Shared low-poly object meshes, indexed by ObjectType (instanced per Object)
     struct ObjectMesh {
@@ -347,6 +435,8 @@ private:
         uint32_t       count = 0;
     };
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
+    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via the ship pipeline)
+    glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
@@ -356,6 +446,10 @@ private:
     // split out so foliage material maps can expand without repacking the color image.
     TextureResource m_grassTex;
     TextureResource m_grassOpacityTex;
+
+    // Multi-scale ocean normal maps (UNORM, mipmapped, anisotropic).
+    TextureResource m_oceanNormalA;
+    TextureResource m_oceanNormalB;
 
     // Terrain material texture array (sampler2DArray, one layer per tile material).
     TextureResource m_terrainTex;
@@ -417,6 +511,8 @@ private:
     std::vector<GpuBuffer>       m_uniformBuffers;
     VkDescriptorPool             m_descriptorPool   = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_descriptorSets;
+    std::vector<GpuBuffer>       m_reflectionUniformBuffers;
+    std::vector<VkDescriptorSet> m_reflectionDescriptorSets;
 
     VkCommandPool            m_commandPool      = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> m_commandBuffers;

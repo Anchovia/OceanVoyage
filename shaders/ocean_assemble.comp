@@ -1,0 +1,28 @@
+#version 450
+
+// Tessendorf FFT ocean — assemble the IFFT output into a world-space displacement map.
+// The IFFT result packs the height and horizontal displacement (.r = Dy height, .g = Dx,
+// .b = Dz). The (-1)^(x+y) factor undoes the centred-spectrum index shift, and choppiness
+// scales the horizontal displacement that sharpens wave crests.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rgba32f) uniform readonly  image2D fftResult;    // .r=Dy, .g=Dx, .b=Dz
+layout(binding = 1, rgba16f) uniform writeonly image2D displacement; // xyz = world displacement
+
+const int   N          = 512;
+const float CHOPPINESS  = 0.5; // horizontal displacement scale (crest sharpness)
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    if (id.x >= N || id.y >= N) return;
+
+    float sgn = (((id.x + id.y) & 1) == 0) ? 1.0 : -1.0;
+    vec4  r   = imageLoad(fftResult, id) * sgn;
+
+    float height = r.r;
+    float dx     = r.g;
+    float dz     = r.b;
+
+    imageStore(displacement, id, vec4(dx * CHOPPINESS, dz * CHOPPINESS, height, 0.0));
+}

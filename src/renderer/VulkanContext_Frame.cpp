@@ -7,6 +7,8 @@
 
 #include <stdexcept>
 #include <cstring>
+#include <cmath>
+#include <cstdint>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
@@ -124,6 +126,10 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 #endif
 
+    // FFT ocean simulation (compute) — animate the wave spectrum for this frame before
+    // the render passes. Runs on the graphics queue; barriers order it ahead of sampling.
+    recordOceanFFT(cmd);
+
     // Shadow pass — render chunk depth from sun's perspective
     {
         VkClearValue shadowClear{};
@@ -222,16 +228,17 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 }
             }
 
-            // Player cube casts a shadow too (always inside the light box — no cull)
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPlayerPipeline);
+            // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
+            // push lightMVP * shipModel so the tilted hull casts a correct shadow.
+            if (m_shipMesh.count > 0) {
+                glm::mat4 shipLightMVP = m_lightMVP * m_shipModel;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
                 vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
-                VkBuffer     pBufs[] = { m_vertexBuffer, m_playerInstBuffer[m_currentFrame] };
-                VkDeviceSize pOffs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, pBufs, pOffs);
-                vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-                vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), 1, 0, 0, 0);
+                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &shipLightMVP);
+                VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+                VkDeviceSize sOffs[] = { 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+                vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
             }
         }
         vkCmdEndRenderPass(cmd);
@@ -239,6 +246,109 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 #ifdef PASTEL_DEV_BUILD
     writeDevTimestamp(cmd, 1);
 #endif
+
+    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
+
+    // Planar reflection pass — render the scene once from a camera mirrored across the
+    // water plane. The ocean shader samples this color target with projected UVs.
+    if (worldVisible && !m_reflectionFramebuffers.empty()) {
+        VkClearValue reflClear[2];
+        reflClear[0].color        = {{m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f}};
+        reflClear[1].depthStencil = {1.0f, 0};
+
+        VkRenderPassBeginInfo reflRp{};
+        reflRp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        reflRp.renderPass      = m_renderPass;
+        reflRp.framebuffer     = m_reflectionFramebuffers[m_currentFrame];
+        reflRp.renderArea      = {{0, 0}, m_swapchainExtent};
+        reflRp.clearValueCount = 2;
+        reflRp.pClearValues    = reflClear;
+
+        vkCmdBeginRenderPass(cmd, &reflRp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport reflViewport{ 0.0f, 0.0f, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+        VkRect2D   reflScissor{ {0, 0}, m_swapchainExtent };
+        vkCmdSetViewport(cmd, 0, 1, &reflViewport);
+        vkCmdSetScissor(cmd, 0, 1, &reflScissor);
+
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_pipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            VkBuffer     vBuf[] = { data.vertexBuffer };
+            VkDeviceSize offs[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
+            vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
+        }
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (data.groundPatchCount == 0 && data.pebbleCount == 0 && data.objGroups.empty()) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            if (m_groundPatchMesh.count > 0 && data.groundPatchCount > 0) {
+                VkBuffer     bufs[] = { m_groundPatchMesh.vbuf, data.groundPatchBuffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, m_groundPatchMesh.count, data.groundPatchCount, 0, 0);
+            }
+
+            if (m_pebbleMesh.count > 0 && data.pebbleCount > 0) {
+                VkBuffer     bufs[] = { m_pebbleMesh.vbuf, data.pebbleBuffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, m_pebbleMesh.count, data.pebbleCount, 0, 0);
+            }
+
+            for (auto& g : data.objGroups) {
+                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
+                if (mesh.count == 0 || g.count == 0) continue;
+                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
+                VkDeviceSize offs[] = { 0, 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
+            }
+        }
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
+        for (auto& [coord, data] : m_chunkBuffers) {
+            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
+
+            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
+            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
+            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
+
+            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
+            VkDeviceSize offs[] = { 0, 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
+            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
+        }
+
+        if (m_shipMesh.count > 0) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_shipPipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
+            vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+                0, sizeof(glm::mat4), &m_shipModel);
+            VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+            VkDeviceSize sOffs[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+            vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
+        }
+
+        vkCmdEndRenderPass(cmd);
+    }
 
     VkClearValue clearValues[2];
     clearValues[0].color        = {{m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f}};
@@ -261,6 +371,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
         m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
 
     // Chunk mesh (hidden face culling, dedicated pipeline)
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
@@ -344,9 +457,23 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     // Player / selector / drops — dynamic world entities, hidden in menu states
     // (MainMenu/Settings/Loading) so no orphan player cube shows behind the menu.
-    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
+
+    // Ocean surface — Gerstner-wave grid that follows the camera. Opaque + depth-tested
+    // so the ship and (future) islands occlude it correctly.
+    if (worldVisible && m_oceanIndexCount > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_oceanPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_oceanPipelineLayout, 0, 1, &m_oceanDescriptorSets[m_currentFrame], 0, nullptr);
+        VkBuffer     oBufs[] = { m_oceanVertexBuffer };
+        VkDeviceSize oOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, oBufs, oOffs);
+        vkCmdBindIndexBuffer(cmd, m_oceanIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, m_oceanIndexCount, 1, 0, 0, 0);
+    }
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
     vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
     if (worldVisible && m_showSelector) {
@@ -357,22 +484,28 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdDrawIndexed(cmd, (uint32_t)kSelectorIndices.size(), 1, 0, 0, 0);
     }
 
-    // Player
-    if (worldVisible) {
-        VkBuffer     pBufs[] = {m_vertexBuffer, m_playerInstBuffer[m_currentFrame]};
-        VkDeviceSize pOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, pBufs, pOffs);
-        vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), 1, 0, 0, 0);
-    }
-
-    // Dropped items (small cubes, same instanced pipeline as the player)
+    // Dropped items (small cubes, same instanced pipeline as the selector)
     if (worldVisible && m_dropCount > 0) {
         VkBuffer     dBufs[] = {m_itemVertexBuffer, m_dropInstBuffer[m_currentFrame]};
         VkDeviceSize dOffs[] = {0, 0};
         vkCmdBindVertexBuffers(cmd, 0, 2, dBufs, dOffs);
         vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
         vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), m_dropCount, 0, 0, 0);
+    }
+
+    // Ship (placeholder) — replaces the player cube. Drawn with the rotation-capable
+    // object pipeline so the bow faces the player heading; the per-frame instance seats
+    // it on the sea surface. Drawn last in the scene pass; switches the bound pipeline.
+    if (worldVisible && m_shipMesh.count > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_shipPipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &m_shipModel);
+        VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+        VkDeviceSize sOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+        vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
     }
 
     vkCmdEndRenderPass(cmd); // end scene pass (offscreen color now SHADER_READ_ONLY)
@@ -600,8 +733,10 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         m_shadowCenter = frame.playerPosition;
     }
 
+    m_oceanTime = frame.gameTime;
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
-    updatePlayerInstanceBuffer(frame.playerPosition);
+    updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
+    updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();
@@ -648,22 +783,159 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 // ============================================================
 //  Per-frame update functions
 // ============================================================
+namespace {
+constexpr float WATER_REFLECTION_PLANE_Z = 0.5f;
+
+glm::vec3 reflectPointAcrossWater(const glm::vec3& p) {
+    return { p.x, p.y, 2.0f * WATER_REFLECTION_PLANE_Z - p.z };
+}
+
+glm::vec3 reflectVectorAcrossWater(const glm::vec3& v) {
+    return { v.x, v.y, -v.z };
+}
+
+glm::mat4 planarReflectionView(const Camera& camera, glm::vec3& outCameraPos) {
+    glm::mat4 invView = glm::inverse(camera.view());
+    glm::vec3 camPos  = glm::vec3(invView[3]);
+    glm::vec3 forward = -glm::vec3(invView[2]);
+    glm::vec3 up      =  glm::vec3(invView[1]);
+
+    outCameraPos = reflectPointAcrossWater(camPos);
+    glm::vec3 reflectedForward = glm::normalize(reflectVectorAcrossWater(forward));
+    glm::vec3 reflectedUp      = glm::normalize(reflectVectorAcrossWater(up));
+    return glm::lookAt(outCameraPos, outCameraPos + reflectedForward, reflectedUp);
+}
+} // namespace
+
 void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
     UniformBufferObject ubo{};
+    glm::vec3 reflectionCameraPos;
+    glm::mat4 reflectionView = planarReflectionView(camera, reflectionCameraPos);
+
     ubo.model    = glm::mat4(1.0f);
     ubo.view     = camera.view();
     ubo.proj     = camera.proj();
     ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor); // w = dayFactor (0=night, 1=noon)
     ubo.lightMVP = m_lightMVP;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
+    ubo.clipPlane = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
+    ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
+    ubo.reflectionViewProj = camera.proj() * reflectionView;
+    ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
+    m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
+}
+
+void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
+    UniformBufferObject ubo{};
+    glm::vec3 reflectionCameraPos;
+    glm::mat4 reflectionView = planarReflectionView(camera, reflectionCameraPos);
+
+    ubo.model    = glm::mat4(1.0f);
+    ubo.view     = reflectionView;
+    ubo.proj     = camera.proj();
+    ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor);
+    ubo.lightMVP = m_lightMVP;
+    ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
+    ubo.clipPlane = glm::vec4(0.0f, 0.0f, 1.0f, -WATER_REFLECTION_PLANE_Z);
+    ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
+    ubo.cameraPos       = glm::vec4(reflectionCameraPos, 1.0f);
+    ubo.reflectionViewProj = camera.proj() * reflectionView;
+    ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
+    memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
 void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) {
     static const glm::vec3 kPlayerColor = {1.0f, 0.45f, 0.1f};
     InstanceData inst{playerPosition, kPlayerColor, kPlayerColor};
     memcpy(m_playerInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
+}
+
+namespace {
+// Decode an IEEE-754 half (binary16) to float — reads the R16F displacement readback.
+// Half-subnormals are flushed to zero (negligible at wave-height scale).
+float halfToFloat(uint16_t h) {
+    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    uint32_t exp  = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x3FFu;
+    uint32_t bits;
+    if (exp == 0u)         bits = sign;
+    else if (exp == 0x1Fu) bits = sign | 0x7F800000u | (mant << 13);
+    else                   bits = sign | ((exp + 112u) << 23) | (mant << 13); // 112 = 127 - 15
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// Bilinear FFT displacement from the host readback buffer at a source-map world XY.
+glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, float patch, float wx, float wy) {
+    float u = wx / patch; u -= std::floor(u);
+    float v = wy / patch; v -= std::floor(v);
+    float gx = u * (float)n - 0.5f;
+    float gy = v * (float)n - 0.5f;
+    int   x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
+    float tx = gx - (float)x0,      ty = gy - (float)y0;
+    auto D = [&](int x, int y) {
+        x = ((x % n) + n) % n; y = ((y % n) + n) % n;
+        const uint16_t* p = &px[((size_t)y * n + x) * 4];
+        return glm::vec3(halfToFloat(p[0]), halfToFloat(p[1]), halfToFloat(p[2]));
+    };
+    glm::vec3 d00 = D(x0, y0),     d10 = D(x0 + 1, y0);
+    glm::vec3 d01 = D(x0, y0 + 1), d11 = D(x0 + 1, y0 + 1);
+    return (d00 * (1.0f - tx) + d10 * tx) * (1.0f - ty)
+         + (d01 * (1.0f - tx) + d11 * tx) * ty;
+}
+
+glm::vec2 solveOceanSourceXY(const uint16_t* px, int n, float patch, glm::vec2 worldXY) {
+    glm::vec2 sourceXY = worldXY;
+    for (int i = 0; i < 3; ++i) {
+        glm::vec3 d = sampleOceanDisplacement(px, n, patch, sourceXY.x, sourceXY.y);
+        sourceXY = worldXY - glm::vec2(d.x, d.y);
+    }
+    return sourceXY;
+}
+} // namespace
+
+void VulkanContext::updateShipTransform(const glm::vec3& position, float heading, float gameTime) {
+    // Float the hero ship on the actual FFT surface: sample the displacement readback (filled
+    // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
+    // its deck aligns with the surface normal and the bow points toward the heading.
+    (void)gameTime; // wave phase now lives entirely in the GPU FFT
+    constexpr float DRAFT     = 0.08f;
+    constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
+    const int   n = (int)OCEAN_FFT_N;
+    const float P = OCEAN_PATCH;
+
+    const uint16_t* px = m_oceanReadbackBuffers.empty()
+        ? nullptr : (const uint16_t*)m_oceanReadbackBuffers[m_currentFrame].mapped;
+
+    float     height = SEA_LEVEL;
+    glm::vec3 up(0.0f, 0.0f, 1.0f);
+    if (px) {
+        const float step = P / (float)n;
+        glm::vec2 worldXY(position.x, position.y);
+        glm::vec2 srcC = solveOceanSourceXY(px, n, P, worldXY);
+        float hC  = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y).z;
+        float hX0 = sampleOceanDisplacement(px, n, P, srcC.x - step, srcC.y).z;
+        float hX1 = sampleOceanDisplacement(px, n, P, srcC.x + step, srcC.y).z;
+        float hY0 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y - step).z;
+        float hY1 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y + step).z;
+        height = SEA_LEVEL + hC;
+        up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
+    }
+
+    glm::vec3 pos  = glm::vec3(position.x, position.y, height - DRAFT);
+    glm::vec3 fwd0 = glm::vec3(std::cos(heading), std::sin(heading), 0.0f);
+    glm::vec3 left = glm::normalize(glm::cross(up, fwd0));  // ship +Y (port)
+    glm::vec3 fwd  = glm::normalize(glm::cross(left, up));  // ship +X (bow), perpendicular to up
+
+    glm::mat4 m(1.0f);
+    m[0] = glm::vec4(fwd,  0.0f); // X column = bow
+    m[1] = glm::vec4(left, 0.0f); // Y column = port
+    m[2] = glm::vec4(up,   0.0f); // Z column = deck up
+    m[3] = glm::vec4(pos,  1.0f); // translation
+    m_shipModel = m;
 }
 
 void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& drops) {

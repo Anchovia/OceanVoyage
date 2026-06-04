@@ -7,6 +7,7 @@
 #include <iostream>
 #include <array>
 #include <vector>
+#include <cmath>
 #include "game/Camera.h"
 
 static constexpr int LOAD_RADIUS   = 3;
@@ -232,7 +233,7 @@ int main() {
         GameState     gameState;
         VulkanContext ctx(window, world);
         InputManager  inputManager(window);
-        Camera camera(45.0f, 1280.0f / 720.0f, 0.1f, 100.0f);
+        Camera camera(45.0f, 1280.0f / 720.0f, 0.1f, 3000.0f);
 
         AppFlow app;
         AppSettings settings;
@@ -331,6 +332,10 @@ int main() {
             if (input.rotateLeft)  orbitAngle -= rotSpeed;
             if (input.rotateRight) orbitAngle += rotSpeed;
 
+            // Scroll wheel drives chase-camera zoom (scroll up = zoom in).
+            if (input.scrollDelta != 0)
+                camera.zoom((float)input.scrollDelta * 2.5f);
+
             // Ctrl+S save (edge-detect)
             if (worldSessionStarted && app.consumeSavePress(input.saveKey))
                 world.save("save.dat", gameState.player().position(), gameState.time(),
@@ -356,8 +361,11 @@ int main() {
                 }
             }
 
+            const glm::vec2 facing = gameState.player().facingDirection();
+            const float playerHeading = std::atan2(facing.y, facing.x);
+
             ctx.drawFrame(FrameRenderData{
-                camera, gameState.player().position(), gameState.targetTile(),
+                camera, gameState.player().position(), playerHeading, gameState.targetTile(),
                 gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
                 gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode

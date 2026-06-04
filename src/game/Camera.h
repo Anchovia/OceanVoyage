@@ -34,6 +34,12 @@ public:
         updateView(orbitAngleDegrees);
     }
 
+    // Adjust the orbit (chase) distance — driven by the scroll wheel. Positive delta
+    // pulls the camera out, negative pushes it in; clamped to a usable range.
+    void zoom(float delta) {
+        m_orbitDistance = glm::clamp(m_orbitDistance + delta, kMinOrbitDistance, kMaxOrbitDistance);
+    }
+
     const glm::mat4& view() const { return m_view; }
     const glm::mat4& proj() const { return m_proj; }
     glm::mat4 viewProj() const { return m_proj * m_view; }
@@ -69,7 +75,11 @@ private:
     float m_near;
     float m_far;
 
+    // Ship-chase view (UWO-style): a low pitch keeps the horizon in frame so the
+    // ocean reads at a grazing angle. Zoom adjusts m_orbitDistance within these bounds.
+    static constexpr float kMinOrbitDistance = 8.0f;
+    static constexpr float kMaxOrbitDistance = 40.0f;
     float m_orbitDistance = 20.0f;
-    float m_orbitPitch = 45.0f;
+    float m_orbitPitch = 20.0f;
     float m_followSharpness = 9.0f;
 };

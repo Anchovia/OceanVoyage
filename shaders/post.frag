@@ -1,7 +1,6 @@
 #version 450
 
-// Post-process: tone/color grading. Sampling an sRGB offscreen decodes to linear;
-// we grade here and the swapchain write re-encodes to sRGB.
+// Post-process: HDR scene color -> tone mapping -> color grading -> swapchain.
 layout(binding = 0) uniform sampler2D sceneColor;
 
 layout(push_constant) uniform PostPushConstants {
@@ -29,12 +28,15 @@ float luminance(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
 }
 
-// FXAA edge/direction decisions use perceptual (gamma) luma: the sRGB offscreen is
-// decoded to linear by the sampler, so re-encode before computing luma. Without this,
-// dark night scenes lose luma contrast and FXAA stops smoothing edges. The blended
-// output color stays linear so the later grade + sRGB swapchain write stay correct.
+vec3 toneMapACES(vec3 c) {
+    c *= EXPOSURE;
+    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+}
+
+// FXAA edge/direction decisions use perceptual luma after tone mapping so HDR
+// highlights do not dominate edge thresholds.
 float lumaPerceptual(vec3 linearC) {
-    return luminance(pow(linearC, vec3(1.0 / 2.2)));
+    return luminance(pow(toneMapACES(linearC), vec3(1.0 / 2.2)));
 }
 
 vec3 sampleScene(vec2 p) {
@@ -88,8 +90,7 @@ vec3 applyFxaa(vec2 p) {
 }
 
 vec3 applyGrade(vec3 c) {
-    // exposure
-    c *= EXPOSURE;
+    c = toneMapACES(c);
 
     // contrast around mid grey
     c = (c - 0.5) * CONTRAST + 0.5;

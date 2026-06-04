@@ -44,35 +44,17 @@ static constexpr float HEIGHT_SCALE = 1.0f / 32.0f;
 static constexpr float BIOME_SCALE  = 1.0f / 24.0f;
 
 void TerrainGen::generate(int cx, int cy, Chunk& chunk) {
-    for (int ly = 0; ly < CHUNK_SIZE; ly++) {
-        for (int lx = 0; lx < CHUNK_SIZE; lx++) {
-            const int wx = cx * CHUNK_SIZE + lx;
-            const int wy = cy * CHUNK_SIZE + ly;
+    // OceanVoyage: flat sea base. Fill the ground layer (z=0) with water so the chunk
+    // mesher emits a flat water surface (top face — z=1 above is AIR). Islands, coastal
+    // terrain, and the dedicated ocean surface come in later passes. The farm
+    // height/biome generator (fbm) and prop placement (placeTrees/placeRocks) are kept
+    // below as reference until the ocean world generator replaces them.
+    (void)cx;
+    (void)cy;
+    for (int ly = 0; ly < CHUNK_SIZE; ly++)
+        for (int lx = 0; lx < CHUNK_SIZE; lx++)
+            chunk.tiles[0][ly][lx] = TileType::WATER;
 
-            const float h = fbm(wx * HEIGHT_SCALE, wy * HEIGHT_SCALE);
-            const float b = fbm(wx * BIOME_SCALE + 100.0f, wy * BIOME_SCALE + 100.0f);
-
-            // Low basins become water
-            if (h < 0.28f) {
-                chunk.tiles[0][ly][lx] = TileType::WATER;
-                continue;
-            }
-
-            // Z=0: solid ground — grass, dirt in dry biome
-            chunk.tiles[0][ly][lx] = (b < 0.32f) ? TileType::DIRT : TileType::GRASS;
-
-            // Z=1: hill
-            if (h > 0.52f)
-                chunk.tiles[1][ly][lx] = (b < 0.30f) ? TileType::DIRT : TileType::GRASS;
-
-            // Z=2: stone peak
-            if (h > 0.70f)
-                chunk.tiles[2][ly][lx] = TileType::STONE;
-        }
-    }
-
-    placeTrees(cx, cy, chunk);
-    placeRocks(cx, cy, chunk);
     chunk.dirty = true;
 }
 

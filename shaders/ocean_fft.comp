@@ -1,0 +1,43 @@
+#version 450
+
+// Tessendorf FFT ocean — one butterfly pass of a radix-2 Cooley-Tukey IFFT.
+// A precomputed butterfly texture (width = log2(N) stages, height = N) supplies, per
+// stage and per index, the twiddle factor and the two source indices to combine. The
+// shader runs once per stage along one axis (horizontal then vertical), ping-ponging
+// between two work images. Two complex fields are carried per texel (rg and ba) so a
+// single chain transforms both the packed displacement spectra at once.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0) uniform sampler2D butterfly;                 // (tw.re, tw.im, topIdx, botIdx)
+layout(binding = 1, rgba32f) uniform readonly  image2D srcTex;
+layout(binding = 2, rgba32f) uniform writeonly image2D dstTex;
+
+layout(push_constant) uniform Push {
+    int stage;     // current butterfly stage 0..log2(N)-1
+    int direction; // 0 = horizontal pass, 1 = vertical pass
+} pc;
+
+vec2 cmul(vec2 a, vec2 b) { return vec2(a.x * b.x - a.y * b.y, a.x * b.y + a.y * b.x); }
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+
+    // Index along the axis being transformed selects the butterfly entry.
+    int axis = (pc.direction == 0) ? id.x : id.y;
+    vec4 bf  = texelFetch(butterfly, ivec2(pc.stage, axis), 0);
+    vec2 w   = bf.xy;
+    int  topI = int(bf.z);
+    int  botI = int(bf.w);
+
+    ivec2 topCoord = (pc.direction == 0) ? ivec2(topI, id.y) : ivec2(id.x, topI);
+    ivec2 botCoord = (pc.direction == 0) ? ivec2(botI, id.y) : ivec2(id.x, botI);
+
+    vec4 top = imageLoad(srcTex, topCoord);
+    vec4 bot = imageLoad(srcTex, botCoord);
+
+    // Butterfly H = top + w·bot, applied to both packed complex channels.
+    vec2 rg = top.xy + cmul(w, bot.xy);
+    vec2 ba = top.zw + cmul(w, bot.zw);
+    imageStore(dstTex, id, vec4(rg, ba));
+}

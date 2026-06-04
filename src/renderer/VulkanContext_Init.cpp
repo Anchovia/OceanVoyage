@@ -207,6 +207,9 @@ void VulkanContext::createLogicalDevice() {
     VkPhysicalDeviceFeatures supported{};
     vkGetPhysicalDeviceFeatures(m_physicalDevice, &supported);
     VkPhysicalDeviceFeatures features{};
+    if (!supported.shaderClipDistance)
+        throw std::runtime_error("shaderClipDistance is required for planar water reflection clipping");
+    features.shaderClipDistance = VK_TRUE;
     if (supported.samplerAnisotropy) {
         features.samplerAnisotropy = VK_TRUE;
         m_anisotropyEnabled = true;
@@ -337,8 +340,10 @@ void VulkanContext::createImageViews() {
 //  Render pass
 // ============================================================
 void VulkanContext::createRenderPass() {
+    m_sceneColorFormat = findSceneColorFormat();
+
     VkAttachmentDescription color{};
-    color.format         = m_swapchainFormat;
+    color.format         = m_sceneColorFormat;
     color.samples        = VK_SAMPLE_COUNT_1_BIT;
     color.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
@@ -543,6 +548,19 @@ void VulkanContext::createGraphicsPipeline() {
     m_pipeline = createPipeline(cfg);
 }
 
+void VulkanContext::createSkyPipeline() {
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/post.vert.spv";
+    cfg.fragPath   = "shaders/sky.frag.spv";
+    cfg.bindings   = {};
+    cfg.attributes = {};
+    cfg.cullMode   = VK_CULL_MODE_NONE;
+    cfg.depthTest  = false;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_pipelineLayout; // reuse the scene UBO descriptor set
+    m_skyPipeline = createPipeline(cfg);
+}
+
 void VulkanContext::createChunkPipeline() {
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/chunk.vert.spv";
@@ -612,6 +630,259 @@ void VulkanContext::createObjectPipeline() {
     cfg.alphaBlend = false;
     cfg.layout     = m_pipelineLayout;   // reuse UBO descriptor layout
     m_objectPipeline = createPipeline(cfg);
+}
+
+void VulkanContext::createOceanDescriptorSetLayout() {
+    VkDescriptorSetLayoutBinding bindings[5]{};
+
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[3].binding         = 3;
+    bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[3].descriptorCount = 1;
+    bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // FFT displacement map — sampled by the vertex shader (mesh displacement) and the
+    // fragment shader (per-fragment wave normal).
+    bindings[4].binding         = 4;
+    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    VkDescriptorSetLayoutCreateInfo info{};
+    info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    info.bindingCount = 5;
+    info.pBindings    = bindings;
+    if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean descriptor set layout");
+}
+
+void VulkanContext::createOceanPipeline() {
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount = 1;
+    layoutInfo.pSetLayouts    = &m_oceanDescriptorSetLayout;
+    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_oceanPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean pipeline layout");
+
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/ocean.vert.spv";
+    cfg.fragPath   = "shaders/ocean.frag.spv";
+    cfg.bindings   = {
+        { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
+    };
+    cfg.attributes = {
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // grid position only
+    };
+    cfg.cullMode   = VK_CULL_MODE_NONE;  // two-sided: visible from under a wave crest
+    cfg.depthTest  = true;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_oceanPipelineLayout;
+    m_oceanPipeline = createPipeline(cfg);
+}
+
+void VulkanContext::createOceanMesh() {
+    // Camera-centered concentric ocean mesh: dense near the ship/camera, progressively
+    // larger triangles toward the horizon. This keeps silhouette quality close by while
+    // covering the long, grazing-angle view required by the sailing camera.
+    constexpr int   SECTORS = 512;
+    constexpr float TWO_PI  = 6.28318530718f;
+
+    std::vector<float> radii;
+    auto appendRings = [&radii](float endRadius, float step) {
+        float r = radii.empty() ? step : radii.back() + step;
+        for (; r <= endRadius + 0.001f; r += step)
+            radii.push_back(r);
+    };
+
+    appendRings(  48.0f,  0.5f);
+    appendRings( 128.0f,  1.0f);
+    appendRings( 384.0f,  4.0f);
+    appendRings(1024.0f,  8.0f);
+    appendRings(3072.0f, 24.0f);
+
+    std::vector<glm::vec3> verts;
+    verts.reserve(1 + radii.size() * SECTORS);
+    verts.push_back({ 0.0f, 0.0f, 0.0f });
+
+    for (float r : radii) {
+        for (int s = 0; s < SECTORS; s++) {
+            const float a = TWO_PI * (float)s / (float)SECTORS;
+            verts.push_back({ std::cos(a) * r, std::sin(a) * r, 0.0f });
+        }
+    }
+
+    std::vector<uint32_t> indices;
+    indices.reserve(SECTORS * 3 + (radii.size() - 1) * SECTORS * 6);
+
+    const uint32_t firstRing = 1;
+    for (int s = 0; s < SECTORS; s++) {
+        uint32_t b = firstRing + (uint32_t)s;
+        uint32_t c = firstRing + (uint32_t)((s + 1) % SECTORS);
+        indices.insert(indices.end(), { 0, b, c });
+    }
+
+    for (size_t ring = 1; ring < radii.size(); ring++) {
+        uint32_t prevBase = 1 + (uint32_t)(ring - 1) * SECTORS;
+        uint32_t currBase = 1 + (uint32_t)ring * SECTORS;
+        for (int s = 0; s < SECTORS; s++) {
+            uint32_t prev0 = prevBase + (uint32_t)s;
+            uint32_t prev1 = prevBase + (uint32_t)((s + 1) % SECTORS);
+            uint32_t curr0 = currBase + (uint32_t)s;
+            uint32_t curr1 = currBase + (uint32_t)((s + 1) % SECTORS);
+            indices.insert(indices.end(), { prev0, curr0, prev1,  prev1, curr0, curr1 });
+        }
+    }
+    m_oceanIndexCount = (uint32_t)indices.size();
+
+    VkDeviceSize vSize = sizeof(glm::vec3) * verts.size();
+    m_oceanVertexBuffer = createBuffer(vSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* vMapped;
+    vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped);
+    memcpy(vMapped, verts.data(), vSize);
+    vkUnmapMemory(m_device, m_oceanVertexBuffer.memory);
+
+    VkDeviceSize iSize = sizeof(uint32_t) * indices.size();
+    m_oceanIndexBuffer = createBuffer(iSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* iMapped;
+    vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped);
+    memcpy(iMapped, indices.data(), iSize);
+    vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
+}
+
+void VulkanContext::createOceanNormalTextures() {
+    struct Wave {
+        float fx, fy;
+        float amp;
+        float phase;
+    };
+
+    auto makeNormalMap = [](uint32_t size, const std::vector<Wave>& waves, float strength) {
+        std::vector<uint8_t> pixels((size_t)size * (size_t)size * 4);
+        for (uint32_t y = 0; y < size; y++) {
+            for (uint32_t x = 0; x < size; x++) {
+                const float u = (float)x / (float)size;
+                const float v = (float)y / (float)size;
+                glm::vec2 slope(0.0f);
+
+                for (const Wave& w : waves) {
+                    const float phase = 6.2831853f * (w.fx * u + w.fy * v) + w.phase;
+                    const float c = std::cos(phase);
+                    slope.x += w.amp * w.fx * c;
+                    slope.y += w.amp * w.fy * c;
+                }
+
+                slope *= strength;
+                glm::vec3 n = glm::normalize(glm::vec3(-slope.x, -slope.y, 1.0f));
+                uint8_t* p = &pixels[((size_t)y * size + x) * 4];
+                p[0] = (uint8_t)(std::clamp(n.x * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[1] = (uint8_t)(std::clamp(n.y * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[2] = (uint8_t)(std::clamp(n.z * 0.5f + 0.5f, 0.0f, 1.0f) * 255.0f);
+                p[3] = 255;
+            }
+        }
+        return pixels;
+    };
+
+    auto uploadTiledNormalMap = [this](uint32_t width, uint32_t height, const std::vector<uint8_t>& pixels) {
+        TextureResource tex = createTexture(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+            pixels.data(), (VkDeviceSize)pixels.size(), /*withSampler=*/false, /*mipmapped=*/true);
+
+        const uint32_t mipLevels = (uint32_t)std::floor(std::log2((float)std::max(width, height))) + 1u;
+        VkSamplerCreateInfo si{};
+        si.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        si.magFilter    = VK_FILTER_LINEAR;
+        si.minFilter    = VK_FILTER_LINEAR;
+        si.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        si.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        si.minLod       = 0.0f;
+        si.maxLod       = (float)mipLevels;
+        si.anisotropyEnable = m_anisotropyEnabled ? VK_TRUE : VK_FALSE;
+        si.maxAnisotropy    = m_maxAnisotropy;
+        if (vkCreateSampler(m_device, &si, nullptr, &tex.sampler) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create ocean normal sampler");
+
+        return tex;
+    };
+
+    // Tileable multi-frequency normal maps. They are generated once, then sampled like
+    // ordinary authored ocean normals with mipmaps and anisotropic filtering.
+    static const std::vector<Wave> wavesA = {
+        {  6.0f,   2.0f, 0.095f, 0.20f },
+        { -4.0f,   9.0f, 0.055f, 1.70f },
+        { 13.0f,  -5.0f, 0.032f, 4.10f },
+        { 19.0f,  11.0f, 0.018f, 2.60f },
+        {-23.0f,  17.0f, 0.012f, 5.30f },
+    };
+    static const std::vector<Wave> wavesB = {
+        { 11.0f,  -3.0f, 0.070f, 3.00f },
+        { -8.0f, -13.0f, 0.046f, 0.80f },
+        { 21.0f,   7.0f, 0.025f, 2.20f },
+        {-29.0f,  19.0f, 0.014f, 4.70f },
+        { 35.0f, -31.0f, 0.009f, 1.30f },
+    };
+
+    const uint32_t A_SIZE = 1024;
+    const uint32_t B_SIZE = 512;
+    std::vector<uint8_t> normalA = makeNormalMap(A_SIZE, wavesA, 0.018f);
+    std::vector<uint8_t> normalB = makeNormalMap(B_SIZE, wavesB, 0.014f);
+
+    m_oceanNormalA = uploadTiledNormalMap(A_SIZE, A_SIZE, normalA);
+    m_oceanNormalB = uploadTiledNormalMap(B_SIZE, B_SIZE, normalB);
+}
+
+void VulkanContext::createShipPipeline() {
+    // The hero ship needs a full orientation (bob + wave tilt + heading), so it uses a
+    // model matrix supplied as a push constant rather than the yaw-only object instance.
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRange.offset     = 0;
+    pcRange.size       = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount         = 1;
+    layoutInfo.pSetLayouts            = &m_descriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges    = &pcRange;
+    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_shipPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ship pipeline layout");
+
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/ship.vert.spv";
+    cfg.fragPath   = "shaders/chunk.frag.spv"; // reuse chunk fragment shader
+    cfg.bindings   = {
+        { 0, sizeof(ChunkVertex), VK_VERTEX_INPUT_RATE_VERTEX },
+    };
+    cfg.attributes = {
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)    },
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal) },
+        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)  },
+        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)     },
+        { 4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)  },
+    };
+    cfg.cullMode   = VK_CULL_MODE_NONE;  // procedural hull mesh — winding not guaranteed
+    cfg.depthTest  = true;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_shipPipelineLayout;
+    m_shipPipeline = createPipeline(cfg);
 }
 
 void VulkanContext::createGrassPipeline() {
@@ -814,6 +1085,42 @@ void VulkanContext::createObjectMeshes() {
     std::vector<ChunkVertex> verts;
     pushBox(verts, {-0.42f, -0.14f, 0.0f}, {0.42f, 0.14f, 0.45f}, {0.56f, 0.56f, 0.60f}, LAYER_STONE);
     upload(ObjectType::STONE_FENCE, verts);
+    }
+
+    // ---- SHIP (OceanVoyage placeholder): low-poly hull + bow wedge + mast + square sail.
+    // Forward is +X so object.vert's instanceRot aligns the bow with the player heading;
+    // the per-frame instance seats it on the sea surface. Untextured (LAYER_NONE). ----
+    {
+    std::vector<ChunkVertex> verts;
+    const glm::vec3 hullColor = {0.40f, 0.26f, 0.14f};
+    const glm::vec3 deckColor = {0.50f, 0.36f, 0.20f};
+    const glm::vec3 mastColor = {0.32f, 0.22f, 0.12f};
+    const glm::vec3 sailColor = {0.88f, 0.86f, 0.80f};
+
+    // Hull body + a small stern cabin
+    pushBox(verts, {-0.70f, -0.24f, 0.00f}, { 0.55f, 0.24f, 0.26f}, hullColor, LAYER_NONE);
+    pushBox(verts, {-0.66f, -0.18f, 0.26f}, {-0.40f, 0.18f, 0.40f}, deckColor, LAYER_NONE);
+
+    // Bow wedge: taper the hull's front face (x=0.55) to a point ahead of the bow.
+    const glm::vec3 P   = { 0.92f,  0.00f, 0.13f};
+    const glm::vec3 ftl = { 0.55f, -0.24f, 0.26f}, ftr = { 0.55f, 0.24f, 0.26f};
+    const glm::vec3 fbl = { 0.55f, -0.24f, 0.00f}, fbr = { 0.55f, 0.24f, 0.00f};
+    const glm::vec3 hullCenter = {0.0f, 0.0f, 0.13f};
+    auto bowTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
+        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
+        if (glm::dot(n, (a + b + c) / 3.0f - hullCenter) < 0.0f) n = -n; // force outward
+        pushTri(verts, a, b, c, n, hullColor, LAYER_NONE);
+    };
+    bowTri(ftl, ftr, P); // top
+    bowTri(fbr, fbl, P); // bottom
+    bowTri(fbl, ftl, P); // port (-Y)
+    bowTri(ftr, fbr, P); // starboard (+Y)
+
+    // Mast + square sail (thin in X, spanning the width in Y)
+    pushBox(verts, {-0.03f, -0.03f, 0.26f}, {0.03f, 0.03f, 0.92f}, mastColor, LAYER_NONE);
+    pushBox(verts, {-0.02f, -0.28f, 0.34f}, {0.02f, 0.28f, 0.86f}, sailColor, LAYER_NONE);
+
+    uploadMesh(m_shipMesh, verts);
     }
 
     // ---- GROUND PATCH: thin visual-only dirt/dry-grass breakup decal ----
@@ -1373,6 +1680,22 @@ void VulkanContext::createFramebuffers() {
             throw std::runtime_error("Failed to create scene framebuffer");
     }
 
+    // Planar reflection framebuffers — mirrored scene color + shared depth.
+    m_reflectionFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkImageView attachments[] = { m_reflectionView[i], m_depthImageView };
+        VkFramebufferCreateInfo info{};
+        info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass      = m_renderPass;
+        info.attachmentCount = 2;
+        info.pAttachments    = attachments;
+        info.width           = m_swapchainExtent.width;
+        info.height          = m_swapchainExtent.height;
+        info.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &info, nullptr, &m_reflectionFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create planar reflection framebuffer");
+    }
+
     // Post framebuffers — one per swapchain image
     m_postFramebuffers.resize(m_swapchainImageViews.size());
     for (size_t i = 0; i < m_swapchainImageViews.size(); i++) {
@@ -1507,7 +1830,7 @@ void VulkanContext::createOffscreenResources() {
     m_offscreenMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenView.resize(MAX_FRAMES_IN_FLIGHT);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat,
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1517,12 +1840,36 @@ void VulkanContext::createOffscreenResources() {
         v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         v.image                           = m_offscreenImage[i];
         v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-        v.format                          = m_swapchainFormat;
+        v.format                          = m_sceneColorFormat;
         v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         v.subresourceRange.levelCount     = 1;
         v.subresourceRange.layerCount     = 1;
         if (vkCreateImageView(m_device, &v, nullptr, &m_offscreenView[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create offscreen image view");
+    }
+}
+
+void VulkanContext::createPlanarReflectionResources() {
+    m_reflectionImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_reflectionMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_reflectionView.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_reflectionImage[i], m_reflectionMemory[i]);
+
+        VkImageViewCreateInfo v{};
+        v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        v.image                           = m_reflectionImage[i];
+        v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        v.format                          = m_sceneColorFormat;
+        v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        v.subresourceRange.levelCount     = 1;
+        v.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &v, nullptr, &m_reflectionView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create planar reflection image view");
     }
 }
 
@@ -2847,21 +3194,33 @@ void VulkanContext::createUniformBuffers() {
     }
 }
 
+void VulkanContext::createReflectionUniformBuffers() {
+    VkDeviceSize size = sizeof(UniformBufferObject);
+    m_reflectionUniformBuffers.resize(MAX_FRAMES_IN_FLIGHT);
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        m_reflectionUniformBuffers[i] = createBuffer(size,
+            VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped);
+    }
+}
+
 // ============================================================
 //  Descriptor pool + sets
 // ============================================================
 void VulkanContext::createDescriptorPool() {
     VkDescriptorPoolSize poolSizes[2]{};
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // shadow + grass color + terrain array + grass opacity
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // main + reflection scene descriptors
 
     VkDescriptorPoolCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     info.poolSizeCount = 2;
     info.pPoolSizes    = poolSizes;
-    info.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    info.maxSets       = MAX_FRAMES_IN_FLIGHT * 2;
 
     if (vkCreateDescriptorPool(m_device, &info, nullptr, &m_descriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create descriptor pool");
@@ -2940,6 +3299,180 @@ void VulkanContext::createDescriptorSets() {
         writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
         writes[4].pImageInfo      = &grassOpacityInfo;
+
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+    }
+}
+
+void VulkanContext::createReflectionDescriptorSets() {
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_descriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool     = m_descriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    m_reflectionDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, m_reflectionDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate reflection descriptor sets");
+
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_reflectionUniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range  = sizeof(UniformBufferObject);
+
+        VkDescriptorImageInfo imageInfo{};
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        imageInfo.imageView   = m_shadowImageView;
+        imageInfo.sampler     = m_shadowSampler;
+
+        VkDescriptorImageInfo grassInfo{};
+        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        grassInfo.imageView   = m_grassTex.view;
+        grassInfo.sampler     = m_grassTex.sampler;
+
+        VkDescriptorImageInfo grassOpacityInfo{};
+        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
+        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
+
+        VkDescriptorImageInfo terrainInfo{};
+        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        terrainInfo.imageView   = m_terrainTex.view;
+        terrainInfo.sampler     = m_terrainTex.sampler;
+
+        VkWriteDescriptorSet writes[5]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_reflectionDescriptorSets[i];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo     = &bufferInfo;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_reflectionDescriptorSets[i];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &imageInfo;
+
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_reflectionDescriptorSets[i];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].descriptorCount = 1;
+        writes[2].pImageInfo      = &grassInfo;
+
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = m_reflectionDescriptorSets[i];
+        writes[3].dstBinding      = 3;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].descriptorCount = 1;
+        writes[3].pImageInfo      = &terrainInfo;
+
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = m_reflectionDescriptorSets[i];
+        writes[4].dstBinding      = 4;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].descriptorCount = 1;
+        writes[4].pImageInfo      = &grassOpacityInfo;
+
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
+    }
+}
+
+void VulkanContext::createOceanDescriptors() {
+    VkDescriptorPoolSize poolSizes[2]{};
+    poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // reflection + 2 normal maps + displacement
+
+    VkDescriptorPoolCreateInfo poolInfo{};
+    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 2;
+    poolInfo.pPoolSizes    = poolSizes;
+    poolInfo.maxSets       = MAX_FRAMES_IN_FLIGHT;
+    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_oceanDescriptorPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean descriptor pool");
+
+    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_oceanDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo allocInfo{};
+    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool     = m_oceanDescriptorPool;
+    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    allocInfo.pSetLayouts        = layouts.data();
+
+    m_oceanDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &allocInfo, m_oceanDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate ocean descriptor sets");
+
+    updateOceanDescriptors();
+}
+
+void VulkanContext::updateOceanDescriptors() {
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkDescriptorBufferInfo bufferInfo{};
+        bufferInfo.buffer = m_uniformBuffers[i];
+        bufferInfo.offset = 0;
+        bufferInfo.range  = sizeof(UniformBufferObject);
+
+        VkDescriptorImageInfo reflectionInfo{};
+        reflectionInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        reflectionInfo.imageView   = m_reflectionView[i];
+        reflectionInfo.sampler     = m_postSampler;
+
+        VkDescriptorImageInfo normalAInfo{};
+        normalAInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalAInfo.imageView   = m_oceanNormalA.view;
+        normalAInfo.sampler     = m_oceanNormalA.sampler;
+
+        VkDescriptorImageInfo normalBInfo{};
+        normalBInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        normalBInfo.imageView   = m_oceanNormalB.view;
+        normalBInfo.sampler     = m_oceanNormalB.sampler;
+
+        VkDescriptorImageInfo displacementInfo{};
+        displacementInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
+        displacementInfo.imageView   = m_oceanDisplacementView;
+        displacementInfo.sampler     = m_oceanDisplacementSampler;
+
+        VkWriteDescriptorSet writes[5]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_oceanDescriptorSets[i];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[0].descriptorCount = 1;
+        writes[0].pBufferInfo     = &bufferInfo;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_oceanDescriptorSets[i];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &reflectionInfo;
+
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_oceanDescriptorSets[i];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[2].descriptorCount = 1;
+        writes[2].pImageInfo      = &normalAInfo;
+
+        writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[3].dstSet          = m_oceanDescriptorSets[i];
+        writes[3].dstBinding      = 3;
+        writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[3].descriptorCount = 1;
+        writes[3].pImageInfo      = &normalBInfo;
+
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = m_oceanDescriptorSets[i];
+        writes[4].dstBinding      = 4;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].descriptorCount = 1;
+        writes[4].pImageInfo      = &displacementInfo;
 
         vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
