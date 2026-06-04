@@ -32,16 +32,20 @@ void main() {
 
     const vec3 deepColor    = vec3(0.02, 0.10, 0.16);
     const vec3 shallowColor = vec3(0.10, 0.28, 0.34);
-    vec3 skyColor = ubo.fogColor.rgb;
+
+    // Reflected view direction across the wave-perturbed surface.
+    vec3 R = reflect(-V, N);
+
+    // Procedural sky reflection: a subtle gradient around the (flat) sky color, plus the
+    // sun reflected across the wave facets — a tight disc and a broad glitter road. The
+    // per-facet wave normals break this into the classic sparkling sun path on the sea.
+    vec3  skyRefl = mix(ubo.fogColor.rgb * 1.04, ubo.fogColor.rgb * 0.90, clamp(R.z, 0.0, 1.0));
+    float sun     = max(dot(R, L), 0.0);
+    skyRefl += vec3(1.0, 0.93, 0.78) * (pow(sun, 80.0) * 1.2 + pow(sun, 8.0) * 0.18) * dayFactor;
 
     // Water body: deeper/darker looking straight down, lighter at grazing angles.
     vec3 water = mix(shallowColor, deepColor, NdotV);
-    vec3 color = mix(water, skyColor, F);
-
-    // Sun specular highlight (Blinn-Phong).
-    vec3  H = normalize(L + V);
-    float spec = pow(max(dot(N, H), 0.0), 200.0);
-    color += vec3(1.0, 0.95, 0.85) * spec * dayFactor * 0.8;
+    vec3 color = mix(water, skyRefl, F);
 
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);
