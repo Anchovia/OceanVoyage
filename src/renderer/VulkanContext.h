@@ -207,7 +207,7 @@ private:
     void createDescriptorSets();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
-    void updateShipInstanceBuffer(const glm::vec3& position, float heading);
+    void updateShipInstanceBuffer(const glm::vec3& position, float heading, float gameTime);
     void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();

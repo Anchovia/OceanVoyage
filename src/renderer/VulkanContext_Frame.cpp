@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <cstring>
+#include <cmath>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
@@ -614,7 +615,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
-    updateShipInstanceBuffer(frame.playerPosition, frame.playerHeading);
+    updateShipInstanceBuffer(frame.playerPosition, frame.playerHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();
@@ -680,10 +681,36 @@ void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) 
     memcpy(m_playerInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
-void VulkanContext::updateShipInstanceBuffer(const glm::vec3& position, float heading) {
-    // Seat the placeholder ship on the flat sea surface (water top ~ z=0.5) and orient
-    // the bow to the player heading. Uses the object pipeline's ObjectInstance layout.
-    ObjectInstance inst{ glm::vec3(position.x, position.y, 0.5f), 1.0f, heading };
+namespace {
+// Gerstner sea-surface height at a world XY. MUST match the wave set in shaders/ocean.vert.
+// Horizontal displacement is ignored (good enough to float the ship vertically).
+float oceanSurfaceHeight(float wx, float wy, float t) {
+    struct Wave { float dx, dy, L, A; };
+    static const Wave waves[4] = {
+        { 1.0f,  0.0f,  9.0f,  0.115f },
+        { 0.6f,  0.8f,  5.0f,  0.060f },
+        {-0.8f,  0.4f,  13.0f, 0.085f },
+        { 0.2f, -1.0f,  3.3f,  0.030f },
+    };
+    float h = 0.5f; // SEA_LEVEL (matches ocean.vert)
+    for (const Wave& w : waves) {
+        float inv   = 1.0f / std::sqrt(w.dx * w.dx + w.dy * w.dy);
+        float k     = 6.2831853f / w.L;
+        float omega = std::sqrt(9.8f * k);
+        float phase = k * (w.dx * inv * wx + w.dy * inv * wy) - omega * t;
+        h += w.A * std::sin(phase);
+    }
+    return h;
+}
+} // namespace
+
+void VulkanContext::updateShipInstanceBuffer(const glm::vec3& position, float heading, float gameTime) {
+    // Float the placeholder ship on the Gerstner ocean surface: ride the local wave height
+    // with a small draft so the hull sits partly in the water. The canonical wave model
+    // lives in shaders/ocean.vert; oceanSurfaceHeight() must stay in sync with it.
+    constexpr float DRAFT = 0.08f;
+    float z = oceanSurfaceHeight(position.x, position.y, gameTime) - DRAFT;
+    ObjectInstance inst{ glm::vec3(position.x, position.y, z), 1.0f, heading };
     memcpy(m_shipInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
