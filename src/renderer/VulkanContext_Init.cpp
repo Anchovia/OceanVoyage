@@ -356,7 +356,7 @@ void VulkanContext::createRenderPass() {
     depth.format         = findDepthFormat();
     depth.samples        = VK_SAMPLE_COUNT_1_BIT;
     depth.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    depth.storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
     depth.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     depth.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     depth.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -380,19 +380,36 @@ void VulkanContext::createRenderPass() {
     deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
     deps[0].dstSubpass    = 0;
     deps[0].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    deps[0].srcAccessMask = 0;
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_SHADER_READ_BIT;
     deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
                             VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    // Offscreen color write must finish before the post pass samples it
+    // Scene color/depth writes must be visible to either the continuation pass or post sampling.
     deps[1].srcSubpass    = 0;
     deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
-    deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-    deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
+                            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+                            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+                            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT |
+                            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT |
+                            VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkAttachmentDescription attachments[] = {color, depth};
     VkRenderPassCreateInfo info{};
@@ -406,6 +423,19 @@ void VulkanContext::createRenderPass() {
 
     if (vkCreateRenderPass(m_device, &info, nullptr, &m_renderPass) != VK_SUCCESS)
         throw std::runtime_error("Failed to create render pass");
+
+    // Continuation pass over the same scene targets. The first scene pass clears and records
+    // opaque terrain/object depth; this pass loads those attachments so water and late dynamic
+    // entities can be separated cleanly before sampled-depth refraction/thickness is added.
+    color.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color.initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    depth.loadOp        = VK_ATTACHMENT_LOAD_OP_LOAD;
+    depth.initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkAttachmentDescription loadAttachments[] = {color, depth};
+    info.pAttachments = loadAttachments;
+    if (vkCreateRenderPass(m_device, &info, nullptr, &m_sceneLoadRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create scene continuation render pass");
 }
 
 // ============================================================
@@ -490,7 +520,7 @@ VkPipeline VulkanContext::createPipeline(const PipelineConfig& cfg) {
     VkPipelineDepthStencilStateCreateInfo depthStencil{};
     depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
     depthStencil.depthTestEnable  = cfg.depthTest ? VK_TRUE : VK_FALSE;
-    depthStencil.depthWriteEnable = cfg.depthTest ? VK_TRUE : VK_FALSE;
+    depthStencil.depthWriteEnable = (cfg.depthTest && cfg.depthWrite) ? VK_TRUE : VK_FALSE;
     depthStencil.depthCompareOp   = cfg.depthTest ? VK_COMPARE_OP_LESS : VK_COMPARE_OP_ALWAYS;
 
     VkGraphicsPipelineCreateInfo pipelineInfo{};
@@ -695,6 +725,7 @@ void VulkanContext::createOceanPipeline() {
     };
     cfg.cullMode   = VK_CULL_MODE_NONE;  // two-sided: visible from under a wave crest
     cfg.depthTest  = true;
+    cfg.depthWrite = true; // Current scene order draws the ship after water, so water must keep depth occlusion.
     cfg.alphaBlend = false;
     cfg.layout     = m_oceanPipelineLayout;
     m_oceanPipeline = createPipeline(cfg);
@@ -1686,6 +1717,22 @@ void VulkanContext::createFramebuffers() {
         info.layers          = 1;
         if (vkCreateFramebuffer(m_device, &info, nullptr, &m_sceneFramebuffers[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create scene framebuffer");
+    }
+
+    // Scene continuation framebuffers — same attachments, created against the load render pass.
+    m_sceneLoadFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkImageView attachments[] = { m_offscreenView[i], m_depthImageView };
+        VkFramebufferCreateInfo info{};
+        info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass      = m_sceneLoadRenderPass;
+        info.attachmentCount = 2;
+        info.pAttachments    = attachments;
+        info.width           = m_swapchainExtent.width;
+        info.height          = m_swapchainExtent.height;
+        info.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &info, nullptr, &m_sceneLoadFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create scene continuation framebuffer");
     }
 
     // Planar reflection framebuffers — mirrored scene color + shared depth.

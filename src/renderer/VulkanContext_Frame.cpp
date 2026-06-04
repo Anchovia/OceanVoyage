@@ -455,8 +455,20 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         }
     }
 
-    // Player / selector / drops — dynamic world entities, hidden in menu states
-    // (MainMenu/Settings/Loading) so no orphan player cube shows behind the menu.
+    vkCmdEndRenderPass(cmd); // end pre-water opaque pass
+
+    VkRenderPassBeginInfo waterRp = rp;
+    waterRp.renderPass      = m_sceneLoadRenderPass;
+    waterRp.framebuffer     = m_sceneLoadFramebuffers[m_currentFrame];
+    waterRp.clearValueCount = 0;
+    waterRp.pClearValues    = nullptr;
+    vkCmdBeginRenderPass(cmd, &waterRp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    // Water + late dynamic entities. Keeping this separate from the opaque pass creates the
+    // production path for sampled scene depth while preserving the current ship-after-water
+    // occlusion order.
 
     // Ocean surface — Gerstner-wave grid that follows the camera. Opaque + depth-tested
     // so the ship and (future) islands occlude it correctly.

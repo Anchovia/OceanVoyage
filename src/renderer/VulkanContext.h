@@ -148,8 +148,9 @@ private:
         std::vector<VkVertexInputBindingDescription>   bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;
         VkCullModeFlags  cullMode;
-        bool             depthTest;   // depthTestEnable + depthWriteEnable
-        bool             alphaBlend;  // semi-transparent (UI)
+        bool             depthTest;          // depthTestEnable
+        bool             depthWrite = true;  // transparent surfaces can test depth without writing it
+        bool             alphaBlend;         // semi-transparent (UI/water)
         VkPipelineLayout layout;
         VkRenderPass     renderPass = VK_NULL_HANDLE;
     };
@@ -369,6 +370,8 @@ private:
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
+    VkRenderPass             m_sceneLoadRenderPass      = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_sceneLoadFramebuffers;
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
     VkPipeline               m_postPipeline            = VK_NULL_HANDLE;
     VkPipelineLayout         m_postPipelineLayout      = VK_NULL_HANDLE;

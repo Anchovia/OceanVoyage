@@ -177,6 +177,7 @@ VulkanContext::~VulkanContext() {
     m_terrainTex.destroy();
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
+    vkDestroyRenderPass         (m_device, m_sceneLoadRenderPass,     nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -327,6 +328,7 @@ void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format
 // ============================================================
 void VulkanContext::cleanupSwapchain() {
     for (auto fb : m_sceneFramebuffers)    vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_sceneLoadFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_reflectionFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
