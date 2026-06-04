@@ -175,6 +175,7 @@ private:
     void createObjectPipeline();
     void createOceanPipeline();
     void createOceanMesh();
+    void createShipPipeline();
     void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
@@ -201,13 +202,12 @@ private:
     void createDropInstanceBuffer();
     void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
     void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
-    void createShipInstanceBuffer();
     void createUniformBuffers();
     void createDescriptorPool();
     void createDescriptorSets();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
-    void updateShipInstanceBuffer(const glm::vec3& position, float heading, float gameTime);
+    void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
     void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();
@@ -284,6 +284,8 @@ private:
     VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
     VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
+    VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
+    VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
@@ -356,7 +358,8 @@ private:
         uint32_t       count = 0;
     };
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
-    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via object pipeline)
+    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via the ship pipeline)
+    glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
@@ -393,7 +396,6 @@ private:
     bool                     m_nearWorkbenchHud = false;
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
     std::vector<GpuBuffer>      m_playerInstBuffer;
-    std::vector<GpuBuffer>      m_shipInstBuffer;   // per-frame ObjectInstance for the placeholder ship
     GpuBuffer                m_selectorVertexBuffer;
     GpuBuffer                m_selectorIndexBuffer;
     std::vector<GpuBuffer>      m_selectorInstBuffer;

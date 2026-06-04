@@ -96,6 +96,7 @@ set(SHADERS
     ${SHADER_SRC_DIR}/ui.vert
     ${SHADER_SRC_DIR}/ui.frag
     ${SHADER_SRC_DIR}/object.vert
+    ${SHADER_SRC_DIR}/ship.vert
     ${SHADER_SRC_DIR}/ocean.vert
     ${SHADER_SRC_DIR}/ocean.frag
     ${SHADER_SRC_DIR}/grass.vert
@@ -139,6 +140,7 @@ add_custom_command(TARGET engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ui.vert.spv       ${SHADER_OUT_DIR}/ui.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ui.frag.spv       ${SHADER_OUT_DIR}/ui.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/object.vert.spv   ${SHADER_OUT_DIR}/object.vert.spv
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ship.vert.spv     ${SHADER_OUT_DIR}/ship.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean.vert.spv    ${SHADER_OUT_DIR}/ocean.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean.frag.spv    ${SHADER_OUT_DIR}/ocean.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/grass.vert.spv    ${SHADER_OUT_DIR}/grass.vert.spv

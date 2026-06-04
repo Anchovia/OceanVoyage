@@ -223,15 +223,16 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 }
             }
 
-            // Ship (placeholder) casts a shadow too — instanced object shadow caster,
-            // always inside the light box (no cull).
+            // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
+            // push lightMVP * shipModel so the tilted hull casts a correct shadow.
             if (m_shipMesh.count > 0) {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowObjectPipeline);
+                glm::mat4 shipLightMVP = m_lightMVP * m_shipModel;
+                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
                 vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
-                VkBuffer     sBufs[] = { m_shipMesh.vbuf, m_shipInstBuffer[m_currentFrame] };
-                VkDeviceSize sOffs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
+                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &shipLightMVP);
+                VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+                VkDeviceSize sOffs[] = { 0 };
+                vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
                 vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
             }
         }
@@ -382,10 +383,14 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     // object pipeline so the bow faces the player heading; the per-frame instance seats
     // it on the sea surface. Drawn last in the scene pass; switches the bound pipeline.
     if (worldVisible && m_shipMesh.count > 0) {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        VkBuffer     sBufs[] = {m_shipMesh.vbuf, m_shipInstBuffer[m_currentFrame]};
-        VkDeviceSize sOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_shipPipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &m_shipModel);
+        VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+        VkDeviceSize sOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
         vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
     }
 
@@ -615,7 +620,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
-    updateShipInstanceBuffer(frame.playerPosition, frame.playerHeading, frame.gameTime);
+    updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();
@@ -682,9 +687,9 @@ void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) 
 }
 
 namespace {
-// Gerstner sea-surface height at a world XY. MUST match the wave set in shaders/ocean.vert.
-// Horizontal displacement is ignored (good enough to float the ship vertically).
-float oceanSurfaceHeight(float wx, float wy, float t) {
+// Gerstner sea-surface height + normal at a world XY. MUST match shaders/ocean.vert.
+// Horizontal displacement is ignored (good enough to float and tilt the ship).
+void oceanSurface(float wx, float wy, float t, float& outHeight, glm::vec3& outNormal) {
     struct Wave { float dx, dy, L, A; };
     static const Wave waves[4] = {
         { 1.0f,  0.0f,  9.0f,  0.115f },
@@ -692,26 +697,43 @@ float oceanSurfaceHeight(float wx, float wy, float t) {
         {-0.8f,  0.4f,  13.0f, 0.085f },
         { 0.2f, -1.0f,  3.3f,  0.030f },
     };
-    float h = 0.5f; // SEA_LEVEL (matches ocean.vert)
+    float h = 0.5f, dhdx = 0.0f, dhdy = 0.0f; // SEA_LEVEL = 0.5 (matches ocean.vert)
     for (const Wave& w : waves) {
         float inv   = 1.0f / std::sqrt(w.dx * w.dx + w.dy * w.dy);
+        float dx    = w.dx * inv, dy = w.dy * inv;
         float k     = 6.2831853f / w.L;
         float omega = std::sqrt(9.8f * k);
-        float phase = k * (w.dx * inv * wx + w.dy * inv * wy) - omega * t;
-        h += w.A * std::sin(phase);
+        float phase = k * (dx * wx + dy * wy) - omega * t;
+        h    += w.A * std::sin(phase);
+        float g = w.A * k * std::cos(phase);
+        dhdx += g * dx;
+        dhdy += g * dy;
     }
-    return h;
+    outHeight = h;
+    outNormal = glm::normalize(glm::vec3(-dhdx, -dhdy, 1.0f));
 }
 } // namespace
 
-void VulkanContext::updateShipInstanceBuffer(const glm::vec3& position, float heading, float gameTime) {
-    // Float the placeholder ship on the Gerstner ocean surface: ride the local wave height
-    // with a small draft so the hull sits partly in the water. The canonical wave model
-    // lives in shaders/ocean.vert; oceanSurfaceHeight() must stay in sync with it.
+void VulkanContext::updateShipTransform(const glm::vec3& position, float heading, float gameTime) {
+    // Float the hero ship on the Gerstner surface: ride the local wave height (with a small
+    // draft) and tilt the hull so its deck aligns with the wave normal, bow toward heading.
+    // The canonical wave model lives in shaders/ocean.vert; oceanSurface() stays in sync.
     constexpr float DRAFT = 0.08f;
-    float z = oceanSurfaceHeight(position.x, position.y, gameTime) - DRAFT;
-    ObjectInstance inst{ glm::vec3(position.x, position.y, z), 1.0f, heading };
-    memcpy(m_shipInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
+    float     height;
+    glm::vec3 up;
+    oceanSurface(position.x, position.y, gameTime, height, up);
+
+    glm::vec3 pos  = glm::vec3(position.x, position.y, height - DRAFT);
+    glm::vec3 fwd0 = glm::vec3(std::cos(heading), std::sin(heading), 0.0f);
+    glm::vec3 left = glm::normalize(glm::cross(up, fwd0));  // ship +Y (port)
+    glm::vec3 fwd  = glm::normalize(glm::cross(left, up));  // ship +X (bow), perpendicular to up
+
+    glm::mat4 m(1.0f);
+    m[0] = glm::vec4(fwd,  0.0f); // X column = bow
+    m[1] = glm::vec4(left, 0.0f); // Y column = port
+    m[2] = glm::vec4(up,   0.0f); // Z column = deck up
+    m[3] = glm::vec4(pos,  1.0f); // translation
+    m_shipModel = m;
 }
 
 void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& drops) {

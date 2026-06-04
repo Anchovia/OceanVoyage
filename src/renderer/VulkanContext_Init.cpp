@@ -672,6 +672,43 @@ void VulkanContext::createOceanMesh() {
     vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
 }
 
+void VulkanContext::createShipPipeline() {
+    // The hero ship needs a full orientation (bob + wave tilt + heading), so it uses a
+    // model matrix supplied as a push constant rather than the yaw-only object instance.
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRange.offset     = 0;
+    pcRange.size       = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount         = 1;
+    layoutInfo.pSetLayouts            = &m_descriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges    = &pcRange;
+    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_shipPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ship pipeline layout");
+
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/ship.vert.spv";
+    cfg.fragPath   = "shaders/chunk.frag.spv"; // reuse chunk fragment shader
+    cfg.bindings   = {
+        { 0, sizeof(ChunkVertex), VK_VERTEX_INPUT_RATE_VERTEX },
+    };
+    cfg.attributes = {
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)    },
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal) },
+        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)  },
+        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)     },
+        { 4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)  },
+    };
+    cfg.cullMode   = VK_CULL_MODE_NONE;  // procedural hull mesh — winding not guaranteed
+    cfg.depthTest  = true;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_shipPipelineLayout;
+    m_shipPipeline = createPipeline(cfg);
+}
+
 void VulkanContext::createGrassPipeline() {
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/grass.vert.spv";
@@ -3127,17 +3164,6 @@ void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) 
     }
 
     updatePlayerInstanceBuffer(playerPosition);
-}
-
-void VulkanContext::createShipInstanceBuffer() {
-    VkDeviceSize size = sizeof(ObjectInstance);
-    m_shipInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_shipInstBuffer[i] = createBuffer(size,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_shipInstBuffer[i].memory, 0, size, 0, &m_shipInstBuffer[i].mapped);
-    }
 }
 
 void VulkanContext::createSelectorBuffers() {

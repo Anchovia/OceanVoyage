@@ -39,6 +39,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createUIPipeline();
     createObjectPipeline();
     createOceanPipeline();
+    createShipPipeline();
     createGrassPipeline();
     createPostPipeline();
     createSmaaPipelines();
@@ -68,7 +69,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createDropInstanceBuffer();
     rebuildDirtyChunks();
     createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
-    createShipInstanceBuffer();
     createUniformBuffers();
     createShadowSampler();
     createPostSampler();
@@ -98,7 +98,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_playerInstBuffer.clear();
-    m_shipInstBuffer.clear();
     m_selectorInstBuffer.clear();
     m_selectorIndexBuffer.destroy();
     m_selectorVertexBuffer.destroy();
@@ -119,6 +118,8 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_grassPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_shipPipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
