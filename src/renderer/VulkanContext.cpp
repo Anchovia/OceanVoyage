@@ -278,6 +278,13 @@ VkFormat VulkanContext::findDepthFormat() {
         VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
 }
 
+VkFormat VulkanContext::findSceneColorFormat() {
+    return findSupportedFormat(
+        {VK_FORMAT_R16G16B16A16_SFLOAT},
+        VK_IMAGE_TILING_OPTIMAL,
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+}
+
 void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
     VkImage& image, VkDeviceMemory& memory, uint32_t mipLevels)

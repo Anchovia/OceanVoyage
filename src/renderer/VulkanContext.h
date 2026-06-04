@@ -228,6 +228,7 @@ private:
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
         uint32_t mipLevels = 1);
+    VkFormat findSceneColorFormat();
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates,
         VkImageTiling tiling, VkFormatFeatureFlags features);
@@ -276,6 +277,7 @@ private:
     VkSwapchainKHR           m_swapchain        = VK_NULL_HANDLE;
     std::vector<VkImage>     m_swapchainImages;
     VkFormat                 m_swapchainFormat  = VK_FORMAT_UNDEFINED;
+    VkFormat                 m_sceneColorFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D               m_swapchainExtent  = {};
     std::vector<VkImageView> m_swapchainImageViews;
     bool                     m_vsyncEnabled     = true;

@@ -337,8 +337,10 @@ void VulkanContext::createImageViews() {
 //  Render pass
 // ============================================================
 void VulkanContext::createRenderPass() {
+    m_sceneColorFormat = findSceneColorFormat();
+
     VkAttachmentDescription color{};
-    color.format         = m_swapchainFormat;
+    color.format         = m_sceneColorFormat;
     color.samples        = VK_SAMPLE_COUNT_1_BIT;
     color.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
     color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1682,7 +1684,7 @@ void VulkanContext::createOffscreenResources() {
     m_offscreenMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenView.resize(MAX_FRAMES_IN_FLIGHT);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat,
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1692,7 +1694,7 @@ void VulkanContext::createOffscreenResources() {
         v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         v.image                           = m_offscreenImage[i];
         v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-        v.format                          = m_swapchainFormat;
+        v.format                          = m_sceneColorFormat;
         v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         v.subresourceRange.levelCount     = 1;
         v.subresourceRange.layerCount     = 1;
@@ -1706,7 +1708,7 @@ void VulkanContext::createPlanarReflectionResources() {
     m_reflectionMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_reflectionView.resize(MAX_FRAMES_IN_FLIGHT);
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_swapchainFormat,
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
             VK_IMAGE_TILING_OPTIMAL,
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1716,7 +1718,7 @@ void VulkanContext::createPlanarReflectionResources() {
         v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
         v.image                           = m_reflectionImage[i];
         v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-        v.format                          = m_swapchainFormat;
+        v.format                          = m_sceneColorFormat;
         v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
         v.subresourceRange.levelCount     = 1;
         v.subresourceRange.layerCount     = 1;

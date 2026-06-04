@@ -1,6 +1,6 @@
 #version 450
 
-// SMAA 1x pass 3: neighborhood blending plus the existing color grade.
+// SMAA 1x pass 3: neighborhood blending plus HDR tone mapping/color grade.
 layout(binding = 0) uniform sampler2D sceneColor;
 layout(binding = 1) uniform sampler2D blendTex;
 
@@ -26,8 +26,13 @@ vec4 sampleBlend(vec2 p) {
     return texture(blendTex, clamp(p, vec2(0.0), vec2(1.0)));
 }
 
-vec3 applyGrade(vec3 c) {
+vec3 toneMapACES(vec3 c) {
     c *= EXPOSURE;
+    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+}
+
+vec3 applyGrade(vec3 c) {
+    c = toneMapACES(c);
     c = (c - 0.5) * CONTRAST + 0.5;
 
     float luma = dot(c, vec3(0.299, 0.587, 0.114));

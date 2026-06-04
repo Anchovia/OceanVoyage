@@ -1,6 +1,6 @@
 #version 450
 
-// SMAA 1x pass 1: luma edge detection.
+// SMAA 1x pass 1: luma edge detection on tone-mapped HDR scene color.
 layout(binding = 0) uniform sampler2D sceneColor;
 
 layout(push_constant) uniform PostPushConstants {
@@ -12,18 +12,22 @@ layout(location = 0) out vec4 outColor;
 
 const float SMAA_THRESHOLD = 0.05;
 const float SMAA_LOCAL_CONTRAST_ADAPTATION_FACTOR = 2.0;
+const float EXPOSURE = 1.03;
 
 float luma(vec3 c) {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
 }
 
+vec3 toneMapACES(vec3 c) {
+    c *= EXPOSURE;
+    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
+}
+
 vec3 sampleScene(vec2 p) {
-    // The sRGB offscreen is decoded to linear by the sampler, but SMAA's threshold
-    // is calibrated for perceptual (gamma) luma. Re-encode here so edge detection
-    // runs in gamma space; otherwise dark night scenes lose contrast and edges fall
-    // below the threshold. Only edge flags are output, so scene color is unaffected.
+    // SMAA's threshold is calibrated for perceptual luma. Tone-map the HDR input
+    // first so bright water highlights do not overwhelm local contrast.
     vec3 c = textureLod(sceneColor, clamp(p, vec2(0.0), vec2(1.0)), 0.0).rgb;
-    return pow(c, vec3(1.0 / 2.2));
+    return pow(toneMapACES(c), vec3(1.0 / 2.2));
 }
 
 void main() {
