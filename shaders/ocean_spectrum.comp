@@ -1,0 +1,75 @@
+#version 450
+
+// Tessendorf FFT ocean — initial spectrum h0(k).
+// Generates the time-independent ocean wave spectrum from a Phillips spectrum seeded
+// with Gaussian noise. Stored once at init; the per-frame stage animates it into h(k,t).
+// Output texel: rg = h0(k), ba = conj(h0(-k)) (the pair needed for a real height field).
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rgba32f) uniform writeonly image2D h0Tex;
+
+const int   N         = 256;        // FFT resolution per axis (power of two)
+const float PATCH      = 256.0;      // world size of one FFT tile (meters)
+const float GRAVITY    = 9.81;
+const float WIND_SPEED = 28.0;       // m/s, drives the dominant wavelength
+const float AMPLITUDE  = 4.0e-5;     // Phillips amplitude (overall wave height scale)
+const float SMALL_WAVE = 0.5;        // suppress ripples below this size (meters)
+const float TWO_PI     = 6.28318530718;
+
+// Integer hash → pseudo-random; used to seed deterministic per-texel Gaussians.
+uint hash(uint x) {
+    x ^= x >> 16; x *= 0x7feb352du;
+    x ^= x >> 15; x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+float uintToUnit(uint x) { return float(x & 0x00FFFFFFu) / float(0x01000000u); }
+
+// Box-Muller: two unit-variance Gaussians from a texel's hashed seed.
+vec2 gaussian(uvec2 id) {
+    uint s  = hash(id.x + hash(id.y * 1973u + 9277u));
+    float u1 = max(uintToUnit(hash(s)),            1e-6);
+    float u2 =     uintToUnit(hash(s ^ 0x68bc21ebu));
+    float r   = sqrt(-2.0 * log(u1));
+    float ang = TWO_PI * u2;
+    return vec2(r * cos(ang), r * sin(ang));
+}
+
+float phillips(vec2 k) {
+    float k2 = dot(k, k);
+    if (k2 < 1e-12) return 0.0;
+    float kLen = sqrt(k2);
+    vec2  kh   = k / kLen;
+    vec2  wind = normalize(vec2(1.0, 0.6));
+    float kDotW = dot(kh, wind);
+
+    float L  = WIND_SPEED * WIND_SPEED / GRAVITY;      // largest wave sustained by the wind
+    float ph = AMPLITUDE * exp(-1.0 / (k2 * L * L)) / (k2 * k2) * (kDotW * kDotW);
+    ph *= exp(-k2 * SMALL_WAVE * SMALL_WAVE);           // damp very short waves
+    if (kDotW < 0.0) ph *= 0.07;                        // damp waves travelling against the wind
+    return ph;
+}
+
+vec2 h0(vec2 k, uvec2 id) {
+    return gaussian(id) * sqrt(phillips(k) * 0.5);
+}
+
+void main() {
+    uvec2 id = gl_GlobalInvocationID.xy;
+    if (id.x >= uint(N) || id.y >= uint(N)) return;
+
+    // Wave vector for this texel: indices centred on zero, scaled to world frequency.
+    float n = float(id.x) - float(N) * 0.5;
+    float m = float(id.y) - float(N) * 0.5;
+    vec2  k = vec2(n, m) * (TWO_PI / PATCH);
+
+    // Mirror texel holds -k (N is a power of two, so & (N-1) wraps the index).
+    uvec2 mid = (uvec2(uint(N)) - id) & uvec2(uint(N) - 1u);
+
+    vec2 hk      = h0( k, id);
+    vec2 hmk     = h0(-k, mid);
+    vec2 hmkConj = vec2(hmk.x, -hmk.y);
+
+    imageStore(h0Tex, ivec2(id), vec4(hk, hmkConj));
+}
