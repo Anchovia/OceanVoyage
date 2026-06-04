@@ -119,6 +119,35 @@ vec3 oceanDetailNormal(OceanFrame frame, float t) {
                    + frame.tangentY * detailSlope.y);
 }
 
+vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
+    dir = normalize(dir);
+    sunDir = normalize(sunDir);
+
+    float viewUp = saturate(dir.z);
+    float sunUp = saturate(sunDir.z);
+    float lowSun = 1.0 - smoothstep(0.18, 0.78, sunUp);
+
+    vec3 nightZenith = vec3(0.010, 0.015, 0.035);
+    vec3 dayZenith = fogColor * vec3(0.48, 0.66, 1.12);
+    vec3 zenith = mix(nightZenith, dayZenith, smoothstep(0.02, 0.85, dayFactor));
+
+    vec3 horizon = fogColor * (1.12 + 0.24 * lowSun)
+                 + vec3(0.45, 0.20, 0.055) * lowSun * smoothstep(0.02, 0.55, dayFactor);
+    vec3 sky = mix(horizon, zenith, pow(viewUp, 0.55));
+
+    float horizonAerial = exp(-viewUp * 7.5) * smoothstep(0.02, 0.75, dayFactor);
+    sky += horizon * horizonAerial * 0.16;
+
+    float sunCos = saturate(dot(dir, sunDir));
+    float miePower = mix(14.0, 86.0, sunUp);
+    float sunGlow = pow(sunCos, miePower) * smoothstep(0.02, 0.70, dayFactor);
+    float sunDisc = smoothstep(0.99965, 0.99995, sunCos) * smoothstep(0.02, 0.35, dayFactor);
+    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
+    sky += sunTint * (sunGlow * mix(1.35, 0.62, sunUp) + sunDisc * 7.5);
+
+    return max(sky, vec3(0.0));
+}
+
 void main() {
     vec3  N = oceanDetailNormal(oceanBaseFrame(fragWorldPos.xy), ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
@@ -139,8 +168,9 @@ void main() {
     // Reflected view direction across the wave-perturbed surface.
     vec3 R = reflect(-V, N);
 
-    // Procedural sky reflection: a subtle gradient around the sky color.
-    vec3  skyRefl = mix(ubo.fogColor.rgb * 1.04, ubo.fogColor.rgb * 0.90, clamp(R.z, 0.0, 1.0));
+    // Directional analytic sky fallback for water reflection. The planar target supplies
+    // scene silhouettes; this supplies the high-frequency sun/horizon energy water needs.
+    vec3  skyRefl = skyRadiance(R, L, dayFactor, ubo.fogColor.rgb);
 
     vec3  H     = normalize(V + L);
     float NdotL = max(dot(N, L), 0.0);
