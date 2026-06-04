@@ -1,7 +1,7 @@
 #version 450
 
-// Ocean surface shading: Fresnel sky reflection + depth-tinted water body + sun
-// specular, then fog. Stage 1 reflection is the flat sky color (SSR comes later).
+// Ocean surface shading: Fresnel planar reflection + depth-tinted water body,
+// sun-road glitter, whitecaps, then fog.
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -40,12 +40,21 @@ void main() {
     // Reflected view direction across the wave-perturbed surface.
     vec3 R = reflect(-V, N);
 
-    // Procedural sky reflection: a subtle gradient around the (flat) sky color, plus the
-    // sun reflected across the wave facets — a tight disc and a broad glitter road. The
-    // per-facet wave normals break this into the classic sparkling sun path on the sea.
+    // Procedural sky reflection: a subtle gradient around the sky color. The sun term
+    // below adds the bright path that dances across the wave facets.
     vec3  skyRefl = mix(ubo.fogColor.rgb * 1.04, ubo.fogColor.rgb * 0.90, clamp(R.z, 0.0, 1.0));
     float sun     = max(dot(R, L), 0.0);
-    skyRefl += vec3(1.0, 0.93, 0.78) * (pow(sun, 80.0) * 1.2 + pow(sun, 8.0) * 0.18) * dayFactor;
+
+    vec2 sunXY = normalize(L.xy + vec2(0.0001));
+    vec2 toWater = normalize(fragWorldPos.xy - ubo.cameraPos.xy + vec2(0.0001));
+    float sunRoadAlign = pow(max(dot(toWater, sunXY), 0.0), 10.0);
+    float grazing = smoothstep(0.16, 0.86, 1.0 - NdotV);
+
+    float sunDisc    = pow(sun, 110.0) * 1.60;
+    float facetSpark = pow(sun, 30.0) * 0.42;
+    float broadRoad  = pow(sun, 8.0) * sunRoadAlign * grazing * 0.48;
+    vec3 sunColor = vec3(1.0, 0.92, 0.70);
+    skyRefl += sunColor * (sunDisc + facetSpark + broadRoad) * smoothstep(0.02, 0.70, dayFactor);
 
     // Water body: deeper/darker looking straight down, lighter at grazing angles.
     vec3 water = mix(shallowColor, deepColor, NdotV);
