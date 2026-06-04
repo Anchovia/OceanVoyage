@@ -14,12 +14,16 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 animationParams;
     vec4 cameraPos;       // xyz = camera world position
     mat4 reflectionViewProj;
+    mat4 invViewProj;
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
 layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
-layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (z = height)
+layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement (z = height), w = whitecap seed
+layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
+layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
+layout(binding = 8) uniform sampler2D sceneColor;            // pre-water scene color copy for refraction
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -28,8 +32,8 @@ layout(location = 2) in vec4  fragReflectionClip;
 layout(location = 0) out vec4 outColor;
 
 const float PI    = 3.14159265;
-const float PATCH  = 256.0; // world size of one FFT tile (must match the compute shaders)
-const float FFT_N  = 512.0;
+const int   CASCADES = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size per cascade (must match the compute shaders)
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
@@ -37,6 +41,17 @@ float saturate(float v) {
 
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
     return F0 + (1.0 - F0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+float luminance(vec3 c) {
+    return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 reconstructWorldPosition(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = ubo.invViewProj * clip;
+    float invW = 1.0 / ((abs(world.w) > 0.0001) ? world.w : 0.0001);
+    return world.xyz * invW;
 }
 
 float distributionGGX(float NdotH, float roughness) {
@@ -73,31 +88,33 @@ struct OceanFrame {
     vec2 sourceXY;
 };
 
-vec3 oceanDisplacedPoint(vec2 sourceXY) {
-    vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
-    return vec3(sourceXY + d.xy, d.z);
+// Sum the displacement of every cascade at a world position (each cascade tiles at its own
+// world size). This is the multi-scale surface the rest of the shader works from.
+vec3 oceanDispSum(vec2 xy) {
+    vec3 d = vec3(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        d += texture(oceanDisplacement, vec3(xy / CASCADE_L[c], float(c))).xyz;
+    return d;
 }
 
-// Base wave frame from the full FFT displacement, evaluated per fragment so detail is not
-// limited by the ocean mesh tessellation. The rendered ocean is horizontally displaced
-// (choppy), so normals and detail waves must use the displaced surface tangents.
+// Base wave frame, evaluated per fragment so detail is not limited by the ocean mesh.
+// The rendered ocean is horizontally displaced (choppy), so first invert the displacement to
+// find the source-map coordinate, then build the surface frame from the smooth slope map
+// (sum of per-cascade bilinearly-filtered height gradients) instead of differencing the
+// bilinear displacement — which would expose the texel grid.
 OceanFrame oceanBaseFrame(vec2 worldXY) {
     vec2 sourceXY = worldXY;
-    for (int i = 0; i < 2; ++i) {
-        vec3 d = texture(oceanDisplacement, sourceXY / PATCH).xyz;
-        sourceXY = worldXY - d.xy;
-    }
+    for (int i = 0; i < 2; ++i)
+        sourceXY = worldXY - oceanDispSum(sourceXY).xy;
 
-    float step = PATCH / FFT_N;
-    vec3 pL = oceanDisplacedPoint(sourceXY - vec2(step, 0.0));
-    vec3 pR = oceanDisplacedPoint(sourceXY + vec2(step, 0.0));
-    vec3 pD = oceanDisplacedPoint(sourceXY - vec2(0.0, step));
-    vec3 pU = oceanDisplacedPoint(sourceXY + vec2(0.0, step));
+    vec2 grad = vec2(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        grad += texture(oceanSlope, vec3(sourceXY / CASCADE_L[c], float(c))).rg;
 
     OceanFrame frame;
-    frame.tangentX = normalize(pR - pL);
-    frame.tangentY = normalize(pU - pD);
-    frame.normal   = normalize(cross(frame.tangentX, frame.tangentY));
+    frame.tangentX = normalize(vec3(1.0, 0.0, grad.x));
+    frame.tangentY = normalize(vec3(0.0, 1.0, grad.y));
+    frame.normal   = normalize(vec3(-grad.x, -grad.y, 1.0));
     frame.sourceXY = sourceXY;
     return frame;
 }
@@ -148,7 +165,8 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
 }
 
 void main() {
-    vec3  N = oceanDetailNormal(oceanBaseFrame(fragWorldPos.xy), ubo.animationParams.x);
+    OceanFrame frame = oceanBaseFrame(fragWorldPos.xy);
+    vec3  N = oceanDetailNormal(frame, ubo.animationParams.x);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
@@ -158,10 +176,12 @@ void main() {
     // Schlick Fresnel (F0 ~ 0.02 for water): grazing angles reflect the sky.
     float NdotV = max(dot(N, V), 0.0);
     vec3  Fv = fresnelSchlick(NdotV, WATER_F0);
-    float F = Fv.r;
+    float F = saturate(Fv.r + smoothstep(0.55, 0.98, 1.0 - NdotV) * 0.12);
 
-    const vec3 deepColor    = vec3(0.02, 0.10, 0.16);
-    const vec3 shallowColor = vec3(0.10, 0.28, 0.34);
+    const vec3 deepColor       = vec3(0.010, 0.065, 0.105);
+    const vec3 midWaterColor   = vec3(0.030, 0.185, 0.230);
+    const vec3 shallowColor    = vec3(0.060, 0.270, 0.320);
+    const vec3 scatterColor    = vec3(0.105, 0.300, 0.335);
 
     // Reflected view direction across the wave-perturbed surface.
     vec3 R = reflect(-V, N);
@@ -177,14 +197,39 @@ void main() {
     vec3  Fs    = fresnelSchlick(VdotH, WATER_F0);
     vec3  sunColor = vec3(1.0, 0.92, 0.70);
     float sunGate = smoothstep(0.02, 0.70, dayFactor);
-    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.055);
-    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, 0.16);
+    float distanceRoughness = smoothstep(90.0, 620.0, fragViewDepth);
+    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.050, 0.082, distanceRoughness));
+    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.150, 0.220, distanceRoughness));
     float grazingPath = pow(saturate(dot(R, L)), 18.0) * clamp(1.0 - NdotV, 0.0, 1.0);
-    vec3  sunSpec = (tightSun * 0.42 + broadSun * 0.18 + grazingPath * 0.55)
+    vec3  sunSpec = (tightSun * 0.32 + broadSun * 0.15 + grazingPath * 0.45)
                   * Fs * sunColor * NdotL * sunGate;
+    sunSpec = min(sunSpec, vec3(3.0));
 
-    // Water body: deeper/darker looking straight down, lighter at grazing angles.
-    vec3 water = mix(shallowColor, deepColor, NdotV);
+    vec2 screenUV = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
+    float sceneDepthSample = texture(sceneDepth, screenUV).r;
+    float sceneDepthHasOpaque = 1.0 - step(0.9999, sceneDepthSample);
+    float sceneBehindWater = step(gl_FragCoord.z + 0.00001, sceneDepthSample);
+    float depthResolved = sceneDepthHasOpaque * sceneBehindWater;
+    vec3 sceneWorldPos = reconstructWorldPosition(screenUV, sceneDepthSample);
+    float waterThickness = distance(sceneWorldPos, fragWorldPos) * depthResolved;
+    float shallowWater = exp(-waterThickness * 0.060) * depthResolved;
+    float thinWater = exp(-waterThickness * 0.115) * depthResolved;
+    float depthFade = mix(1.0, 1.0 - exp(-waterThickness * 0.045), depthResolved);
+    vec3 refractionTransmittance = mix(
+        vec3(1.0),
+        exp(-waterThickness * vec3(0.090, 0.040, 0.024)),
+        depthResolved);
+
+    // Water body: Beer-Lambert style absorption, now anchored by copied scene depth where
+    // opaque terrain exists below the surface. Open ocean keeps the long-view approximation.
+    float viewPath = clamp(1.0 / max(NdotV, 0.16), 1.0, 6.0);
+    float depthAbsorptionRate = mix(0.26, 0.58, max(depthFade, 1.0 - shallowWater));
+    float absorption = exp(-viewPath * mix(0.42, depthAbsorptionRate, depthResolved));
+    float sunScatter = pow(max(dot(N, L), 0.0), 1.8) * smoothstep(0.03, 0.85, dayFactor);
+    float facingScatter = smoothstep(0.15, 0.95, NdotV);
+    vec3 water = mix(deepColor, midWaterColor, absorption);
+    water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
+    water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
     vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
     vec2 reflUV   = reflProj.xy * 0.5 + 0.5;
@@ -193,11 +238,27 @@ void main() {
     float validRefl = step(0.0, reflUV.x) * step(reflUV.x, 1.0)
                     * step(0.0, reflUV.y) * step(reflUV.y, 1.0)
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
-    vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.72), validRefl);
-    vec3 color = mix(water, reflection, F) + sunSpec;
+    vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.68), validRefl);
+    float horizonReflection = smoothstep(0.35, 0.98, 1.0 - NdotV);
+    reflection += skyRefl * horizonReflection * 0.10 * smoothstep(0.02, 0.95, dayFactor);
+    float reflectance = saturate(F * mix(0.82, 1.0, horizonReflection));
+    float sceneDepthEdge = depthResolved * smoothstep(0.0, 0.0025, max(sceneDepthSample - gl_FragCoord.z, 0.0));
+    float thicknessReflectance = reflectance * mix(0.58, 1.0, max(depthFade, 1.0 - thinWater));
+    vec3 color = mix(water, reflection, thicknessReflectance) + sunSpec;
+
+    float refractionStrength = thinWater * facingScatter * (1.0 - reflectance);
+    vec2 refractionOffset = N.xy * mix(0.004, 0.018, shallowWater) * refractionStrength;
+    vec3 refractedScene = texture(sceneColor, clamp(screenUV + refractionOffset, vec2(0.0), vec2(1.0))).rgb;
+    vec3 refractedWater = mix(refractedScene * refractionTransmittance, shallowColor, shallowWater * 0.10);
+    color = mix(color, refractedWater, refractionStrength * 0.62);
+
+    color += shallowColor * thinWater * facingScatter * (1.0 - reflectance) * 0.035;
+    color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.080, sceneDepthEdge);
 
     // Daylight modulation (night = dim).
-    color *= mix(0.25, 1.0, dayFactor);
+    color *= mix(0.22, 1.0, dayFactor);
+    color = max(color, water * mix(0.55, 0.92, dayFactor));
+    color = mix(color, vec3(luminance(color)), smoothstep(520.0, 1200.0, fragViewDepth) * 0.08);
 
     // Long-range atmospheric extinction for the sailing camera. Terrain/grass still use
     // short-range fog, but the ocean mesh runs to the horizon.

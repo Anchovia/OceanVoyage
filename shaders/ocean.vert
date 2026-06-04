@@ -1,9 +1,9 @@
 #version 450
 
 // FFT (Tessendorf) ocean surface. A camera-centred concentric mesh is displaced by the
-// GPU-simulated FFT displacement map (height + horizontal choppiness). The map tiles every
-// PATCH metres of world space, so sampling by world position keeps the waves world-locked.
-// The surface normal is derived per-fragment from the same map (see ocean.frag).
+// GPU-simulated FFT displacement map (height + horizontal choppiness). The map is a stack
+// of cascades, each tiling at its own world size; summing them by world position gives the
+// multi-scale, world-locked surface. The normal is derived per-fragment (see ocean.frag).
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -18,7 +18,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 reflectionViewProj;
 } ubo;
 
-layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (xy choppy, z height)
+layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement, w = whitecap seed
 
 layout(location = 0) in vec3 inPos; // local ocean mesh position centered on origin (z ignored)
 
@@ -28,7 +28,8 @@ layout(location = 2) out vec4  fragReflectionClip;
 
 const float SEA_LEVEL = 0.5;
 const float GRID_SNAP = 0.5;
-const float PATCH      = 256.0; // world size of one FFT tile (must match the compute shaders)
+const int   CASCADES  = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // must match the compute shaders
 
 void main() {
     // Snap the mesh origin to the camera at the near cell size so the sea follows the view
@@ -36,7 +37,9 @@ void main() {
     vec2 cameraSnap = floor(ubo.cameraPos.xy / GRID_SNAP) * GRID_SNAP;
     vec2 worldXY    = inPos.xy + cameraSnap;
 
-    vec3 disp = texture(oceanDisplacement, worldXY / PATCH).xyz;
+    vec3 disp = vec3(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        disp += texture(oceanDisplacement, vec3(worldXY / CASCADE_L[c], float(c))).xyz;
     vec3 pos  = vec3(worldXY + disp.xy, SEA_LEVEL + disp.z);
 
     vec4 worldPos = vec4(pos, 1.0);

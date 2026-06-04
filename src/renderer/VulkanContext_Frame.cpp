@@ -113,6 +113,144 @@ void VulkanContext::writeDevTimestamp(VkCommandBuffer cmd, uint32_t index) {
 // ============================================================
 //  Command buffer recording
 // ============================================================
+void VulkanContext::copySceneColorForWater(VkCommandBuffer cmd) {
+    VkImageMemoryBarrier colorToCopy{};
+    colorToCopy.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    colorToCopy.srcAccessMask       = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    colorToCopy.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+    colorToCopy.oldLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    colorToCopy.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorToCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorToCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    colorToCopy.image               = m_offscreenImage[m_currentFrame];
+    colorToCopy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    colorToCopy.subresourceRange.levelCount = 1;
+    colorToCopy.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier copyToDst{};
+    copyToDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    copyToDst.srcAccessMask       = m_sceneColorCopyReady[m_currentFrame] ? VK_ACCESS_SHADER_READ_BIT : 0;
+    copyToDst.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyToDst.oldLayout           = m_sceneColorCopyReady[m_currentFrame]
+        ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        : VK_IMAGE_LAYOUT_UNDEFINED;
+    copyToDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.image               = m_sceneColorCopyImage[m_currentFrame];
+    copyToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copyToDst.subresourceRange.levelCount = 1;
+    copyToDst.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier toCopyBarriers[] = { colorToCopy, copyToDst };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, toCopyBarriers);
+
+    VkImageCopy copy{};
+    copy.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.srcSubresource.layerCount = 1;
+    copy.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    copy.dstSubresource.layerCount = 1;
+    copy.extent = { m_swapchainExtent.width, m_swapchainExtent.height, 1 };
+    vkCmdCopyImage(cmd,
+        m_offscreenImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_sceneColorCopyImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copy);
+
+    VkImageMemoryBarrier colorBack = colorToCopy;
+    colorBack.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    colorBack.dstAccessMask = 0;
+    colorBack.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    colorBack.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier copyReadable = copyToDst;
+    copyReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    copyReadable.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyReadable.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier readableBarriers[] = { colorBack, copyReadable };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, readableBarriers);
+
+    m_sceneColorCopyReady[m_currentFrame] = true;
+}
+
+void VulkanContext::copySceneDepthForWater(VkCommandBuffer cmd) {
+    VkImageMemoryBarrier depthToCopy{};
+    depthToCopy.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthToCopy.srcAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthToCopy.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+    depthToCopy.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthToCopy.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthToCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthToCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthToCopy.image               = m_depthImage;
+    depthToCopy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthToCopy.subresourceRange.levelCount = 1;
+    depthToCopy.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier copyToDst{};
+    copyToDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    copyToDst.srcAccessMask       = m_sceneDepthCopyReady[m_currentFrame] ? VK_ACCESS_SHADER_READ_BIT : 0;
+    copyToDst.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyToDst.oldLayout           = m_sceneDepthCopyReady[m_currentFrame]
+        ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        : VK_IMAGE_LAYOUT_UNDEFINED;
+    copyToDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.image               = m_sceneDepthCopyImage[m_currentFrame];
+    copyToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copyToDst.subresourceRange.levelCount = 1;
+    copyToDst.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier toCopyBarriers[] = { depthToCopy, copyToDst };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, toCopyBarriers);
+
+    VkImageCopy copy{};
+    copy.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copy.srcSubresource.layerCount     = 1;
+    copy.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copy.dstSubresource.layerCount     = 1;
+    copy.extent = { m_swapchainExtent.width, m_swapchainExtent.height, 1 };
+    vkCmdCopyImage(cmd,
+        m_depthImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_sceneDepthCopyImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copy);
+
+    VkImageMemoryBarrier depthBack = depthToCopy;
+    depthBack.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    depthBack.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthBack.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthBack.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkImageMemoryBarrier copyReadable = copyToDst;
+    copyReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    copyReadable.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyReadable.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier readableBarriers[] = { depthBack, copyReadable };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, readableBarriers);
+
+    m_sceneDepthCopyReady[m_currentFrame] = true;
+}
+
 void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -455,8 +593,37 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         }
     }
 
-    // Player / selector / drops — dynamic world entities, hidden in menu states
-    // (MainMenu/Settings/Loading) so no orphan player cube shows behind the menu.
+    // Refraction/depth seed for water. The ship is drawn again after the ocean for final
+    // visibility, but including it in the pre-water buffers gives the water shader real
+    // scene color/depth to refract around the hull instead of sampling only empty sky.
+    if (worldVisible && m_shipMesh.count > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_shipPipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_shipPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &m_shipModel);
+        VkBuffer     sBufs[] = { m_shipMesh.vbuf };
+        VkDeviceSize sOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
+        vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
+    }
+
+    vkCmdEndRenderPass(cmd); // end pre-water opaque pass
+    copySceneColorForWater(cmd);
+    copySceneDepthForWater(cmd);
+
+    VkRenderPassBeginInfo waterRp = rp;
+    waterRp.renderPass      = m_sceneLoadRenderPass;
+    waterRp.framebuffer     = m_sceneLoadFramebuffers[m_currentFrame];
+    waterRp.clearValueCount = 0;
+    waterRp.pClearValues    = nullptr;
+    vkCmdBeginRenderPass(cmd, &waterRp, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+    // Water + late dynamic entities. Keeping this separate from the opaque pass creates the
+    // production path for sampled scene depth while preserving the current ship-after-water
+    // occlusion order.
 
     // Ocean surface — Gerstner-wave grid that follows the camera. Opaque + depth-tested
     // so the ship and (future) islands occlude it correctly.
@@ -706,16 +873,15 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
         m_dayFactor = elevation; // 0 at midnight, 1 at noon
 
-        // Light frustum half-extent. Kept tight to the visible (un-fogged) range so
-        // the 2048 shadow map spends its resolution where it shows: fog fully hides
-        // geometry past ~57 units, so a smaller box ~doubles effective texel density
-        // and cuts the blocky-edge shimmer that crawls as the sun rotates.
-        const float range = 45.0f;
+        // Light frustum half-extent for the ship-scale chase camera. This keeps the
+        // enlarged hero ship inside the shadow box without throwing away too much of
+        // the 2048 shadow map's effective texel density.
+        const float range = 96.0f;
         glm::mat4 lightView = glm::lookAt(
-            frame.playerPosition + m_sunDir * 150.0f,
+            frame.playerPosition + m_sunDir * 240.0f,
             frame.playerPosition,
             glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 lightProj = glm::ortho(-range, range, -range, range, 1.0f, 300.0f);
+        glm::mat4 lightProj = glm::ortho(-range, range, -range, range, 1.0f, 480.0f);
         lightProj[1][1] *= -1.0f;
 
         // Texel snapping: anchor the shadow texel grid to world space so the projected
@@ -868,17 +1034,19 @@ float halfToFloat(uint16_t h) {
     return f;
 }
 
-// Bilinear FFT displacement from the host readback buffer at a source-map world XY.
-glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, float patch, float wx, float wy) {
+// Bilinear FFT displacement from one cascade layer of the host readback buffer. The readback
+// holds every cascade tightly packed, so layer c starts at texel offset c·n·n.
+glm::vec3 sampleCascadeLayer(const uint16_t* px, int n, int layer, float patch, float wx, float wy) {
     float u = wx / patch; u -= std::floor(u);
     float v = wy / patch; v -= std::floor(v);
     float gx = u * (float)n - 0.5f;
     float gy = v * (float)n - 0.5f;
     int   x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
     float tx = gx - (float)x0,      ty = gy - (float)y0;
+    const uint16_t* base = px + (size_t)layer * n * n * 4;
     auto D = [&](int x, int y) {
         x = ((x % n) + n) % n; y = ((y % n) + n) % n;
-        const uint16_t* p = &px[((size_t)y * n + x) * 4];
+        const uint16_t* p = &base[((size_t)y * n + x) * 4];
         return glm::vec3(halfToFloat(p[0]), halfToFloat(p[1]), halfToFloat(p[2]));
     };
     glm::vec3 d00 = D(x0, y0),     d10 = D(x0 + 1, y0);
@@ -887,10 +1055,20 @@ glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, float patch, float 
          + (d01 * (1.0f - tx) + d11 * tx) * ty;
 }
 
-glm::vec2 solveOceanSourceXY(const uint16_t* px, int n, float patch, glm::vec2 worldXY) {
+// Sum every cascade's displacement at a world position (matches the ocean shaders).
+glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, const float* cascadeL, int cascades,
+                                  float wx, float wy) {
+    glm::vec3 d(0.0f);
+    for (int c = 0; c < cascades; ++c)
+        d += sampleCascadeLayer(px, n, c, cascadeL[c], wx, wy);
+    return d;
+}
+
+glm::vec2 solveOceanSourceXY(const uint16_t* px, int n, const float* cascadeL, int cascades,
+                             glm::vec2 worldXY) {
     glm::vec2 sourceXY = worldXY;
     for (int i = 0; i < 3; ++i) {
-        glm::vec3 d = sampleOceanDisplacement(px, n, patch, sourceXY.x, sourceXY.y);
+        glm::vec3 d = sampleOceanDisplacement(px, n, cascadeL, cascades, sourceXY.x, sourceXY.y);
         sourceXY = worldXY - glm::vec2(d.x, d.y);
     }
     return sourceXY;
@@ -902,10 +1080,12 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
     // its deck aligns with the surface normal and the bow points toward the heading.
     (void)gameTime; // wave phase now lives entirely in the GPU FFT
-    constexpr float DRAFT     = 0.08f;
+    constexpr float SHIP_WORLD_SCALE = 6.0f; // LSV018 source length 5.83 -> ~35 world units
+    constexpr float DRAFT     = 0.0f;
     constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
-    const int   n = (int)OCEAN_FFT_N;
-    const float P = OCEAN_PATCH;
+    const int   n        = (int)OCEAN_FFT_N;
+    const int   cascades = (int)OCEAN_CASCADES;
+    const float* cl      = OCEAN_CASCADE_L;
 
     const uint16_t* px = m_oceanReadbackBuffers.empty()
         ? nullptr : (const uint16_t*)m_oceanReadbackBuffers[m_currentFrame].mapped;
@@ -913,14 +1093,14 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     float     height = SEA_LEVEL;
     glm::vec3 up(0.0f, 0.0f, 1.0f);
     if (px) {
-        const float step = P / (float)n;
+        const float step = cl[cascades - 1] / (float)n; // finest cascade texel
         glm::vec2 worldXY(position.x, position.y);
-        glm::vec2 srcC = solveOceanSourceXY(px, n, P, worldXY);
-        float hC  = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y).z;
-        float hX0 = sampleOceanDisplacement(px, n, P, srcC.x - step, srcC.y).z;
-        float hX1 = sampleOceanDisplacement(px, n, P, srcC.x + step, srcC.y).z;
-        float hY0 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y - step).z;
-        float hY1 = sampleOceanDisplacement(px, n, P, srcC.x, srcC.y + step).z;
+        glm::vec2 srcC = solveOceanSourceXY(px, n, cl, cascades, worldXY);
+        float hC  = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y).z;
+        float hX0 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x - step, srcC.y).z;
+        float hX1 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x + step, srcC.y).z;
+        float hY0 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y - step).z;
+        float hY1 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y + step).z;
         height = SEA_LEVEL + hC;
         up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
     }
@@ -931,9 +1111,9 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     glm::vec3 fwd  = glm::normalize(glm::cross(left, up));  // ship +X (bow), perpendicular to up
 
     glm::mat4 m(1.0f);
-    m[0] = glm::vec4(fwd,  0.0f); // X column = bow
-    m[1] = glm::vec4(left, 0.0f); // Y column = port
-    m[2] = glm::vec4(up,   0.0f); // Z column = deck up
+    m[0] = glm::vec4(fwd  * SHIP_WORLD_SCALE, 0.0f); // X column = bow
+    m[1] = glm::vec4(left * SHIP_WORLD_SCALE, 0.0f); // Y column = port
+    m[2] = glm::vec4(up   * SHIP_WORLD_SCALE, 0.0f); // Z column = deck up
     m[3] = glm::vec4(pos,  1.0f); // translation
     m_shipModel = m;
 }

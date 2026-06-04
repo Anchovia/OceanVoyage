@@ -148,8 +148,9 @@ private:
         std::vector<VkVertexInputBindingDescription>   bindings;
         std::vector<VkVertexInputAttributeDescription> attributes;
         VkCullModeFlags  cullMode;
-        bool             depthTest;   // depthTestEnable + depthWriteEnable
-        bool             alphaBlend;  // semi-transparent (UI)
+        bool             depthTest;          // depthTestEnable
+        bool             depthWrite = true;  // transparent surfaces can test depth without writing it
+        bool             alphaBlend;         // semi-transparent (UI/water)
         VkPipelineLayout layout;
         VkRenderPass     renderPass = VK_NULL_HANDLE;
     };
@@ -195,9 +196,11 @@ private:
     // Generic uploaded-texture helper: staging upload + image + view (+ optional sampler).
     TextureResource createTexture(uint32_t width, uint32_t height, VkFormat format,
         const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
+    TextureResource createDDSBC1Texture(const std::string& path, bool srgb);
     // Layered variant for a sampler2DArray (bytes laid out layer-major, all same size).
     TextureResource createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
+    void loadImportedShipMesh();
     void createObjectMeshes();
     void createGrassTexture();
     void createOceanNormalTextures();
@@ -213,6 +216,8 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
+    void copySceneColorForWater(VkCommandBuffer cmd);
+    void copySceneDepthForWater(VkCommandBuffer cmd);
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
     void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
@@ -235,7 +240,7 @@ private:
     void createImage(uint32_t width, uint32_t height, VkFormat format,
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
-        uint32_t mipLevels = 1);
+        uint32_t mipLevels = 1, uint32_t arrayLayers = 1);
     VkFormat findSceneColorFormat();
     VkFormat findDepthFormat();
     VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates,
@@ -309,7 +314,9 @@ private:
 
     // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
     static constexpr uint32_t OCEAN_FFT_N = 512;  // FFT resolution per axis (power of two)
-    static constexpr float    OCEAN_PATCH = 256.0f; // world size of one FFT tile (matches shaders)
+    static constexpr uint32_t OCEAN_CASCADES = 3;  // multi-scale FFT cascades (array layers)
+    // World size (m) of each cascade tile, largest → smallest. Must match the ocean shaders.
+    static constexpr float    OCEAN_CASCADE_L[OCEAN_CASCADES] = { 2048.0f, 512.0f, 128.0f };
     VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
     VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
     VkImageView           m_oceanH0View   = VK_NULL_HANDLE;
@@ -342,7 +349,7 @@ private:
     VkPipeline            m_oceanFFTPipeline            = VK_NULL_HANDLE;
 
     // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
-    // shader. xyz = (choppy x, choppy z, height).
+    // shader. xyz = (choppy x, choppy z, height), w = Jacobian whitecap seed.
     VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
     VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
     VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;
@@ -354,10 +361,21 @@ private:
     VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
     VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
+
+    // Per-cascade surface-slope map (RGBA16F, GENERAL): .rg = world height gradient (dH/dx, dH/dy).
+    // The assemble pass writes it from exact texel neighbours so the water shader can build smooth
+    // normals by bilinearly sampling the slope (no texel-grid artefacts from differencing the
+    // bilinear displacement). Shares the displacement sampler (linear, repeat).
+    VkImage               m_oceanSlopeImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanSlopeMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanSlopeView   = VK_NULL_HANDLE;
+
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
+    VkRenderPass             m_sceneLoadRenderPass      = VK_NULL_HANDLE;
+    std::vector<VkFramebuffer> m_sceneLoadFramebuffers;
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
     VkPipeline               m_postPipeline            = VK_NULL_HANDLE;
     VkPipelineLayout         m_postPipelineLayout      = VK_NULL_HANDLE;
@@ -365,9 +383,14 @@ private:
     VkDescriptorPool         m_postDescriptorPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_postDescriptorSets;
     VkSampler                m_postSampler             = VK_NULL_HANDLE;
+    VkSampler                m_sceneDepthSampler       = VK_NULL_HANDLE;
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+    std::vector<VkImage>        m_sceneColorCopyImage;
+    std::vector<VkDeviceMemory> m_sceneColorCopyMemory;
+    std::vector<VkImageView>    m_sceneColorCopyView;
+    std::vector<bool>           m_sceneColorCopyReady;
 
     // Planar water reflection: mirrored scene color sampled by the ocean shader.
     std::vector<VkFramebuffer>   m_reflectionFramebuffers;
@@ -435,8 +458,11 @@ private:
         uint32_t       count = 0;
     };
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
-    ObjectMesh m_shipMesh;   // OceanVoyage placeholder ship hull (drawn via the ship pipeline)
+    ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
+    TextureResource m_shipAlbedoTex;
+    TextureResource m_shipNormalTex;
+    TextureResource m_shipSpecularTex;
     ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
@@ -485,6 +511,10 @@ private:
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
     VkDeviceMemory               m_depthImageMemory     = VK_NULL_HANDLE;
     VkImageView                  m_depthImageView       = VK_NULL_HANDLE;
+    std::vector<VkImage>         m_sceneDepthCopyImage;
+    std::vector<VkDeviceMemory>  m_sceneDepthCopyMemory;
+    std::vector<VkImageView>     m_sceneDepthCopyView;
+    std::vector<bool>            m_sceneDepthCopyReady;
 
     static constexpr uint32_t    SHADOW_MAP_SIZE        = 2048;
     VkImage                      m_shadowImage          = VK_NULL_HANDLE;

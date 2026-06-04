@@ -75,11 +75,11 @@ private:
     float m_near;
     float m_far;
 
-    // Ship-chase view (UWO-style): a low pitch keeps the horizon in frame so the
-    // ocean reads at a grazing angle. Zoom adjusts m_orbitDistance within these bounds.
-    static constexpr float kMinOrbitDistance = 8.0f;
-    static constexpr float kMaxOrbitDistance = 40.0f;
-    float m_orbitDistance = 20.0f;
-    float m_orbitPitch = 20.0f;
+    // Ship-chase view: calibrated for a ship-scale hero asset instead of the original
+    // one-tile farm avatar, so ocean texels are judged from a real naval-game distance.
+    static constexpr float kMinOrbitDistance = 42.0f;
+    static constexpr float kMaxOrbitDistance = 180.0f;
+    float m_orbitDistance = 90.0f;
+    float m_orbitPitch = 18.0f;
     float m_followSharpness = 9.0f;
 };

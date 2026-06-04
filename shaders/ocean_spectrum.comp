@@ -1,19 +1,22 @@
 #version 450
 
-// Tessendorf FFT ocean — initial spectrum h0(k).
+// Tessendorf FFT ocean — initial spectrum h0(k), multi-cascade.
 // Generates the time-independent ocean wave spectrum from a Phillips spectrum seeded
 // with Gaussian noise. Stored once at init; the per-frame stage animates it into h(k,t).
+// One array layer per cascade (gl_GlobalInvocationID.z): each cascade uses its own patch
+// size and keeps only its own wavenumber band so the cascades do not duplicate energy.
 // Output texel: rg = h0(k), ba = conj(h0(-k)) (the pair needed for a real height field).
 
 layout(local_size_x = 16, local_size_y = 16) in;
 
-layout(binding = 0, rgba32f) uniform writeonly image2D h0Tex;
+layout(binding = 0, rgba32f) uniform writeonly image2DArray h0Tex;
 
 const int   N         = 512;        // FFT resolution per axis (power of two)
-const float PATCH      = 256.0;      // world size of one FFT tile (meters)
+const int   CASCADES  = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size (m) of each cascade tile
 const float GRAVITY    = 9.81;
-const float WIND_SPEED = 28.0;       // m/s, drives the dominant wavelength
-const float AMPLITUDE  = 3.0e-7;     // Phillips amplitude (wave height scales with sqrt(AMPLITUDE))
+const float WIND_SPEED = 11.0;       // m/s, drives the dominant wavelength (Phillips peak ≈ 2π·(U²/g)·√2)
+const float AMPLITUDE  = 2.0e-6;     // Phillips amplitude (wave height scales with sqrt(AMPLITUDE))
 const float SMALL_WAVE = 0.5;        // suppress ripples below this size (meters)
 const float TWO_PI     = 6.28318530718;
 
@@ -26,9 +29,10 @@ uint hash(uint x) {
 }
 float uintToUnit(uint x) { return float(x & 0x00FFFFFFu) / float(0x01000000u); }
 
-// Box-Muller: two unit-variance Gaussians from a texel's hashed seed.
-vec2 gaussian(uvec2 id) {
-    uint s  = hash(id.x + hash(id.y * 1973u + 9277u));
+// Box-Muller: two unit-variance Gaussians from a texel's hashed seed. The cascade index is
+// folded in so each cascade gets an independent random field.
+vec2 gaussian(uvec2 id, uint cascade) {
+    uint s  = hash(id.x + hash(id.y * 1973u + 9277u) + cascade * 2749u);
     float u1 = max(uintToUnit(hash(s)),            1e-6);
     float u2 =     uintToUnit(hash(s ^ 0x68bc21ebu));
     float r   = sqrt(-2.0 * log(u1));
@@ -36,10 +40,12 @@ vec2 gaussian(uvec2 id) {
     return vec2(r * cos(ang), r * sin(ang));
 }
 
-float phillips(vec2 k) {
+// Phillips spectrum, band-limited to [kLow, kHigh) so each cascade owns a distinct slice.
+float phillips(vec2 k, float kLow, float kHigh) {
     float k2 = dot(k, k);
     if (k2 < 1e-12) return 0.0;
     float kLen = sqrt(k2);
+    if (kLen < kLow || kLen >= kHigh) return 0.0;      // keep only this cascade's band
     vec2  kh   = k / kLen;
     vec2  wind = normalize(vec2(1.0, 0.6));
     float kDotW = dot(kh, wind);
@@ -51,25 +57,34 @@ float phillips(vec2 k) {
     return ph;
 }
 
-vec2 h0(vec2 k, uvec2 id) {
-    return gaussian(id) * sqrt(phillips(k) * 0.5);
+vec2 h0(vec2 k, uvec2 id, uint cascade, float kLow, float kHigh) {
+    return gaussian(id, cascade) * sqrt(phillips(k, kLow, kHigh) * 0.5);
 }
 
 void main() {
-    uvec2 id = gl_GlobalInvocationID.xy;
-    if (id.x >= uint(N) || id.y >= uint(N)) return;
+    uvec3 gid = gl_GlobalInvocationID;
+    if (gid.x >= uint(N) || gid.y >= uint(N) || gid.z >= uint(CASCADES)) return;
+    uint  cascade = gid.z;
+    float cascadeL = CASCADE_L[cascade];
+
+    // Band boundaries. Each split sits at wavelength L_next/2 (k = 4π/L_next), so the smaller
+    // cascade only owns waves with >=2 periods per its tile and the energetic mid-band waves
+    // land in a tile several wavelengths wide (avoids visible repetition of the dominant wave).
+    // The largest cascade has no lower bound, the smallest no upper bound.
+    float kLow  = (cascade == 0u)                  ? 0.0 : (2.0 * TWO_PI / cascadeL);
+    float kHigh = (cascade == uint(CASCADES) - 1u) ? 1e9 : (2.0 * TWO_PI / CASCADE_L[cascade + 1u]);
 
     // Wave vector for this texel: indices centred on zero, scaled to world frequency.
-    float n = float(id.x) - float(N) * 0.5;
-    float m = float(id.y) - float(N) * 0.5;
-    vec2  k = vec2(n, m) * (TWO_PI / PATCH);
+    float n = float(gid.x) - float(N) * 0.5;
+    float m = float(gid.y) - float(N) * 0.5;
+    vec2  k = vec2(n, m) * (TWO_PI / cascadeL);
 
     // Mirror texel holds -k (N is a power of two, so & (N-1) wraps the index).
-    uvec2 mid = (uvec2(uint(N)) - id) & uvec2(uint(N) - 1u);
+    uvec2 mid = (uvec2(uint(N)) - gid.xy) & uvec2(uint(N) - 1u);
 
-    vec2 hk      = h0( k, id);
-    vec2 hmk     = h0(-k, mid);
+    vec2 hk      = h0( k, gid.xy, cascade, kLow, kHigh);
+    vec2 hmk     = h0(-k, mid,    cascade, kLow, kHigh);
     vec2 hmkConj = vec2(hmk.x, -hmk.y);
 
-    imageStore(h0Tex, ivec2(id), vec4(hk, hmkConj));
+    imageStore(h0Tex, ivec3(gid.xy, int(cascade)), vec4(hk, hmkConj));
 }

@@ -117,6 +117,9 @@ VulkanContext::~VulkanContext() {
     destroyOceanFFT();
     m_oceanNormalB.destroy();
     m_oceanNormalA.destroy();
+    m_shipSpecularTex.destroy();
+    m_shipNormalTex.destroy();
+    m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
     m_grassClumpMesh.vbuf.destroy();
     m_grassCardMesh.vbuf.destroy();
@@ -171,12 +174,14 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_smaaEdgeDescriptorSetLayout,         nullptr);
     m_smaaAreaTex.destroy();
     m_smaaSearchTex.destroy();
+    vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
     m_grassTex.destroy();
     m_grassOpacityTex.destroy();
     m_terrainTex.destroy();
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
+    vkDestroyRenderPass         (m_device, m_sceneLoadRenderPass,     nullptr);
     vkDestroyRenderPass(m_device, m_renderPass, nullptr);
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -289,19 +294,22 @@ VkFormat VulkanContext::findSceneColorFormat() {
     return findSupportedFormat(
         {VK_FORMAT_R16G16B16A16_SFLOAT},
         VK_IMAGE_TILING_OPTIMAL,
-        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+        VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_DST_BIT);
 }
 
 void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
-    VkImage& image, VkDeviceMemory& memory, uint32_t mipLevels)
+    VkImage& image, VkDeviceMemory& memory, uint32_t mipLevels, uint32_t arrayLayers)
 {
     VkImageCreateInfo imageInfo{};
     imageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     imageInfo.imageType     = VK_IMAGE_TYPE_2D;
     imageInfo.extent        = {width, height, 1};
     imageInfo.mipLevels     = mipLevels;
-    imageInfo.arrayLayers   = 1;
+    imageInfo.arrayLayers   = arrayLayers;
     imageInfo.format        = format;
     imageInfo.tiling        = tiling;
     imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -327,6 +335,7 @@ void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format
 // ============================================================
 void VulkanContext::cleanupSwapchain() {
     for (auto fb : m_sceneFramebuffers)    vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_sceneLoadFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_reflectionFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
@@ -335,10 +344,20 @@ void VulkanContext::cleanupSwapchain() {
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage    (m_device, m_depthImage,     nullptr);
     vkFreeMemory      (m_device, m_depthImageMemory, nullptr);
+    for (size_t i = 0; i < m_sceneDepthCopyImage.size(); i++) {
+        vkDestroyImageView(m_device, m_sceneDepthCopyView[i],   nullptr);
+        vkDestroyImage    (m_device, m_sceneDepthCopyImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_sceneDepthCopyMemory[i], nullptr);
+    }
     for (size_t i = 0; i < m_offscreenImage.size(); i++) {
         vkDestroyImageView(m_device, m_offscreenView[i],   nullptr);
         vkDestroyImage    (m_device, m_offscreenImage[i],  nullptr);
         vkFreeMemory      (m_device, m_offscreenMemory[i], nullptr);
+    }
+    for (size_t i = 0; i < m_sceneColorCopyImage.size(); i++) {
+        vkDestroyImageView(m_device, m_sceneColorCopyView[i],   nullptr);
+        vkDestroyImage    (m_device, m_sceneColorCopyImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_sceneColorCopyMemory[i], nullptr);
     }
     for (size_t i = 0; i < m_reflectionImage.size(); i++) {
         vkDestroyImageView(m_device, m_reflectionView[i],   nullptr);
