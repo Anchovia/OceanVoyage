@@ -306,7 +306,7 @@ private:
     std::vector<VkDescriptorSet> m_oceanDescriptorSets;
 
     // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
-    static constexpr uint32_t OCEAN_FFT_N = 256;  // FFT resolution per axis (power of two)
+    static constexpr uint32_t OCEAN_FFT_N = 512;  // FFT resolution per axis (power of two)
     static constexpr float    OCEAN_PATCH = 256.0f; // world size of one FFT tile (matches shaders)
     VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
     VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
@@ -328,7 +328,7 @@ private:
 
     // Butterfly IFFT: the spectrum image doubles as one ping-pong buffer; m_oceanFFTPong
     // is the other. The butterfly texture drives the radix-2 passes.
-    static constexpr uint32_t OCEAN_FFT_LOG2N = 8; // log2(OCEAN_FFT_N); 1<<8 == 256
+    static constexpr uint32_t OCEAN_FFT_LOG2N = 9; // log2(OCEAN_FFT_N); 1<<9 == 512
     VkImage               m_oceanFFTPongImage  = VK_NULL_HANDLE;
     VkDeviceMemory        m_oceanFFTPongMemory = VK_NULL_HANDLE;
     VkImageView           m_oceanFFTPongView   = VK_NULL_HANDLE;

@@ -14,7 +14,7 @@ layout(binding = 1, rgba32f) uniform writeonly image2D spectrumTex; // rg = H1, 
 
 layout(push_constant) uniform Push { float time; } pc;
 
-const int   N       = 256;
+const int   N       = 512;
 const float PATCH    = 256.0;
 const float GRAVITY  = 9.81;
 const float TWO_PI   = 6.28318530718;

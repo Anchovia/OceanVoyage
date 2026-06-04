@@ -10,7 +10,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 layout(binding = 0, rgba32f) uniform readonly  image2D fftResult;    // .r=Dy, .g=Dx, .b=Dz
 layout(binding = 1, rgba16f) uniform writeonly image2D displacement; // xyz = world displacement
 
-const int   N          = 256;
+const int   N          = 512;
 const float CHOPPINESS  = 0.5; // horizontal displacement scale (crest sharpness)
 
 void main() {

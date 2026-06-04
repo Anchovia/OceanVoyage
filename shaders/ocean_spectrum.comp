@@ -9,7 +9,7 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba32f) uniform writeonly image2D h0Tex;
 
-const int   N         = 256;        // FFT resolution per axis (power of two)
+const int   N         = 512;        // FFT resolution per axis (power of two)
 const float PATCH      = 256.0;      // world size of one FFT tile (meters)
 const float GRAVITY    = 9.81;
 const float WIND_SPEED = 28.0;       // m/s, drives the dominant wavelength

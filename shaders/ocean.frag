@@ -28,7 +28,7 @@ layout(location = 0) out vec4 outColor;
 
 const float PI    = 3.14159265;
 const float PATCH  = 256.0; // world size of one FFT tile (must match the compute shaders)
-const float FFT_N  = 256.0;
+const float FFT_N  = 512.0;
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
