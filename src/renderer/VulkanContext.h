@@ -214,6 +214,7 @@ private:
     void updateOceanDescriptors();
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
+    void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
     void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
@@ -322,6 +323,19 @@ private:
     VkPipelineLayout      m_oceanUpdatePipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanUpdatePipeline            = VK_NULL_HANDLE;
     float                 m_oceanTime = 0.0f; // game time fed to the FFT spectrum each frame
+
+    // Butterfly IFFT: the spectrum image doubles as one ping-pong buffer; m_oceanFFTPong
+    // is the other. The butterfly texture drives the radix-2 passes.
+    static constexpr uint32_t OCEAN_FFT_LOG2N = 8; // log2(OCEAN_FFT_N); 1<<8 == 256
+    VkImage               m_oceanFFTPongImage  = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanFFTPongMemory = VK_NULL_HANDLE;
+    VkImageView           m_oceanFFTPongView   = VK_NULL_HANDLE;
+    TextureResource       m_oceanButterflyTex; // (tw.re, tw.im, topIdx, botIdx) per stage/index
+    VkDescriptorSetLayout m_oceanFFTDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanFFTSetPingToPong       = VK_NULL_HANDLE; // src=spectrum(ping), dst=pong
+    VkDescriptorSet       m_oceanFFTSetPongToPing       = VK_NULL_HANDLE; // src=pong, dst=spectrum(ping)
+    VkPipelineLayout      m_oceanFFTPipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanFFTPipeline            = VK_NULL_HANDLE;
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
