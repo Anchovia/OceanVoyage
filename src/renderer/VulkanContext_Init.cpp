@@ -617,7 +617,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[4]{};
+    VkDescriptorSetLayoutBinding bindings[5]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -639,9 +639,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // FFT displacement map — sampled by the ocean vertex shader to displace the mesh.
+    bindings[4].binding         = 4;
+    bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[4].descriptorCount = 1;
+    bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 4;
+    info.bindingCount = 5;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -3364,7 +3370,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 3;
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // reflection + 2 normal maps + displacement
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3410,7 +3416,12 @@ void VulkanContext::updateOceanDescriptors() {
         normalBInfo.imageView   = m_oceanNormalB.view;
         normalBInfo.sampler     = m_oceanNormalB.sampler;
 
-        VkWriteDescriptorSet writes[4]{};
+        VkDescriptorImageInfo displacementInfo{};
+        displacementInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
+        displacementInfo.imageView   = m_oceanDisplacementView;
+        displacementInfo.sampler     = m_oceanDisplacementSampler;
+
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3439,7 +3450,14 @@ void VulkanContext::updateOceanDescriptors() {
         writes[3].descriptorCount = 1;
         writes[3].pImageInfo      = &normalBInfo;
 
-        vkUpdateDescriptorSets(m_device, 4, writes, 0, nullptr);
+        writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[4].dstSet          = m_oceanDescriptorSets[i];
+        writes[4].dstBinding      = 4;
+        writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[4].descriptorCount = 1;
+        writes[4].pImageInfo      = &displacementInfo;
+
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
 }
 

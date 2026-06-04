@@ -13,7 +13,7 @@ const int   N         = 256;        // FFT resolution per axis (power of two)
 const float PATCH      = 256.0;      // world size of one FFT tile (meters)
 const float GRAVITY    = 9.81;
 const float WIND_SPEED = 28.0;       // m/s, drives the dominant wavelength
-const float AMPLITUDE  = 4.0e-5;     // Phillips amplitude (overall wave height scale)
+const float AMPLITUDE  = 3.0e-7;     // Phillips amplitude (wave height scales with sqrt(AMPLITUDE))
 const float SMALL_WAVE = 0.5;        // suppress ripples below this size (meters)
 const float TWO_PI     = 6.28318530718;
 

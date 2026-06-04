@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
+#include <cstdint>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
@@ -844,41 +845,66 @@ void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) 
 }
 
 namespace {
-// Gerstner sea-surface height + normal at a world XY. MUST match shaders/ocean.vert.
-// Horizontal displacement is ignored (good enough to float and tilt the ship).
-void oceanSurface(float wx, float wy, float t, float& outHeight, glm::vec3& outNormal) {
-    struct Wave { float dx, dy, L, A; };
-    static const Wave waves[4] = {
-        { 1.0f,  0.0f,  9.0f,  0.115f },
-        { 0.6f,  0.8f,  5.0f,  0.060f },
-        {-0.8f,  0.4f,  13.0f, 0.085f },
-        { 0.2f, -1.0f,  3.3f,  0.030f },
+// Decode an IEEE-754 half (binary16) to float — reads the R16F displacement readback.
+// Half-subnormals are flushed to zero (negligible at wave-height scale).
+float halfToFloat(uint16_t h) {
+    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
+    uint32_t exp  = (h >> 10) & 0x1Fu;
+    uint32_t mant = h & 0x3FFu;
+    uint32_t bits;
+    if (exp == 0u)         bits = sign;
+    else if (exp == 0x1Fu) bits = sign | 0x7F800000u | (mant << 13);
+    else                   bits = sign | ((exp + 112u) << 23) | (mant << 13); // 112 = 127 - 15
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+// Bilinear FFT wave height (displacement .z) from the host readback buffer at a world XY.
+// The map tiles every `patch` metres; horizontal choppiness is ignored (good enough to float).
+float sampleOceanHeight(const uint16_t* px, int n, float patch, float wx, float wy) {
+    float u = wx / patch; u -= std::floor(u);
+    float v = wy / patch; v -= std::floor(v);
+    float gx = u * (float)n - 0.5f;
+    float gy = v * (float)n - 0.5f;
+    int   x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
+    float tx = gx - (float)x0,      ty = gy - (float)y0;
+    auto H = [&](int x, int y) {
+        x = ((x % n) + n) % n; y = ((y % n) + n) % n;
+        return halfToFloat(px[((size_t)y * n + x) * 4 + 2]); // .z = height (3rd of RGBA16F)
     };
-    float h = 0.5f, dhdx = 0.0f, dhdy = 0.0f; // SEA_LEVEL = 0.5 (matches ocean.vert)
-    for (const Wave& w : waves) {
-        float inv   = 1.0f / std::sqrt(w.dx * w.dx + w.dy * w.dy);
-        float dx    = w.dx * inv, dy = w.dy * inv;
-        float k     = 6.2831853f / w.L;
-        float omega = std::sqrt(9.8f * k);
-        float phase = k * (dx * wx + dy * wy) - omega * t;
-        h    += w.A * std::sin(phase);
-        float g = w.A * k * std::cos(phase);
-        dhdx += g * dx;
-        dhdy += g * dy;
-    }
-    outHeight = h;
-    outNormal = glm::normalize(glm::vec3(-dhdx, -dhdy, 1.0f));
+    float h00 = H(x0, y0),     h10 = H(x0 + 1, y0);
+    float h01 = H(x0, y0 + 1), h11 = H(x0 + 1, y0 + 1);
+    return (h00 * (1.0f - tx) + h10 * tx) * (1.0f - ty)
+         + (h01 * (1.0f - tx) + h11 * tx) * ty;
 }
 } // namespace
 
 void VulkanContext::updateShipTransform(const glm::vec3& position, float heading, float gameTime) {
-    // Float the hero ship on the Gerstner surface: ride the local wave height (with a small
-    // draft) and tilt the hull so its deck aligns with the wave normal, bow toward heading.
-    // The canonical wave model lives in shaders/ocean.vert; oceanSurface() stays in sync.
-    constexpr float DRAFT = 0.08f;
-    float     height;
-    glm::vec3 up;
-    oceanSurface(position.x, position.y, gameTime, height, up);
+    // Float the hero ship on the actual FFT surface: sample the displacement readback (filled
+    // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
+    // its deck aligns with the surface normal and the bow points toward the heading.
+    (void)gameTime; // wave phase now lives entirely in the GPU FFT
+    constexpr float DRAFT     = 0.08f;
+    constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
+    const int   n = (int)OCEAN_FFT_N;
+    const float P = OCEAN_PATCH;
+
+    const uint16_t* px = m_oceanReadbackBuffers.empty()
+        ? nullptr : (const uint16_t*)m_oceanReadbackBuffers[m_currentFrame].mapped;
+
+    float     height = SEA_LEVEL;
+    glm::vec3 up(0.0f, 0.0f, 1.0f);
+    if (px) {
+        const float step = P / (float)n;
+        float hC  = sampleOceanHeight(px, n, P, position.x, position.y);
+        float hX0 = sampleOceanHeight(px, n, P, position.x - step, position.y);
+        float hX1 = sampleOceanHeight(px, n, P, position.x + step, position.y);
+        float hY0 = sampleOceanHeight(px, n, P, position.x, position.y - step);
+        float hY1 = sampleOceanHeight(px, n, P, position.x, position.y + step);
+        height = SEA_LEVEL + hC;
+        up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
+    }
 
     glm::vec3 pos  = glm::vec3(position.x, position.y, height - DRAFT);
     glm::vec3 fwd0 = glm::vec3(std::cos(heading), std::sin(heading), 0.0f);

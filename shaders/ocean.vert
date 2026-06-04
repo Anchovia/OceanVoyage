@@ -1,8 +1,10 @@
 #version 450
 
-// Gerstner-wave ocean surface. A concentric camera-centered mesh (binding 0) is
-// displaced into rolling waves so the sea covers both near water and the horizon.
-// Analytic normals are derived from the wave partial derivatives.
+// FFT (Tessendorf) ocean surface. A camera-centred concentric mesh is displaced by the
+// GPU-simulated FFT displacement map (height + horizontal choppiness). The map tiles every
+// PATCH metres of world space, so sampling by world position keeps the waves world-locked.
+// Normals are estimated from height central differences here; a proper FFT slope/normal map
+// replaces this in a later step.
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -16,6 +18,8 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 reflectionViewProj;
 } ubo;
 
+layout(binding = 4) uniform sampler2D oceanDisplacement; // xyz = world displacement (xy choppy, z height)
+
 layout(location = 0) in vec3 inPos; // local ocean mesh position centered on origin (z ignored)
 
 layout(location = 0) out vec3  fragNormal;
@@ -25,54 +29,27 @@ layout(location = 3) out vec4  fragReflectionClip;
 
 const float SEA_LEVEL = 0.5;
 const float GRID_SNAP = 0.5;
-const int   NWAVES    = 4;
-const float STEEPNESS = 0.6;
-const float GRAVITY   = 9.8;
-
-// Per-wave: xy = direction, z = wavelength, w = amplitude.
-const vec4 waves[NWAVES] = vec4[NWAVES](
-    vec4( 1.0,  0.0,  9.0,  0.115),
-    vec4( 0.6,  0.8,  5.0,  0.060),
-    vec4(-0.8,  0.4,  13.0, 0.085),
-    vec4( 0.2, -1.0,  3.3,  0.030)
-);
+const float PATCH      = 256.0; // world size of one FFT tile (must match the compute shaders)
+const float FFT_N      = 256.0;
 
 void main() {
-    // Snap the mesh origin to the camera at the near-ring cell size so the sea follows the
-    // view without sub-cell jitter relative to the world-locked wave phase.
-    vec2  cameraSnap = floor(ubo.cameraPos.xy / GRID_SNAP) * GRID_SNAP;
-    vec2  worldXY = inPos.xy + cameraSnap;
-    float t       = ubo.animationParams.x;
+    // Snap the mesh origin to the camera at the near cell size so the sea follows the view
+    // without sub-cell jitter; the FFT field itself is world-locked via the world-XY sample.
+    vec2 cameraSnap = floor(ubo.cameraPos.xy / GRID_SNAP) * GRID_SNAP;
+    vec2 worldXY    = inPos.xy + cameraSnap;
+    vec2 uv         = worldXY / PATCH;
 
-    vec3 pos      = vec3(worldXY, SEA_LEVEL);
-    vec3 tangent  = vec3(1.0, 0.0, 0.0);
-    vec3 binormal = vec3(0.0, 1.0, 0.0);
+    vec3 disp = texture(oceanDisplacement, uv).xyz;
+    vec3 pos  = vec3(worldXY + disp.xy, SEA_LEVEL + disp.z);
 
-    for (int i = 0; i < NWAVES; i++) {
-        vec2  d = normalize(waves[i].xy);
-        float L = waves[i].z;
-        float A = waves[i].w;
-        float k = 6.2831853 / L;
-        float w = sqrt(GRAVITY * k);
-        float Q = STEEPNESS / (k * A * float(NWAVES)); // limit steepness to avoid loops
-        float phase = k * dot(d, worldXY) - w * t;
-        float c = cos(phase);
-        float s = sin(phase);
-
-        pos.x += Q * A * d.x * c;
-        pos.y += Q * A * d.y * c;
-        pos.z += A * s;
-
-        float kA = k * A;
-        tangent  += vec3(-Q * d.x * d.x * kA * s,
-                         -Q * d.x * d.y * kA * s,
-                          d.x * kA * c);
-        binormal += vec3(-Q * d.x * d.y * kA * s,
-                         -Q * d.y * d.y * kA * s,
-                          d.y * kA * c);
-    }
-
-    vec3 normal = normalize(cross(tangent, binormal)); // points +Z (up)
+    // Normal from height central differences (one texel apart in each direction).
+    float e     = 1.0 / FFT_N;
+    float hL    = texture(oceanDisplacement, uv - vec2(e, 0.0)).z;
+    float hR    = texture(oceanDisplacement, uv + vec2(e, 0.0)).z;
+    float hD    = texture(oceanDisplacement, uv - vec2(0.0, e)).z;
+    float hU    = texture(oceanDisplacement, uv + vec2(0.0, e)).z;
+    float wStep = 2.0 * (PATCH / FFT_N); // world distance spanned by the central difference
+    vec3  normal = normalize(vec3(hL - hR, hD - hU, wStep));
 
     vec4 worldPos = vec4(pos, 1.0);
     vec4 viewPos  = ubo.view * worldPos;

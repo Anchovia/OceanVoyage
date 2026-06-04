@@ -215,6 +215,7 @@ private:
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
     void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
+    void createOceanFFTAssemble();   // displacement map + assembly pipeline
     void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
@@ -306,6 +307,7 @@ private:
 
     // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
     static constexpr uint32_t OCEAN_FFT_N = 256;  // FFT resolution per axis (power of two)
+    static constexpr float    OCEAN_PATCH = 256.0f; // world size of one FFT tile (matches shaders)
     VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
     VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
     VkImageView           m_oceanH0View   = VK_NULL_HANDLE;
@@ -336,6 +338,20 @@ private:
     VkDescriptorSet       m_oceanFFTSetPongToPing       = VK_NULL_HANDLE; // src=pong, dst=spectrum(ping)
     VkPipelineLayout      m_oceanFFTPipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanFFTPipeline            = VK_NULL_HANDLE;
+
+    // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
+    // shader. xyz = (choppy x, choppy z, height).
+    VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
+    VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
+    VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;
+    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat
+    // Displacement copied back to host memory each frame so the CPU can float the ship on the
+    // actual FFT surface (one buffer per frame in flight; read with a 2-frame latency).
+    std::vector<GpuBuffer> m_oceanReadbackBuffers;
+    VkDescriptorSetLayout m_oceanAssembleDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
+    VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
