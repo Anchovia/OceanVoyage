@@ -663,7 +663,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[6]{};
+    VkDescriptorSetLayoutBinding bindings[7]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -698,9 +698,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[5].descriptorCount = 1;
     bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Pre-water scene depth copy — sampled by water for thickness/refraction decisions.
+    bindings[6].binding         = 7;
+    bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[6].descriptorCount = 1;
+    bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 6;
+    info.bindingCount = 7;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -2311,6 +2317,13 @@ void VulkanContext::createPostSampler() {
     info.mipmapMode   = VK_SAMPLER_MIPMAP_MODE_NEAREST;
     if (vkCreateSampler(m_device, &info, nullptr, &m_postSampler) != VK_SUCCESS)
         throw std::runtime_error("Failed to create post sampler");
+
+    VkSamplerCreateInfo depthInfo = info;
+    depthInfo.magFilter = VK_FILTER_NEAREST;
+    depthInfo.minFilter = VK_FILTER_NEAREST;
+    depthInfo.compareEnable = VK_FALSE;
+    if (vkCreateSampler(m_device, &depthInfo, nullptr, &m_sceneDepthSampler) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create scene depth sampler");
 }
 
 void VulkanContext::updatePostDescriptors() {
@@ -2618,7 +2631,7 @@ void VulkanContext::createDepthResources() {
     VkFormat depthFormat = findDepthFormat();
     createImage(m_swapchainExtent.width, m_swapchainExtent.height, depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_depthImage, m_depthImageMemory);
 
@@ -2634,6 +2647,23 @@ void VulkanContext::createDepthResources() {
     viewInfo.subresourceRange.layerCount     = 1;
     if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_depthImageView) != VK_SUCCESS)
         throw std::runtime_error("Failed to create depth image view");
+
+    m_sceneDepthCopyImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneDepthCopyMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneDepthCopyView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_sceneDepthCopyReady.assign(MAX_FRAMES_IN_FLIGHT, false);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, depthFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_sceneDepthCopyImage[i], m_sceneDepthCopyMemory[i]);
+
+        VkImageViewCreateInfo copyViewInfo = viewInfo;
+        copyViewInfo.image = m_sceneDepthCopyImage[i];
+        if (vkCreateImageView(m_device, &copyViewInfo, nullptr, &m_sceneDepthCopyView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create scene depth copy image view");
+    }
 }
 
 // ============================================================
@@ -3442,7 +3472,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 5; // reflection + 2 normal maps + displacement + slope
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 6; // reflection + 2 normal maps + displacement + slope + scene depth
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3498,7 +3528,12 @@ void VulkanContext::updateOceanDescriptors() {
         slopeInfo.imageView   = m_oceanSlopeView;
         slopeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared with displacement
 
-        VkWriteDescriptorSet writes[6]{};
+        VkDescriptorImageInfo sceneDepthInfo{};
+        sceneDepthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneDepthInfo.imageView   = m_sceneDepthCopyView[i];
+        sceneDepthInfo.sampler     = m_sceneDepthSampler;
+
+        VkWriteDescriptorSet writes[7]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3541,7 +3576,14 @@ void VulkanContext::updateOceanDescriptors() {
         writes[5].descriptorCount = 1;
         writes[5].pImageInfo      = &slopeInfo;
 
-        vkUpdateDescriptorSets(m_device, 6, writes, 0, nullptr);
+        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[6].dstSet          = m_oceanDescriptorSets[i];
+        writes[6].dstBinding      = 7;
+        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[6].descriptorCount = 1;
+        writes[6].pImageInfo      = &sceneDepthInfo;
+
+        vkUpdateDescriptorSets(m_device, 7, writes, 0, nullptr);
     }
 }
 

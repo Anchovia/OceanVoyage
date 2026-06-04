@@ -171,6 +171,7 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_smaaEdgeDescriptorSetLayout,         nullptr);
     m_smaaAreaTex.destroy();
     m_smaaSearchTex.destroy();
+    vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
     m_grassTex.destroy();
     m_grassOpacityTex.destroy();
@@ -337,6 +338,11 @@ void VulkanContext::cleanupSwapchain() {
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage    (m_device, m_depthImage,     nullptr);
     vkFreeMemory      (m_device, m_depthImageMemory, nullptr);
+    for (size_t i = 0; i < m_sceneDepthCopyImage.size(); i++) {
+        vkDestroyImageView(m_device, m_sceneDepthCopyView[i],   nullptr);
+        vkDestroyImage    (m_device, m_sceneDepthCopyImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_sceneDepthCopyMemory[i], nullptr);
+    }
     for (size_t i = 0; i < m_offscreenImage.size(); i++) {
         vkDestroyImageView(m_device, m_offscreenView[i],   nullptr);
         vkDestroyImage    (m_device, m_offscreenImage[i],  nullptr);

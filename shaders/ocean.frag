@@ -21,6 +21,7 @@ layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
 layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement (z = height), w = whitecap seed
 layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
+layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -214,8 +215,12 @@ void main() {
     float horizonReflection = smoothstep(0.35, 0.98, 1.0 - NdotV);
     reflection += skyRefl * horizonReflection * 0.10 * smoothstep(0.02, 0.95, dayFactor);
     float reflectance = saturate(F * mix(0.82, 1.0, horizonReflection));
+    vec2 screenUV = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
+    float sceneDepthSample = texture(sceneDepth, screenUV).r;
+    float sceneDepthHasOpaque = 1.0 - step(0.9999, sceneDepthSample);
+    float sceneDepthEdge = sceneDepthHasOpaque * smoothstep(0.0, 0.0025, max(sceneDepthSample - gl_FragCoord.z, 0.0));
     vec3 color = mix(water, reflection, reflectance) + sunSpec;
-    color += scatterColor * sunScatter * (1.0 - reflectance) * 0.055;
+    color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.065, sceneDepthEdge);
 
     // Daylight modulation (night = dim).
     color *= mix(0.22, 1.0, dayFactor);

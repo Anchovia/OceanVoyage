@@ -214,6 +214,7 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
+    void copySceneDepthForWater(VkCommandBuffer cmd);
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
     void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
@@ -379,6 +380,7 @@ private:
     VkDescriptorPool         m_postDescriptorPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_postDescriptorSets;
     VkSampler                m_postSampler             = VK_NULL_HANDLE;
+    VkSampler                m_sceneDepthSampler       = VK_NULL_HANDLE;
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
@@ -499,6 +501,10 @@ private:
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
     VkDeviceMemory               m_depthImageMemory     = VK_NULL_HANDLE;
     VkImageView                  m_depthImageView       = VK_NULL_HANDLE;
+    std::vector<VkImage>         m_sceneDepthCopyImage;
+    std::vector<VkDeviceMemory>  m_sceneDepthCopyMemory;
+    std::vector<VkImageView>     m_sceneDepthCopyView;
+    std::vector<bool>            m_sceneDepthCopyReady;
 
     static constexpr uint32_t    SHADOW_MAP_SIZE        = 2048;
     VkImage                      m_shadowImage          = VK_NULL_HANDLE;

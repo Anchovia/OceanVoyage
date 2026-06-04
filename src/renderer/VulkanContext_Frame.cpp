@@ -113,6 +113,77 @@ void VulkanContext::writeDevTimestamp(VkCommandBuffer cmd, uint32_t index) {
 // ============================================================
 //  Command buffer recording
 // ============================================================
+void VulkanContext::copySceneDepthForWater(VkCommandBuffer cmd) {
+    VkImageMemoryBarrier depthToCopy{};
+    depthToCopy.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    depthToCopy.srcAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthToCopy.dstAccessMask       = VK_ACCESS_TRANSFER_READ_BIT;
+    depthToCopy.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depthToCopy.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthToCopy.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthToCopy.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    depthToCopy.image               = m_depthImage;
+    depthToCopy.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    depthToCopy.subresourceRange.levelCount = 1;
+    depthToCopy.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier copyToDst{};
+    copyToDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    copyToDst.srcAccessMask       = m_sceneDepthCopyReady[m_currentFrame] ? VK_ACCESS_SHADER_READ_BIT : 0;
+    copyToDst.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyToDst.oldLayout           = m_sceneDepthCopyReady[m_currentFrame]
+        ? VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        : VK_IMAGE_LAYOUT_UNDEFINED;
+    copyToDst.newLayout           = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyToDst.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    copyToDst.image               = m_sceneDepthCopyImage[m_currentFrame];
+    copyToDst.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copyToDst.subresourceRange.levelCount = 1;
+    copyToDst.subresourceRange.layerCount = 1;
+
+    VkImageMemoryBarrier toCopyBarriers[] = { depthToCopy, copyToDst };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, toCopyBarriers);
+
+    VkImageCopy copy{};
+    copy.srcSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copy.srcSubresource.layerCount     = 1;
+    copy.dstSubresource.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
+    copy.dstSubresource.layerCount     = 1;
+    copy.extent = { m_swapchainExtent.width, m_swapchainExtent.height, 1 };
+    vkCmdCopyImage(cmd,
+        m_depthImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        m_sceneDepthCopyImage[m_currentFrame], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        1, &copy);
+
+    VkImageMemoryBarrier depthBack = depthToCopy;
+    depthBack.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+    depthBack.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    depthBack.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    depthBack.newLayout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    VkImageMemoryBarrier copyReadable = copyToDst;
+    copyReadable.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    copyReadable.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    copyReadable.oldLayout     = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    copyReadable.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkImageMemoryBarrier readableBarriers[] = { depthBack, copyReadable };
+    vkCmdPipelineBarrier(cmd,
+        VK_PIPELINE_STAGE_TRANSFER_BIT,
+        VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT |
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 2, readableBarriers);
+
+    m_sceneDepthCopyReady[m_currentFrame] = true;
+}
+
 void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -456,6 +527,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 
     vkCmdEndRenderPass(cmd); // end pre-water opaque pass
+    copySceneDepthForWater(cmd);
 
     VkRenderPassBeginInfo waterRp = rp;
     waterRp.renderPass      = m_sceneLoadRenderPass;
