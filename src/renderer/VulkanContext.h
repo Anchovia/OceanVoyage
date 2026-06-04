@@ -173,6 +173,8 @@ private:
     void createUIBuffer();
     void updateHotbar();
     void createObjectPipeline();
+    void createOceanPipeline();
+    void createOceanMesh();
     void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
@@ -281,6 +283,7 @@ private:
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
     VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
     VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
+    VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
@@ -323,6 +326,9 @@ private:
 
     GpuBuffer                m_vertexBuffer;
     GpuBuffer                m_indexBuffer;
+    GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
+    GpuBuffer                m_oceanIndexBuffer;
+    uint32_t                 m_oceanIndexCount = 0;
     struct ChunkRenderData {
         GpuBuffer      vertexBuffer;
         GpuBuffer      indexBuffer;

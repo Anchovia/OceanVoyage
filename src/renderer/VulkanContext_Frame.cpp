@@ -346,6 +346,17 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     // (MainMenu/Settings/Loading) so no orphan player cube shows behind the menu.
     const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
 
+    // Ocean surface — Gerstner-wave grid that follows the camera. Opaque + depth-tested
+    // so the ship and (future) islands occlude it correctly.
+    if (worldVisible && m_oceanIndexCount > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_oceanPipeline);
+        VkBuffer     oBufs[] = { m_oceanVertexBuffer };
+        VkDeviceSize oOffs[] = { 0 };
+        vkCmdBindVertexBuffers(cmd, 0, 1, oBufs, oOffs);
+        vkCmdBindIndexBuffer(cmd, m_oceanIndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(cmd, m_oceanIndexCount, 1, 0, 0, 0);
+    }
+
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
     vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
@@ -659,6 +670,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.lightMVP = m_lightMVP;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
+    ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 

@@ -17,6 +17,7 @@ struct UniformBufferObject {
     glm::mat4 lightMVP; // light-space transform for shadow map lookup
     glm::vec4 fogColor; // rgb = sky color at current time of day
     glm::vec4 animationParams; // x = game time seconds, yzw reserved
+    glm::vec4 cameraPos; // xyz = camera world position (ocean Fresnel / specular)
 };
 
 struct PostPushConstants {

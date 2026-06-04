@@ -614,6 +614,64 @@ void VulkanContext::createObjectPipeline() {
     m_objectPipeline = createPipeline(cfg);
 }
 
+void VulkanContext::createOceanPipeline() {
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/ocean.vert.spv";
+    cfg.fragPath   = "shaders/ocean.frag.spv";
+    cfg.bindings   = {
+        { 0, sizeof(glm::vec3), VK_VERTEX_INPUT_RATE_VERTEX },
+    };
+    cfg.attributes = {
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 }, // grid position only
+    };
+    cfg.cullMode   = VK_CULL_MODE_NONE;  // two-sided: visible from under a wave crest
+    cfg.depthTest  = true;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_pipelineLayout;   // reuse UBO + shadow descriptor layout
+    m_oceanPipeline = createPipeline(cfg);
+}
+
+void VulkanContext::createOceanMesh() {
+    // Flat tessellated grid centered on the origin. The ocean vertex shader offsets it to
+    // follow the camera and displaces it into Gerstner waves. Cells are 1 world unit.
+    constexpr int   CELLS = 128;          // 128x128 quads
+    constexpr float HALF  = CELLS * 0.5f; // extent [-64, 64]
+    std::vector<glm::vec3> verts;
+    verts.reserve((CELLS + 1) * (CELLS + 1));
+    for (int j = 0; j <= CELLS; j++)
+        for (int i = 0; i <= CELLS; i++)
+            verts.push_back({ (float)i - HALF, (float)j - HALF, 0.0f });
+
+    std::vector<uint32_t> indices;
+    indices.reserve(CELLS * CELLS * 6);
+    const int stride = CELLS + 1;
+    for (int j = 0; j < CELLS; j++)
+        for (int i = 0; i < CELLS; i++) {
+            uint32_t a = j * stride + i;
+            uint32_t b = a + 1;
+            uint32_t c = a + stride;
+            uint32_t d = c + 1;
+            indices.insert(indices.end(), { a, c, b,  b, c, d });
+        }
+    m_oceanIndexCount = (uint32_t)indices.size();
+
+    VkDeviceSize vSize = sizeof(glm::vec3) * verts.size();
+    m_oceanVertexBuffer = createBuffer(vSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* vMapped;
+    vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped);
+    memcpy(vMapped, verts.data(), vSize);
+    vkUnmapMemory(m_device, m_oceanVertexBuffer.memory);
+
+    VkDeviceSize iSize = sizeof(uint32_t) * indices.size();
+    m_oceanIndexBuffer = createBuffer(iSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* iMapped;
+    vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped);
+    memcpy(iMapped, indices.data(), iSize);
+    vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
+}
+
 void VulkanContext::createGrassPipeline() {
     PipelineConfig cfg;
     cfg.vertPath   = "shaders/grass.vert.spv";

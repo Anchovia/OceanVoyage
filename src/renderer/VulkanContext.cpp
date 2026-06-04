@@ -38,6 +38,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createChunkPipeline();
     createUIPipeline();
     createObjectPipeline();
+    createOceanPipeline();
     createGrassPipeline();
     createPostPipeline();
     createSmaaPipelines();
@@ -60,6 +61,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createSelectorBuffers();
     createUIBuffer();
     createObjectMeshes();
+    createOceanMesh();
     createGrassTexture();
     createTerrainTextureArray();
     createItemMesh();
@@ -109,12 +111,15 @@ VulkanContext::~VulkanContext() {
     m_pebbleMesh.vbuf.destroy();
     m_itemVertexBuffer.destroy();
     m_dropInstBuffer.clear();
+    m_oceanIndexBuffer.destroy();
+    m_oceanVertexBuffer.destroy();
     m_indexBuffer.destroy();
     m_vertexBuffer.destroy();
     m_uiBuffer.clear();
     vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_grassPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_pipeline, nullptr);
