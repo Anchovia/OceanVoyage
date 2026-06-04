@@ -101,14 +101,8 @@ void main() {
     // Daylight modulation (night = dim).
     color *= mix(0.25, 1.0, dayFactor);
 
-    // Foam: whitecaps on wave crests (high displaced height), broken up by a cheap
-    // animated pattern so it reads patchy instead of banded. (SEA_LEVEL = 0.5)
-    float crest   = smoothstep(0.60, 0.80, fragWorldPos.z);
-    float breakup = 0.5 + 0.5 * sin(fragWorldPos.x * 2.3 + ubo.animationParams.x * 1.5)
-                              * sin(fragWorldPos.y * 1.9 - ubo.animationParams.x * 1.1);
-    float foam    = crest * mix(0.55, 1.0, breakup);
-    vec3  foamColor = vec3(0.85, 0.90, 0.92) * mix(0.30, 1.0, dayFactor);
-    color = mix(color, foamColor, foam * 0.8);
+    // Placeholder height-only whitecaps are disabled. Proper ocean foam should come
+    // from slope/curvature plus authored foam masks or flow/noise textures.
 
     // Distance fog to the sky color (matches the chunk shader).
     const float FOG_START = 27.0;

@@ -663,14 +663,18 @@ void VulkanContext::createOceanPipeline() {
 
 void VulkanContext::createOceanMesh() {
     // Flat tessellated grid centered on the origin. The ocean vertex shader offsets it to
-    // follow the camera and displaces it into Gerstner waves. Cells are 1 world unit.
-    constexpr int   CELLS = 128;          // 128x128 quads
-    constexpr float HALF  = CELLS * 0.5f; // extent [-64, 64]
+    // follow the camera and displaces it into Gerstner waves. RTX 3060 target: keep the
+    // same visible footprint as the prototype, but double spatial density on each axis
+    // so near-field wave silhouettes and reflected highlights no longer read as coarse
+    // 1m cells. Future work: replace this uniform grid with a projected/concentric LOD.
+    constexpr int   CELLS     = 256;  // 256x256 quads
+    constexpr float CELL_SIZE = 0.5f; // 0.5 world-unit cells, extent [-64, 64]
+    constexpr float HALF      = (float)CELLS * CELL_SIZE * 0.5f;
     std::vector<glm::vec3> verts;
     verts.reserve((CELLS + 1) * (CELLS + 1));
     for (int j = 0; j <= CELLS; j++)
         for (int i = 0; i <= CELLS; i++)
-            verts.push_back({ (float)i - HALF, (float)j - HALF, 0.0f });
+            verts.push_back({ (float)i * CELL_SIZE - HALF, (float)j * CELL_SIZE - HALF, 0.0f });
 
     std::vector<uint32_t> indices;
     indices.reserve(CELLS * CELLS * 6);

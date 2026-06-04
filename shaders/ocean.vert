@@ -24,6 +24,7 @@ layout(location = 2) out float fragViewDepth;
 layout(location = 3) out vec4  fragReflectionClip;
 
 const float SEA_LEVEL = 0.5;
+const float GRID_SNAP = 0.5;
 const int   NWAVES    = 4;
 const float STEEPNESS = 0.6;
 const float GRAVITY   = 9.8;
@@ -37,9 +38,10 @@ const vec4 waves[NWAVES] = vec4[NWAVES](
 );
 
 void main() {
-    // Snap the grid origin to the camera (integer world units) so the sea follows the
+    // Snap the grid origin to the camera at the mesh cell size so the sea follows the
     // view without sub-cell jitter relative to the world-locked wave phase.
-    vec2  worldXY = inPos.xy + vec2(floor(ubo.cameraPos.x), floor(ubo.cameraPos.y));
+    vec2  cameraSnap = floor(ubo.cameraPos.xy / GRID_SNAP) * GRID_SNAP;
+    vec2  worldXY = inPos.xy + cameraSnap;
     float t       = ubo.animationParams.x;
 
     vec3 pos      = vec3(worldXY, SEA_LEVEL);
