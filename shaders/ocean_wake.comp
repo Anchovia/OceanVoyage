@@ -49,6 +49,29 @@ float gaussian(float v, float sigma) {
     return exp(-0.5 * (v * v) / (s * s));
 }
 
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float wakeBreakup(vec2 p) {
+    float n0 = valueNoise(p * 0.38);
+    float n1 = valueNoise(p * 0.91 + vec2(17.3, -9.1));
+    return saturate(n0 * 0.64 + n1 * 0.36);
+}
+
 float profileAt(int i) {
     if (i < 4)
         return pc.profile0[i];
@@ -92,7 +115,7 @@ void main() {
         loadWake(advected + ivec2( 0,  1), size) +
         loadWake(advected + ivec2( 0, -1), size);
     vec4 wake = mix(center, neighbours * 0.25, saturate(dt * 0.22));
-    wake.r *= exp(-0.78 * dt); // foam
+    wake.r *= exp(-1.25 * dt); // foam
     wake.g *= exp(-0.95 * dt); // turbulence
     wake.b *= exp(-1.40 * dt); // signed height disturbance
     wake.a *= exp(-0.88 * dt); // local churn energy
@@ -122,6 +145,10 @@ void main() {
 
     float centerWidth = mix(maxHalfBeam * 0.42, maxHalfBeam * 1.85, trailT);
     float centerTrail = gaussian(wakeY, centerWidth) * exp(-wakeX / 72.0) * behind;
+    float centerRibbon = centerTrail
+                       * gaussian(wakeY, max(centerWidth * 0.72, 0.5))
+                       * smoothstep(12.0, 70.0, wakeX);
+    wake.r *= 1.0 - saturate(centerRibbon * speedGate * dt * 10.0);
 
     // Kelvin-arm seed at tan(19.47 deg) ~= 0.354, kept broad enough for the mask
     // resolution and later replaceable with a fuller pressure-field input.
@@ -170,6 +197,12 @@ void main() {
     float bowCutTrough = gaussian(bowX, max(1.35, maxHalfBeam * 0.44))
                        * gaussian(sideAbs, max(maxHalfBeam * 0.46, 0.82));
 
+    float sternBreakup = mix(0.18, 1.0,
+        smoothstep(0.34, 0.86, wakeBreakup(vec2(wakeX * 0.16, wakeY * 0.44) + shipPos * 0.018)));
+    float sideBreakup = mix(0.62, 1.16,
+        smoothstep(0.24, 0.78, wakeBreakup(vec2(hullX * 0.22, sideAbs * 0.86) + shipPos * 0.012)));
+    float sternFoamGate = exp(-wakeX / 24.0) * behind;
+
     float positiveKelvinCrest = pow(saturate(kelvinWave), 3.0) * kelvinCore;
     float heightAdd = (kelvinCore * kelvinWave * 0.36
                     - centerTrail * 0.060
@@ -179,11 +212,11 @@ void main() {
                     - hullTrough * 0.30
                     - bowCutTrough * 0.22)
                     * speedEnergy * dt * 3.35;
-    float foamAdd = (propWash * 0.24
+    float foamAdd = (propWash * 0.115 * sternFoamGate * sternBreakup
                   + positiveKelvinCrest * 0.060
-                  + hullShear * 0.240
-                  + bowShoulder * 0.520
-                  + bowFan * 0.310)
+                  + hullShear * 0.270 * sideBreakup
+                  + bowShoulder * 0.560 * sideBreakup
+                  + bowFan * 0.330 * sideBreakup)
                   * speedEnergy * dt * 1.65;
     float turbulenceAdd = (propWash * 0.78
                         + centerTrail * 0.160

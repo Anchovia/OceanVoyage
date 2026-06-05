@@ -466,10 +466,10 @@ void main() {
     water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
     water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
-    float wakeCrestEnergy = max(wakeData.b, 0.0) + wakeData.a * 0.28 + wakeData.g * 0.15;
-    float wakeCrestFoam = smoothstep(0.016, 0.125, wakeData.r)
-                        * smoothstep(0.026, 0.185, wakeCrestEnergy);
-    float wakeFoam = wakeCrestFoam * 0.34;
+    float wakeCrestEnergy = max(wakeData.b, 0.0) + wakeData.a * 0.30 + wakeData.g * 0.16;
+    float wakeFoamMask = smoothstep(0.048, 0.175, wakeData.r);
+    float wakeCrestFoam = wakeFoamMask * smoothstep(0.040, 0.210, wakeCrestEnergy);
+    float wakeFoam = wakeCrestFoam * 0.30;
     float foamCoverage = saturate(oceanWhitecapCoverage(frame, fragViewDepth) + wakeFoam);
     float foamSun = smoothstep(0.0, 0.92, NdotL) * dayFactor;
     vec3 foamColor = mix(vec3(0.28, 0.36, 0.39), vec3(0.88, 0.94, 0.90),
@@ -507,7 +507,7 @@ void main() {
     color *= mix(0.22, 1.0, dayFactor);
     color = max(color, water * mix(0.55, 0.92, dayFactor));
     vec3 litFoamColor = foamColor * mix(0.58, 1.0, smoothstep(0.02, 0.85, dayFactor));
-    float foamBlend = foamCoverage * mix(0.42, 0.62, dayFactor);
+    float foamBlend = foamCoverage * mix(0.34, 0.54, dayFactor);
     color = mix(color, litFoamColor, foamBlend);
     color = mix(color, max(color, litFoamColor * 0.54), wakeFoam * (1.0 - dayFactor) * 0.35);
     color += litFoamColor * foamCoverage * (0.010 + sunScatter * 0.018);
