@@ -30,6 +30,42 @@ layout(location = 4)      in vec2 fragUV;
 layout(location = 5)      in vec3 fragWorldPos;
 layout(location = 0) out vec4 outColor;
 
+const float SHADOW_MAP_TEXEL = 1.0 / 2048.0;
+const float SHADOW_NEAR_DEPTH = 0.5;
+
+float cascadeFarDepth(int cascade) {
+    if (cascade == 0) return ubo.cascadeSplits.x;
+    if (cascade == 1) return ubo.cascadeSplits.y;
+    return ubo.cascadeSplits.z;
+}
+
+float cascadeNearDepth(int cascade) {
+    if (cascade == 0) return SHADOW_NEAR_DEPTH;
+    if (cascade == 1) return ubo.cascadeSplits.x;
+    return ubo.cascadeSplits.y;
+}
+
+float cascadeBiasScale(int cascade) {
+    if (cascade == 0) return 1.0;
+    if (cascade == 1) return 1.55;
+    return 2.20;
+}
+
+float sampleShadowCascade(vec3 worldPos, vec3 normal, vec3 lightDir, int cascade) {
+    vec4 lightSpace = ubo.lightMVPCascade[cascade] * vec4(worldPos, 1.0);
+    vec3 projCoords = lightSpace.xyz / lightSpace.w;
+    projCoords.xy = projCoords.xy * 0.5 + 0.5;
+    if (projCoords.z < 0.0 || projCoords.z > 1.0) return 1.0;
+
+    float ndotl = max(dot(normal, lightDir), 0.0);
+    float bias = mix(0.00165, 0.00032, ndotl) * cascadeBiasScale(cascade);
+    float shadow = 0.0;
+    for (int x = -2; x <= 2; ++x)
+        for (int y = -2; y <= 2; ++y)
+            shadow += texture(shadowMap, vec4(projCoords.xy + vec2(x, y) * SHADOW_MAP_TEXEL, float(cascade), projCoords.z - bias));
+    return shadow / 25.0;
+}
+
 float sampleShadow(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir, float dayFactor) {
     if (dayFactor <= 0.01) return 1.0;
     int cascade = 0;
@@ -37,19 +73,18 @@ float sampleShadow(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir, f
     if (viewDepth > ubo.cascadeSplits.y) cascade = 2;
     if (viewDepth > ubo.cascadeSplits.z) return 1.0;
 
-    vec4 lightSpace = ubo.lightMVPCascade[cascade] * vec4(worldPos, 1.0);
-    vec3 projCoords = lightSpace.xyz / lightSpace.w;
-    projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    if (projCoords.z < 0.0 || projCoords.z > 1.0) return 1.0;
-
-    float ndotl = max(dot(normal, lightDir), 0.0);
-    float bias = mix(0.0018, 0.00035, ndotl) * float(cascade + 1);
-    float texel = 1.0 / 2048.0;
-    float shadow = 0.0;
-    for (int x = -2; x <= 2; ++x)
-        for (int y = -2; y <= 2; ++y)
-            shadow += texture(shadowMap, vec4(projCoords.xy + vec2(x, y) * texel, float(cascade), projCoords.z - bias));
-    return shadow / 25.0;
+    float shadow = sampleShadowCascade(worldPos, normal, lightDir, cascade);
+    if (cascade < 2) {
+        float splitFar = cascadeFarDepth(cascade);
+        float splitNear = cascadeNearDepth(cascade);
+        float blendBand = clamp((splitFar - splitNear) * 0.14, 5.0, 18.0);
+        float blend = smoothstep(splitFar - blendBand, splitFar, viewDepth);
+        if (blend > 0.0) {
+            float nextShadow = sampleShadowCascade(worldPos, normal, lightDir, cascade + 1);
+            shadow = mix(shadow, nextShadow, blend);
+        }
+    }
+    return shadow;
 }
 
 void main() {
