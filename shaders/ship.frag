@@ -32,6 +32,62 @@ layout(location = 0) out vec4 outColor;
 
 const float SHADOW_MAP_TEXEL = 1.0 / 2048.0;
 const float SHADOW_NEAR_DEPTH = 0.5;
+const float PI = 3.14159265;
+const float SEA_LEVEL = 0.5;
+
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
+}
+
+vec3 fresnelSchlick(float cosTheta, vec3 F0) {
+    return F0 + (1.0 - F0) * pow(1.0 - saturate(cosTheta), 5.0);
+}
+
+float distributionGGX(float NdotH, float roughness) {
+    float a  = roughness * roughness;
+    float a2 = a * a;
+    float d  = NdotH * NdotH * (a2 - 1.0) + 1.0;
+    return a2 / max(PI * d * d, 0.0001);
+}
+
+float geometrySchlickGGX(float NdotV, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) * 0.125;
+    return NdotV / max(NdotV * (1.0 - k) + k, 0.0001);
+}
+
+float geometrySmith(float NdotV, float NdotL, float roughness) {
+    return geometrySchlickGGX(NdotV, roughness) * geometrySchlickGGX(NdotL, roughness);
+}
+
+vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
+    dir = normalize(dir);
+    sunDir = normalize(sunDir);
+
+    float viewUp = saturate(dir.z);
+    float sunUp = saturate(sunDir.z);
+    float lowSun = 1.0 - smoothstep(0.18, 0.78, sunUp);
+
+    vec3 nightZenith = vec3(0.010, 0.015, 0.035);
+    vec3 dayZenith = fogColor * vec3(0.48, 0.66, 1.12);
+    vec3 zenith = mix(nightZenith, dayZenith, smoothstep(0.02, 0.85, dayFactor));
+
+    vec3 horizon = fogColor * (1.12 + 0.24 * lowSun)
+                 + vec3(0.45, 0.20, 0.055) * lowSun * smoothstep(0.02, 0.55, dayFactor);
+    vec3 sky = mix(horizon, zenith, pow(viewUp, 0.55));
+
+    float horizonAerial = exp(-viewUp * 7.5) * smoothstep(0.02, 0.75, dayFactor);
+    sky += horizon * horizonAerial * 0.16;
+
+    float sunCos = saturate(dot(dir, sunDir));
+    float miePower = mix(14.0, 86.0, sunUp);
+    float sunGlow = pow(sunCos, miePower) * smoothstep(0.02, 0.70, dayFactor);
+    float sunDisc = smoothstep(0.99965, 0.99995, sunCos) * smoothstep(0.02, 0.35, dayFactor);
+    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
+    sky += sunTint * (sunGlow * mix(0.95, 0.46, sunUp) + sunDisc * 2.2);
+
+    return max(sky, vec3(0.0));
+}
 
 float cascadeFarDepth(int cascade) {
     if (cascade == 0) return ubo.cascadeSplits.x;
@@ -99,28 +155,53 @@ void main() {
 
     vec3 L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
+    float sunUp = saturate(L.z);
+    float dayGate = smoothstep(0.01, 0.09, dayFactor);
 
     vec3 albedo = texture(shipAlbedo, fragUV).rgb;
     vec3 specTex = texture(shipSpecular, fragUV).rgb;
     float specMask = clamp(dot(specTex, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
 
-    float shadow = max(sampleShadow(fragWorldPos, fragViewDepth, N, L, dayFactor), 0.34);
-    float ndotl = max(dot(N, L), 0.0);
-
-    const vec3 SKY_AMBIENT    = vec3(0.96, 0.93, 0.88);
-    const vec3 GROUND_AMBIENT = vec3(1.04, 0.90, 0.70);
-    float hemi = clamp(N.z * 0.5 + 0.5, 0.0, 1.0);
-    vec3 ambientTint = mix(GROUND_AMBIENT, SKY_AMBIENT, hemi);
-
-    vec3 ambient = ambientTint * mix(0.12, 0.32, dayFactor);
-    vec3 direct = vec3(ndotl * 0.86 * dayFactor * shadow);
-
     vec3 V = normalize(ubo.cameraPos.xyz - fragWorldPos);
-    vec3 H = normalize(L + V);
-    float spec = pow(max(dot(N, H), 0.0), mix(28.0, 86.0, specMask))
-               * specMask * dayFactor * shadow * 0.34;
+    vec3 H = normalize(L + V + vec3(0.0, 0.0, 0.0001));
+    vec3 R = reflect(-V, N);
+    float NdotL = saturate(dot(N, L));
+    float NdotV = saturate(dot(N, V));
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
 
-    vec3 color = albedo * (ambient + direct) + vec3(spec);
+    float shadow = max(sampleShadow(fragWorldPos, fragViewDepth, N, L, dayFactor), 0.28);
+
+    float roughness = mix(0.72, 0.32, specMask);
+    vec3 F0 = mix(vec3(0.035), clamp(specTex, vec3(0.02), vec3(0.86)), specMask * 0.62);
+    vec3 F = fresnelSchlick(VdotH, F0);
+    float D = distributionGGX(NdotH, roughness);
+    float G = geometrySmith(NdotV, NdotL, roughness);
+    vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.0001);
+
+    vec3 sunTint = mix(vec3(1.0, 0.52, 0.24), vec3(1.0, 0.92, 0.72), sunUp);
+    vec3 sunRadiance = sunTint * mix(0.72, 1.35, smoothstep(0.05, 0.95, dayFactor)) * dayGate;
+    vec3 kD = (1.0 - F) * (1.0 - specMask * 0.45);
+    vec3 direct = (kD * albedo / PI + specular) * sunRadiance * NdotL * shadow;
+
+    vec3 skyColor = skyRadiance(N, L, dayFactor, ubo.fogColor.rgb);
+    vec3 seaBounce = mix(vec3(0.010, 0.050, 0.070),
+                         vec3(0.040, 0.175, 0.205),
+                         smoothstep(0.02, 0.85, dayFactor));
+    float hemi = saturate(N.z * 0.5 + 0.5);
+    vec3 ambient = mix(seaBounce, skyColor, hemi) * mix(0.52, 0.34, dayFactor);
+
+    vec3 skyRefl = skyRadiance(R, L, dayFactor, ubo.fogColor.rgb);
+    vec3 viewFresnel = fresnelSchlick(NdotV, F0);
+    float wetLine = 1.0 - smoothstep(0.03, 0.62, abs(fragWorldPos.z - SEA_LEVEL));
+    float wetSpec = wetLine * (0.35 + specMask * 0.45);
+    vec3 ambientSpec = skyRefl * viewFresnel * (0.16 + specMask * 0.34 + wetSpec * 0.38);
+
+    vec3 color = albedo * ambient + direct + ambientSpec;
+    color = mix(color, color * vec3(0.58, 0.72, 0.78) + skyRefl * 0.10, wetLine * 0.28);
+
+    float rim = pow(1.0 - NdotV, 3.0) * (0.16 + 0.24 * smoothstep(0.02, 0.55, dayFactor));
+    color += skyRefl * rim * (0.40 + specMask * 0.35);
 
     const float FOG_START = 90.0;
     const float FOG_END   = 320.0;
