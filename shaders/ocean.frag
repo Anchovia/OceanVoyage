@@ -1,6 +1,6 @@
 #version 450
 
-// Ocean surface shading: per-fragment FFT normal + tiled normal-map detail, Fresnel planar
+// Ocean surface shading: per-fragment FFT normal + tiled normal-map detail, SSR/planar
 // reflection, GGX sun specular, depth-tinted water body, then fog.
 
 layout(binding = 0) uniform UniformBufferObject {
@@ -32,6 +32,7 @@ layout(location = 2) in vec4  fragReflectionClip;
 layout(location = 0) out vec4 outColor;
 
 const float PI    = 3.14159265;
+const float SEA_LEVEL = 0.5;
 const int   CASCADES = 3;
 const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size per cascade (must match the compute shaders)
 
@@ -52,6 +53,34 @@ vec3 reconstructWorldPosition(vec2 uv, float depth) {
     vec4 world = ubo.invViewProj * clip;
     float invW = 1.0 / ((abs(world.w) > 0.0001) ? world.w : 0.0001);
     return world.xyz * invW;
+}
+
+float viewDepthOf(vec3 worldPos) {
+    vec4 viewPos = ubo.view * vec4(worldPos, 1.0);
+    return -viewPos.z;
+}
+
+bool projectWorldToScreen(vec3 worldPos, out vec2 uv, out float viewDepth) {
+    vec4 viewPos = ubo.view * vec4(worldPos, 1.0);
+    viewDepth = -viewPos.z;
+    vec4 clip = ubo.proj * viewPos;
+    if (clip.w <= 0.0001)
+        return false;
+
+    vec3 ndc = clip.xyz / clip.w;
+    uv = ndc.xy * 0.5 + 0.5;
+    return uv.x >= 0.0 && uv.x <= 1.0 &&
+           uv.y >= 0.0 && uv.y <= 1.0 &&
+           ndc.z >= 0.0 && ndc.z <= 1.0;
+}
+
+float screenEdgeFade(vec2 uv) {
+    vec2 edge = min(uv, vec2(1.0) - uv);
+    return smoothstep(0.025, 0.140, min(edge.x, edge.y));
+}
+
+float interleavedGradientNoise(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
 }
 
 float distributionGGX(float NdotH, float roughness) {
@@ -164,6 +193,59 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
     return max(sky, vec3(0.0));
 }
 
+vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
+    const int SSR_STEPS = 28;
+
+    float grazing = smoothstep(0.08, 0.78, 1.0 - nDotV);
+    float rayUp = smoothstep(-0.030, 0.120, rayDir.z);
+    if (grazing <= 0.001 || rayUp <= 0.001)
+        return vec4(0.0);
+
+    float maxDistance = mix(80.0, 260.0, grazing);
+    float jitter = interleavedGradientNoise(gl_FragCoord.xy);
+    float lastDelta = -100000.0;
+
+    for (int i = 0; i < SSR_STEPS; ++i) {
+        float t = (float(i) + jitter) / float(SSR_STEPS);
+        float rayDistance = mix(1.0, maxDistance, t * t);
+        vec3 rayPos = origin + normal * 0.12 + rayDir * rayDistance;
+
+        vec2 hitUV;
+        float rayViewDepth;
+        if (!projectWorldToScreen(rayPos, hitUV, rayViewDepth)) {
+            if (i > 2) break;
+            continue;
+        }
+
+        float sceneDepthSample = texture(sceneDepth, hitUV).r;
+        if (sceneDepthSample >= 0.9999) {
+            lastDelta = -100000.0;
+            continue;
+        }
+
+        vec3 scenePos = reconstructWorldPosition(hitUV, sceneDepthSample);
+        float sceneViewDepth = viewDepthOf(scenePos);
+        float delta = rayViewDepth - sceneViewDepth;
+        float thickness = max(0.75, rayDistance * 0.018);
+        bool closeHit = delta > 0.0 && delta < thickness;
+        bool crossedHit = lastDelta < 0.0 && delta > 0.0 && delta < thickness * 2.5;
+
+        if (closeHit || crossedHit) {
+            float hitT = rayDistance / maxDistance;
+            float edgeFade = screenEdgeFade(hitUV);
+            float distanceFade = 1.0 - smoothstep(0.56, 1.0, hitT);
+            float thicknessFade = closeHit ? (1.0 - saturate(delta / thickness)) : 0.55;
+            float aboveWater = smoothstep(SEA_LEVEL - 0.20, SEA_LEVEL + 0.15, scenePos.z);
+            float confidence = edgeFade * distanceFade * thicknessFade * rayUp * aboveWater;
+            return vec4(texture(sceneColor, hitUV).rgb, saturate(confidence));
+        }
+
+        lastDelta = delta;
+    }
+
+    return vec4(0.0);
+}
+
 void main() {
     OceanFrame frame = oceanBaseFrame(fragWorldPos.xy);
     vec3  N = oceanDetailNormal(frame, ubo.animationParams.x);
@@ -240,6 +322,9 @@ void main() {
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
     vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.68), validRefl);
     float horizonReflection = smoothstep(0.35, 0.98, 1.0 - NdotV);
+    vec4 ssr = screenSpaceReflection(fragWorldPos, N, R, NdotV);
+    float ssrWeight = ssr.a * mix(0.35, 0.82, horizonReflection) * smoothstep(0.04, 0.92, F);
+    reflection = mix(reflection, ssr.rgb, ssrWeight);
     reflection += skyRefl * horizonReflection * 0.10 * smoothstep(0.02, 0.95, dayFactor);
     float reflectance = saturate(F * mix(0.82, 1.0, horizonReflection));
     float sceneDepthEdge = depthResolved * smoothstep(0.0, 0.0025, max(sceneDepthSample - gl_FragCoord.z, 0.0));
