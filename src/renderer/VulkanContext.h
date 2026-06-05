@@ -240,7 +240,6 @@ private:
     void createShadowResources();
     void createShadowPipeline();
     void createShadowObjectPipeline();
-    void createShadowPlayerPipeline();
     void createShadowGrassPipeline();
     void createShadowSampler();
     void createShadowGrassDescriptors();
@@ -477,7 +476,6 @@ private:
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
-    ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
     ObjectMesh m_pebbleMesh;
@@ -539,7 +537,6 @@ private:
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
     VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
-    VkPipeline                   m_shadowPlayerPipeline = VK_NULL_HANDLE;  // player cube shadow caster
     VkPipelineLayout             m_shadowGrassPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowGrassPipeline       = VK_NULL_HANDLE;  // alpha-tested grass caster
     VkDescriptorSetLayout        m_shadowGrassDescriptorSetLayout = VK_NULL_HANDLE;

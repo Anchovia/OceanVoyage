@@ -1399,24 +1399,6 @@ void VulkanContext::createObjectMeshes() {
     uploadMesh(m_pebbleMesh, verts);
     }
 
-    // ---- GRASS CLUMP: visual-only dressing mesh, instanced by the renderer ----
-    {
-    std::vector<ChunkVertex> verts;
-    auto blade = [&](float angle, float width, float height, glm::vec3 col) {
-        const glm::vec3 dir  = {cosf(angle), sinf(angle), 0.0f};
-        const glm::vec3 side = {-dir.y, dir.x, 0.0f};
-        glm::vec3 a = side * -width;
-        glm::vec3 b = side *  width;
-        glm::vec3 c = dir * (width * 0.6f) + glm::vec3(0.0f, 0.0f, height);
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        pushTri(verts, a, b, c, n, col, LAYER_NONE);
-    };
-    blade(0.0f,      0.055f, 0.30f, {0.22f, 0.42f, 0.17f});
-    blade(2.0944f,   0.050f, 0.24f, {0.27f, 0.50f, 0.20f});
-    blade(4.18879f,  0.045f, 0.20f, {0.19f, 0.36f, 0.16f});
-    uploadMesh(m_grassClumpMesh, verts);
-    }
-
     // ---- GRASS CARD: small blade-field cluster, instanced by the grass pipeline ----
     {
     std::vector<GrassCardVertex> verts;
@@ -3310,97 +3292,6 @@ void VulkanContext::createShadowObjectPipeline() {
 
     if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowObjectPipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create shadow object pipeline");
-
-    vkDestroyShaderModule(m_device, vertMod, nullptr);
-}
-
-// ============================================================
-//  Shadow pipeline for the player cube (instanced position)
-// ============================================================
-void VulkanContext::createShadowPlayerPipeline() {
-    auto vert = readFile("shaders/shadow_player.vert.spv");
-    VkShaderModule vertMod = createShaderModule(vert);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertMod;
-    vertStage.pName  = "main";
-
-    // Cube mesh (Vertex pos) + per-instance position (InstanceData)
-    VkVertexInputBindingDescription bindings[2]{};
-    bindings[0].binding   = 0;
-    bindings[0].stride    = sizeof(Vertex);
-    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    bindings[1].binding   = 1;
-    bindings[1].stride    = sizeof(InstanceData);
-    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-    VkVertexInputAttributeDescription attrs[2]{};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)       };
-    attrs[1] = { 2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos) };
-
-    VkPipelineVertexInputStateCreateInfo vertInput{};
-    vertInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertInput.vertexBindingDescriptionCount   = 2;
-    vertInput.pVertexBindingDescriptions      = bindings;
-    vertInput.vertexAttributeDescriptionCount = 2;
-    vertInput.pVertexAttributeDescriptions    = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f};
-    VkRect2D   scissor{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports    = &viewport;
-    viewportState.scissorCount  = 1;
-    viewportState.pScissors     = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode                = VK_CULL_MODE_NONE; // match chunk shadow (tighter contact)
-    rasterizer.frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable         = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 0.0f;
-    rasterizer.depthBiasSlopeFactor    = 0.0f;
-    rasterizer.lineWidth               = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable  = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendStateCreateInfo colorBlend{};
-    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount          = 1;
-    pipelineInfo.pStages             = &vertStage;
-    pipelineInfo.pVertexInputState   = &vertInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState      = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState   = &multisampling;
-    pipelineInfo.pDepthStencilState  = &depthStencil;
-    pipelineInfo.pColorBlendState    = &colorBlend;
-    pipelineInfo.layout              = m_shadowPipelineLayout;  // reuse lightMVP push constant
-    pipelineInfo.renderPass          = m_shadowRenderPass;
-    pipelineInfo.subpass             = 0;
-
-    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowPlayerPipeline) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow player pipeline");
 
     vkDestroyShaderModule(m_device, vertMod, nullptr);
 }

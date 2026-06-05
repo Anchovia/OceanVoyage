@@ -47,7 +47,7 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
 
     if (m_devUiVisible) {
         ImGui::SetNextWindowSize(ImVec2(360.0f, 260.0f), ImGuiCond_FirstUseEver);
-        if (ImGui::Begin("Pastel Farm Dev", &m_devUiVisible)) {
+        if (ImGui::Begin("OceanVoyage Dev", &m_devUiVisible)) {
             ImGui::TextUnformatted("F3 toggles this panel");
             ImGui::Separator();
             ImGui::Text("Day: %d", frame.day);
@@ -1246,7 +1246,7 @@ void VulkanContext::updateHotbar() {
 
     if (m_mainMenuHud) {
         pushQuad(0.0f, 0.0f, W, H, {0.06f, 0.08f, 0.07f, 0.72f});
-        pushCenteredText("PASTEL FARM", H * 0.5f - 76.0f, 10.0f, {0.95f, 0.92f, 0.82f, 1.0f});
+        pushCenteredText("OCEAN VOYAGE", H * 0.5f - 76.0f, 10.0f, {0.95f, 0.92f, 0.82f, 1.0f});
         const char* rows[] = { "START", "SETTINGS" };
         for (int i = 0; i < 2; ++i) {
             float rx, ry, rw, rh;

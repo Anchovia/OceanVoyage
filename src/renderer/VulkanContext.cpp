@@ -52,7 +52,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createShadowResources();
     createShadowPipeline();
     createShadowObjectPipeline();
-    createShadowPlayerPipeline();
     createShadowGrassPipeline();
     createFramebuffers();
     createCommandPool();
@@ -121,7 +120,6 @@ VulkanContext::~VulkanContext() {
     m_shipNormalTex.destroy();
     m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
-    m_grassClumpMesh.vbuf.destroy();
     m_grassCardMesh.vbuf.destroy();
     m_groundPatchMesh.vbuf.destroy();
     m_pebbleMesh.vbuf.destroy();
@@ -144,7 +142,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
     vkDestroyPipeline(m_device, m_pipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline      (m_device, m_shadowPlayerPipeline, nullptr);
     vkDestroyPipeline      (m_device, m_shadowGrassPipeline,  nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowGrassPipelineLayout, nullptr);
     vkDestroyDescriptorPool(m_device, m_shadowGrassDescriptorPool, nullptr);

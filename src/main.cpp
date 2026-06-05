@@ -228,7 +228,7 @@ static void applyDevUiInputCapture(PlayerInput& input, const VulkanContext& ctx)
 
 int main() {
     try {
-        Window        window(1280, 720, "Pastel Farm");
+        Window        window(1280, 720, "OceanVoyage");
         World         world;
         GameState     gameState;
         VulkanContext ctx(window, world);
