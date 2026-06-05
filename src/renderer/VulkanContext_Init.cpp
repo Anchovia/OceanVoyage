@@ -207,6 +207,29 @@ VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDev
     return indices;
 }
 
+// True if the device exposes every extension in kDeviceExtensions (currently VK_KHR_swapchain).
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+    uint32_t count = 0;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> available(count);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &count, available.data());
+
+    std::set<std::string> required(kDeviceExtensions.begin(), kDeviceExtensions.end());
+    for (const auto& ext : available)
+        required.erase(ext.extensionName);
+    return required.empty();
+}
+
+// True if the surface exposes at least one format and present mode. Call only after the
+// swapchain extension is confirmed (querying surface support otherwise is undefined).
+bool VulkanContext::isSwapchainAdequate(VkPhysicalDevice device) {
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
+    uint32_t modeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &modeCount, nullptr);
+    return formatCount > 0 && modeCount > 0;
+}
+
 void VulkanContext::pickPhysicalDevice() {
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(m_instance, &count, nullptr);
@@ -214,10 +237,18 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(m_instance, &count, devices.data());
 
+    // Suitable = required queues + swapchain extension + a usable surface format/present mode.
+    // Order matters: confirm the extension before querying surface support.
+    auto isSuitable = [&](VkPhysicalDevice device) {
+        return findQueueFamilies(device).complete()
+            && checkDeviceExtensionSupport(device)
+            && isSwapchainAdequate(device);
+    };
+
     // Prefer discrete GPU; otherwise take first suitable device
     VkPhysicalDevice fallback = VK_NULL_HANDLE;
     for (auto device : devices) {
-        if (!findQueueFamilies(device).complete()) continue;
+        if (!isSuitable(device)) continue;
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(device, &props);
         if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
@@ -717,7 +748,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[8]{};
+    VkDescriptorSetLayoutBinding bindings[11]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -746,27 +777,45 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Per-cascade surface-slope map — fragment builds smooth wave normals from it.
-    bindings[5].binding         = 6;
+    // Ship wake mask — vertex samples height, fragment samples foam/turbulence.
+    bindings[5].binding         = 5;
     bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Pre-water scene depth copy — sampled by water for thickness/refraction decisions.
-    bindings[6].binding         = 7;
+    // Per-cascade surface-slope map — fragment builds smooth wave normals from it.
+    bindings[6].binding         = 6;
     bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[6].descriptorCount = 1;
     bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Pre-water scene color copy — sampled by water for screen-space refraction.
-    bindings[7].binding         = 8;
+    // Pre-water scene depth copy — sampled by water for thickness/refraction decisions.
+    bindings[7].binding         = 7;
     bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorCount = 1;
     bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Pre-water scene color copy — sampled by water for screen-space refraction.
+    bindings[8].binding         = 8;
+    bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[8].descriptorCount = 1;
+    bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Previous frame's resolved scene color - sampled by water for temporal SSR stability.
+    bindings[9].binding         = 9;
+    bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[9].descriptorCount = 1;
+    bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    // Previous frame's pre-water scene depth - rejects temporal SSR history after disocclusion.
+    bindings[10].binding         = 10;
+    bindings[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[10].descriptorCount = 1;
+    bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 8;
+    info.bindingCount = 11;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -857,7 +906,8 @@ void VulkanContext::createOceanMesh() {
     m_oceanVertexBuffer = createBuffer(vSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* vMapped;
-    vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped);
+    vkCheck(vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped),
+        "Failed to map ocean vertex buffer");
     memcpy(vMapped, verts.data(), vSize);
     vkUnmapMemory(m_device, m_oceanVertexBuffer.memory);
 
@@ -865,7 +915,8 @@ void VulkanContext::createOceanMesh() {
     m_oceanIndexBuffer = createBuffer(iSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* iMapped;
-    vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped);
+    vkCheck(vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped),
+        "Failed to map ocean index buffer");
     memcpy(iMapped, indices.data(), iSize);
     vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
 }
@@ -1022,7 +1073,8 @@ void VulkanContext::createUIBuffer() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         m_uiBuffer[i] = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_uiBuffer[i].memory, 0, size, 0, &m_uiBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_uiBuffer[i].memory, 0, size, 0, &m_uiBuffer[i].mapped),
+            "Failed to map UI vertex buffer");
     }
 }
 
@@ -1124,12 +1176,102 @@ void VulkanContext::loadImportedShipMesh() {
     if (verts.empty())
         throw std::runtime_error("Ship OBJ produced no triangles: " + objPath);
 
+    glm::vec3 localMin = verts[0].pos;
+    glm::vec3 localMax = verts[0].pos;
+    std::vector<float> zValues;
+    zValues.reserve(verts.size());
+    for (const ShipVertex& v : verts) {
+        localMin = glm::min(localMin, v.pos);
+        localMax = glm::max(localMax, v.pos);
+        zValues.push_back(v.pos.z);
+    }
+
+    const size_t zCutIndex = std::min(zValues.size() - 1, (size_t)((float)zValues.size() * 0.35f));
+    std::nth_element(zValues.begin(), zValues.begin() + zCutIndex, zValues.end());
+    const float footprintZMax = zValues[zCutIndex];
+
+    glm::vec3 footprintMin{0.0f};
+    glm::vec3 footprintMax{0.0f};
+    uint32_t footprintCount = 0;
+    auto includeFootprintVertex = [&](const glm::vec3& p) {
+        if (footprintCount == 0) {
+            footprintMin = p;
+            footprintMax = p;
+        } else {
+            footprintMin = glm::min(footprintMin, p);
+            footprintMax = glm::max(footprintMax, p);
+        }
+        ++footprintCount;
+    };
+
+    for (const ShipVertex& v : verts) {
+        if (v.pos.z <= footprintZMax)
+            includeFootprintVertex(v.pos);
+    }
+    if (footprintCount < 128) {
+        footprintCount = 0;
+        for (const ShipVertex& v : verts)
+            includeFootprintVertex(v.pos);
+    }
+
+    const float lengthLocal = std::max(footprintMax.x - footprintMin.x, 0.001f);
+    const float centerlineLocal = (footprintMin.y + footprintMax.y) * 0.5f;
+    const float fallbackHalfBeam = std::max(
+        std::abs(footprintMax.y - centerlineLocal),
+        std::abs(footprintMin.y - centerlineLocal)) * SHIP_WORLD_SCALE;
+
+    m_shipHullProfile.localBoundsMin = localMin;
+    m_shipHullProfile.localBoundsMax = localMax;
+    m_shipHullProfile.sternOffset = std::max(-footprintMin.x * SHIP_WORLD_SCALE, 0.5f);
+    m_shipHullProfile.bowOffset = std::max(footprintMax.x * SHIP_WORLD_SCALE, 0.5f);
+    m_shipHullProfile.centerlineOffset = centerlineLocal * SHIP_WORLD_SCALE;
+    m_shipHullProfile.halfBeam = std::max(fallbackHalfBeam, 0.5f);
+    m_shipHullProfile.waterlineCutZ = footprintZMax;
+    m_shipHullProfile.halfWidthSamples.fill(0.0f);
+
+    for (const ShipVertex& v : verts) {
+        if (v.pos.z > footprintZMax)
+            continue;
+        const float t = std::clamp((v.pos.x - footprintMin.x) / lengthLocal, 0.0f, 1.0f);
+        const uint32_t sample = (uint32_t)std::round(t * (float)(SHIP_HULL_PROFILE_SAMPLES - 1));
+        const float halfWidth = std::abs(v.pos.y - centerlineLocal) * SHIP_WORLD_SCALE;
+        m_shipHullProfile.halfWidthSamples[sample] =
+            std::max(m_shipHullProfile.halfWidthSamples[sample], halfWidth);
+    }
+
+    for (uint32_t i = 0; i < SHIP_HULL_PROFILE_SAMPLES; ++i) {
+        if (m_shipHullProfile.halfWidthSamples[i] > 0.0f)
+            continue;
+
+        int left = (int)i - 1;
+        while (left >= 0 && m_shipHullProfile.halfWidthSamples[(size_t)left] <= 0.0f)
+            --left;
+        uint32_t right = i + 1;
+        while (right < SHIP_HULL_PROFILE_SAMPLES && m_shipHullProfile.halfWidthSamples[right] <= 0.0f)
+            ++right;
+
+        if (left >= 0 && right < SHIP_HULL_PROFILE_SAMPLES) {
+            const float span = (float)(right - (uint32_t)left);
+            const float f = (float)(i - (uint32_t)left) / span;
+            m_shipHullProfile.halfWidthSamples[i] =
+                glm::mix(m_shipHullProfile.halfWidthSamples[(size_t)left],
+                         m_shipHullProfile.halfWidthSamples[right], f);
+        } else if (left >= 0) {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfWidthSamples[(size_t)left];
+        } else if (right < SHIP_HULL_PROFILE_SAMPLES) {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfWidthSamples[right];
+        } else {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfBeam;
+        }
+    }
+
     m_shipMesh.count = (uint32_t)verts.size();
     VkDeviceSize size = sizeof(ShipVertex) * verts.size();
     m_shipMesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, m_shipMesh.vbuf.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, m_shipMesh.vbuf.memory, 0, size, 0, &mapped),
+        "Failed to map ship mesh buffer");
     memcpy(mapped, verts.data(), (size_t)size);
     vkUnmapMemory(m_device, m_shipMesh.vbuf.memory);
 }
@@ -1145,7 +1287,8 @@ void VulkanContext::createObjectMeshes() {
         mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
+            "Failed to map object mesh buffer");
         memcpy(mapped, verts.data(), size);
         vkUnmapMemory(m_device, mesh.vbuf.memory);
     };
@@ -1155,7 +1298,8 @@ void VulkanContext::createObjectMeshes() {
         mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
+            "Failed to map grass mesh buffer");
         memcpy(mapped, verts.data(), size);
         vkUnmapMemory(m_device, mesh.vbuf.memory);
     };
@@ -1350,24 +1494,6 @@ void VulkanContext::createObjectMeshes() {
     uploadMesh(m_pebbleMesh, verts);
     }
 
-    // ---- GRASS CLUMP: visual-only dressing mesh, instanced by the renderer ----
-    {
-    std::vector<ChunkVertex> verts;
-    auto blade = [&](float angle, float width, float height, glm::vec3 col) {
-        const glm::vec3 dir  = {cosf(angle), sinf(angle), 0.0f};
-        const glm::vec3 side = {-dir.y, dir.x, 0.0f};
-        glm::vec3 a = side * -width;
-        glm::vec3 b = side *  width;
-        glm::vec3 c = dir * (width * 0.6f) + glm::vec3(0.0f, 0.0f, height);
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        pushTri(verts, a, b, c, n, col, LAYER_NONE);
-    };
-    blade(0.0f,      0.055f, 0.30f, {0.22f, 0.42f, 0.17f});
-    blade(2.0944f,   0.050f, 0.24f, {0.27f, 0.50f, 0.20f});
-    blade(4.18879f,  0.045f, 0.20f, {0.19f, 0.36f, 0.16f});
-    uploadMesh(m_grassClumpMesh, verts);
-    }
-
     // ---- GRASS CARD: small blade-field cluster, instanced by the grass pipeline ----
     {
     std::vector<GrassCardVertex> verts;
@@ -1538,7 +1664,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     GpuBuffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped),
+        "Failed to map texture array staging buffer");
     memcpy(mapped, bytes, (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -1571,7 +1698,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (vkAllocateMemory(m_device, &allocInfo, nullptr, &tex.memory) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate texture array memory");
-    vkBindImageMemory(m_device, tex.image, tex.memory, 0);
+    vkCheck(vkBindImageMemory(m_device, tex.image, tex.memory, 0),
+        "Failed to bind texture array memory");
 
     // One-shot upload: transition all layers, copy the contiguous layer-major buffer, transition to read.
     VkCommandBufferAllocateInfo cbAlloc{};
@@ -1580,11 +1708,13 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     cbAlloc.commandPool        = m_commandPool;
     cbAlloc.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &cbAlloc, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &cbAlloc, &cmd),
+        "Failed to allocate texture array upload command buffer");
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
+    vkCheck(vkBeginCommandBuffer(cmd, &begin),
+        "Failed to begin texture array upload command buffer");
 
     VkImageMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1618,7 +1748,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
             0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end texture array upload command buffer");
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
@@ -1626,9 +1757,12 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create texture array upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit texture array upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for texture array upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     // staging frees here (GpuBuffer RAII); the fence already waited on all transfers.
@@ -2021,6 +2155,8 @@ void VulkanContext::createSmaaRenderPass() {
 }
 
 void VulkanContext::createOffscreenResources() {
+    m_temporalHistoryFrames = 0;
+    m_prevViewProj = glm::mat4(1.0f);
     m_offscreenImage.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenView.resize(MAX_FRAMES_IN_FLIGHT);
@@ -2124,7 +2260,8 @@ TextureResource VulkanContext::createTexture(uint32_t width, uint32_t height, Vk
     GpuBuffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped),
+        "Failed to map texture staging buffer");
     memcpy(mapped, bytes, (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -2195,7 +2332,8 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     GpuBuffer staging = createBuffer(payloadSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, payloadSize, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, payloadSize, 0, &mapped),
+        "Failed to map DDS texture staging buffer");
     memcpy(mapped, payload, (size_t)payloadSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -2212,12 +2350,14 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     allocInfo.commandPool        = m_commandPool;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate DDS upload command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin DDS upload command buffer");
 
     VkImageMemoryBarrier toDst{};
     toDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -2275,7 +2415,8 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &toRead);
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end DDS upload command buffer");
 
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2284,9 +2425,12 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create DDS upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit DDS upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for DDS upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 
@@ -2840,14 +2984,17 @@ void VulkanContext::createDevTools() {
     allocInfo.commandBufferCount = 1;
 
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate dev font upload command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin dev font upload command buffer");
     ImGui_ImplVulkan_CreateFontsTexture(cmd);
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end dev font upload command buffer");
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2857,9 +3004,12 @@ void VulkanContext::createDevTools() {
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create dev font upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence),
+        "Failed to submit dev font upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for dev font upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     ImGui_ImplVulkan_DestroyFontUploadObjects();
@@ -2909,11 +3059,14 @@ void VulkanContext::createSyncObjects() {
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;  // start signaled so frame 0 doesn't wait forever
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkCreateSemaphore(m_device, &semInfo,   nullptr, &m_imageAvailable[i]);
-        vkCreateFence    (m_device, &fenceInfo, nullptr, &m_inFlight[i]);
+        vkCheck(vkCreateSemaphore(m_device, &semInfo, nullptr, &m_imageAvailable[i]),
+            "Failed to create image-available semaphore");
+        vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlight[i]),
+            "Failed to create in-flight fence");
     }
     for (auto& sem : m_renderFinished)
-        vkCreateSemaphore(m_device, &semInfo, nullptr, &sem);
+        vkCheck(vkCreateSemaphore(m_device, &semInfo, nullptr, &sem),
+            "Failed to create render-finished semaphore");
 }
 
 // ============================================================
@@ -2964,24 +3117,35 @@ void VulkanContext::createDepthResources() {
 void VulkanContext::createShadowResources() {
     VkFormat depthFormat = findDepthFormat();
 
+    // Depth array: one layer per cascade. Sampled through a 2D_ARRAY view; each layer is
+    // rendered into through its own single-layer 2D view.
     createImage(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        m_shadowImage, m_shadowImageMemory);
+        m_shadowImage, m_shadowImageMemory, 1, CSM_CASCADES);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image                           = m_shadowImage;
-    viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format                          = depthFormat;
     viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
     viewInfo.subresourceRange.baseMipLevel   = 0;
     viewInfo.subresourceRange.levelCount     = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount     = 1;
+    viewInfo.subresourceRange.layerCount     = CSM_CASCADES;
     if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_shadowImageView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow image view");
+        throw std::runtime_error("Failed to create shadow array image view");
+
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+        VkImageViewCreateInfo lv = viewInfo;
+        lv.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        lv.subresourceRange.baseArrayLayer = c;
+        lv.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &lv, nullptr, &m_shadowLayerView[c]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create shadow cascade layer view");
+    }
 
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format         = depthFormat;
@@ -3035,12 +3199,14 @@ void VulkanContext::createShadowResources() {
     fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fbInfo.renderPass      = m_shadowRenderPass;
     fbInfo.attachmentCount = 1;
-    fbInfo.pAttachments    = &m_shadowImageView;
     fbInfo.width           = SHADOW_MAP_SIZE;
     fbInfo.height          = SHADOW_MAP_SIZE;
     fbInfo.layers          = 1;
-    if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_shadowFramebuffer) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow framebuffer");
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+        fbInfo.pAttachments = &m_shadowLayerView[c];
+        if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_shadowFramebuffers[c]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create shadow framebuffer");
+    }
 }
 
 // ============================================================
@@ -3234,97 +3400,6 @@ void VulkanContext::createShadowObjectPipeline() {
 
     if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowObjectPipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create shadow object pipeline");
-
-    vkDestroyShaderModule(m_device, vertMod, nullptr);
-}
-
-// ============================================================
-//  Shadow pipeline for the player cube (instanced position)
-// ============================================================
-void VulkanContext::createShadowPlayerPipeline() {
-    auto vert = readFile("shaders/shadow_player.vert.spv");
-    VkShaderModule vertMod = createShaderModule(vert);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertMod;
-    vertStage.pName  = "main";
-
-    // Cube mesh (Vertex pos) + per-instance position (InstanceData)
-    VkVertexInputBindingDescription bindings[2]{};
-    bindings[0].binding   = 0;
-    bindings[0].stride    = sizeof(Vertex);
-    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    bindings[1].binding   = 1;
-    bindings[1].stride    = sizeof(InstanceData);
-    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-    VkVertexInputAttributeDescription attrs[2]{};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)       };
-    attrs[1] = { 2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos) };
-
-    VkPipelineVertexInputStateCreateInfo vertInput{};
-    vertInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertInput.vertexBindingDescriptionCount   = 2;
-    vertInput.pVertexBindingDescriptions      = bindings;
-    vertInput.vertexAttributeDescriptionCount = 2;
-    vertInput.pVertexAttributeDescriptions    = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f};
-    VkRect2D   scissor{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports    = &viewport;
-    viewportState.scissorCount  = 1;
-    viewportState.pScissors     = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode                = VK_CULL_MODE_NONE; // match chunk shadow (tighter contact)
-    rasterizer.frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable         = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 0.0f;
-    rasterizer.depthBiasSlopeFactor    = 0.0f;
-    rasterizer.lineWidth               = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable  = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendStateCreateInfo colorBlend{};
-    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount          = 1;
-    pipelineInfo.pStages             = &vertStage;
-    pipelineInfo.pVertexInputState   = &vertInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState      = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState   = &multisampling;
-    pipelineInfo.pDepthStencilState  = &depthStencil;
-    pipelineInfo.pColorBlendState    = &colorBlend;
-    pipelineInfo.layout              = m_shadowPipelineLayout;  // reuse lightMVP push constant
-    pipelineInfo.renderPass          = m_shadowRenderPass;
-    pipelineInfo.subpass             = 0;
-
-    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowPlayerPipeline) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow player pipeline");
 
     vkDestroyShaderModule(m_device, vertMod, nullptr);
 }
@@ -3582,7 +3657,8 @@ void VulkanContext::createUniformBuffers() {
         m_uniformBuffers[i] = createBuffer(size,
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_uniformBuffers[i].memory, 0, size, 0, &m_uniformBuffers[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_uniformBuffers[i].memory, 0, size, 0, &m_uniformBuffers[i].mapped),
+            "Failed to map uniform buffer");
     }
 }
 
@@ -3594,7 +3670,8 @@ void VulkanContext::createReflectionUniformBuffers() {
         m_reflectionUniformBuffers[i] = createBuffer(size,
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped),
+            "Failed to map reflection uniform buffer");
     }
 }
 
@@ -3851,7 +3928,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 7; // reflection + 2 normal maps + displacement + slope + scene depth/color
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 10; // reflection + normals + FFT/wake maps + scene depth/color + history color/depth
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3899,12 +3976,17 @@ void VulkanContext::updateOceanDescriptors() {
 
         VkDescriptorImageInfo displacementInfo{};
         displacementInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
-        displacementInfo.imageView   = m_oceanDisplacementView;
+        displacementInfo.imageView   = m_oceanDisplacementView[i]; // double-buffered per frame
         displacementInfo.sampler     = m_oceanDisplacementSampler;
+
+        VkDescriptorImageInfo wakeInfo{};
+        wakeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
+        wakeInfo.imageView   = m_oceanWakeView[i]; // current frame's wake simulation target
+        wakeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared ocean sampler
 
         VkDescriptorImageInfo slopeInfo{};
         slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
-        slopeInfo.imageView   = m_oceanSlopeView;
+        slopeInfo.imageView   = m_oceanSlopeView[i]; // double-buffered per frame
         slopeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared with displacement
 
         VkDescriptorImageInfo sceneDepthInfo{};
@@ -3917,7 +3999,17 @@ void VulkanContext::updateOceanDescriptors() {
         sceneColorInfo.imageView   = m_sceneColorCopyView[i];
         sceneColorInfo.sampler     = m_postSampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkDescriptorImageInfo sceneHistoryInfo{};
+        sceneHistoryInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneHistoryInfo.imageView   = m_sceneColorCopyView[i];
+        sceneHistoryInfo.sampler     = m_postSampler;
+
+        VkDescriptorImageInfo sceneHistoryDepthInfo{};
+        sceneHistoryDepthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneHistoryDepthInfo.imageView   = m_sceneDepthCopyView[i];
+        sceneHistoryDepthInfo.sampler     = m_sceneDepthSampler;
+
+        VkWriteDescriptorSet writes[11]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3955,27 +4047,84 @@ void VulkanContext::updateOceanDescriptors() {
 
         writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[5].dstSet          = m_oceanDescriptorSets[i];
-        writes[5].dstBinding      = 6;
+        writes[5].dstBinding      = 5;
         writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &slopeInfo;
+        writes[5].pImageInfo      = &wakeInfo;
 
         writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[6].dstSet          = m_oceanDescriptorSets[i];
-        writes[6].dstBinding      = 7;
+        writes[6].dstBinding      = 6;
         writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &sceneDepthInfo;
+        writes[6].pImageInfo      = &slopeInfo;
 
         writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[7].dstSet          = m_oceanDescriptorSets[i];
-        writes[7].dstBinding      = 8;
+        writes[7].dstBinding      = 7;
         writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &sceneColorInfo;
+        writes[7].pImageInfo      = &sceneDepthInfo;
 
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        writes[8].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[8].dstSet          = m_oceanDescriptorSets[i];
+        writes[8].dstBinding      = 8;
+        writes[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[8].descriptorCount = 1;
+        writes[8].pImageInfo      = &sceneColorInfo;
+
+        writes[9].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[9].dstSet          = m_oceanDescriptorSets[i];
+        writes[9].dstBinding      = 9;
+        writes[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[9].descriptorCount = 1;
+        writes[9].pImageInfo      = &sceneHistoryInfo;
+
+        writes[10].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[10].dstSet          = m_oceanDescriptorSets[i];
+        writes[10].dstBinding      = 10;
+        writes[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[10].descriptorCount = 1;
+        writes[10].pImageInfo      = &sceneHistoryDepthInfo;
+
+        vkUpdateDescriptorSets(m_device, 11, writes, 0, nullptr);
     }
+}
+
+void VulkanContext::updateOceanHistoryDescriptor(uint32_t currentFrame) {
+    const uint32_t historyIndex =
+        (currentFrame + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorImageInfo historyInfo{};
+    historyInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    historyInfo.imageView = (m_temporalHistoryFrames > 0)
+        ? m_offscreenView[historyIndex]
+        : m_sceneColorCopyView[currentFrame];
+    historyInfo.sampler = m_postSampler;
+
+    VkDescriptorImageInfo historyDepthInfo{};
+    historyDepthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    historyDepthInfo.imageView = (m_temporalHistoryFrames > 0)
+        ? m_sceneDepthCopyView[historyIndex]
+        : m_sceneDepthCopyView[currentFrame];
+    historyDepthInfo.sampler = m_sceneDepthSampler;
+
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = m_oceanDescriptorSets[currentFrame];
+    writes[0].dstBinding      = 9;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].descriptorCount = 1;
+    writes[0].pImageInfo      = &historyInfo;
+
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = m_oceanDescriptorSets[currentFrame];
+    writes[1].dstBinding      = 10;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].descriptorCount = 1;
+    writes[1].pImageInfo      = &historyDepthInfo;
+
+    vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
 }
 
 // ============================================================
@@ -3989,7 +4138,8 @@ void VulkanContext::createIndexBuffer() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map index staging buffer");
     memcpy(data, kIndices.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4009,7 +4159,8 @@ void VulkanContext::createVertexBuffer() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map vertex staging buffer");
     memcpy(data, kVertices.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4032,7 +4183,8 @@ void VulkanContext::createItemMesh() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map item mesh staging buffer");
     memcpy(data, verts.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4051,7 +4203,8 @@ void VulkanContext::createDropInstanceBuffer() {
         m_dropInstBuffer[i] = createBuffer(size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped),
+            "Failed to map drop instance buffer");
     }
 }
 
@@ -4062,7 +4215,8 @@ void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) 
         m_playerInstBuffer[i] = createBuffer(size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped),
+            "Failed to map player instance buffer");
     }
 
     updatePlayerInstanceBuffer(playerPosition);
@@ -4074,7 +4228,8 @@ void VulkanContext::createSelectorBuffers() {
     GpuBuffer staging = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data),
+        "Failed to map selector vertex staging buffer");
     memcpy(data, kSelectorVertices.data(), vertexSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4086,7 +4241,8 @@ void VulkanContext::createSelectorBuffers() {
     staging = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-    vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data),
+        "Failed to map selector index staging buffer");
     memcpy(data, kSelectorIndices.data(), indexSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4100,6 +4256,7 @@ void VulkanContext::createSelectorBuffers() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         m_selectorInstBuffer[i] = createBuffer(instanceSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped),
+            "Failed to map selector instance buffer");
     }
 }

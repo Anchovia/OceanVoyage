@@ -44,6 +44,8 @@ public:
     const glm::mat4& proj() const { return m_proj; }
     glm::mat4 viewProj() const { return m_proj * m_view; }
     const glm::vec3& position() const { return m_position; }
+    float fov() const { return m_fov; }       // vertical FOV in degrees
+    float aspect() const { return m_aspect; } // width / height
 
 private:
     void updateView(float orbitAngleDegrees) {

@@ -7,12 +7,18 @@
 #include <string>
 #include <unordered_map>
 #include <array>
+#include <stdexcept>
 #include "world/Chunk.h"
 #include "renderer/Frustum.h"
 
 class Window;
 class World;
 class Camera;
+
+inline void vkCheck(VkResult result, const char* message) {
+    if (result != VK_SUCCESS)
+        throw std::runtime_error(message);
+}
 
 // Owning RAII pair for a VkBuffer + its VkDeviceMemory (and optional persistent map).
 // Move-only; frees on destruction. Implicitly converts to VkBuffer for bind/draw calls,
@@ -94,6 +100,7 @@ struct TextureResource {
 struct FrameRenderData {
     const Camera&                            camera;
     glm::vec3                                playerPosition;
+    glm::vec3                                playerVelocity;
     float                                    playerHeading;  // radians; ship bow orientation
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
@@ -125,9 +132,15 @@ public:
     bool devWantsMouse() const;
     bool devWantsKeyboard() const;
     void toggleDevUi();
+    float devMoveSpeedMultiplier() const { return m_devMoveSpeedMultiplier; }
 #endif
 
 private:
+    static constexpr float    SHIP_WORLD_SCALE = 6.0f; // LSV018 source length ~5.6 -> ~34 world units
+    static constexpr float    SHIP_VISUAL_DRAFT = 0.02f;
+    static constexpr float    SHIP_WAKE_POWER = 1.45f;
+    static constexpr uint32_t SHIP_HULL_PROFILE_SAMPLES = 16;
+
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void transitionImageLayout(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
@@ -216,13 +229,16 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
+    void updateOceanHistoryDescriptor(uint32_t currentFrame);
     void copySceneColorForWater(VkCommandBuffer cmd);
     void copySceneDepthForWater(VkCommandBuffer cmd);
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
     void createOceanFFTSim();  // per-frame spectrum animation resources
     void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
     void createOceanFFTAssemble();   // displacement map + assembly pipeline
+    void createOceanWake();          // ship-driven wake mask simulation resources
     void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
+    void recordOceanWake(VkCommandBuffer cmd);
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
@@ -233,7 +249,6 @@ private:
     void createShadowResources();
     void createShadowPipeline();
     void createShadowObjectPipeline();
-    void createShadowPlayerPipeline();
     void createShadowGrassPipeline();
     void createShadowSampler();
     void createShadowGrassDescriptors();
@@ -272,6 +287,8 @@ private:
         bool complete() const { return graphics && present; }
     };
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device);
+    bool isSwapchainAdequate(VkPhysicalDevice device);
 
     // ---- Vulkan handles ----
     Window& m_window;
@@ -350,15 +367,18 @@ private:
 
     // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
     // shader. xyz = (choppy x, choppy z, height), w = Jacobian whitecap seed.
-    VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
-    VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
-    VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;
-    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat
+    // Double-buffered (one per frame in flight): the assemble pass writes frame i's map while
+    // the previous frame's graphics still reads frame (i-1)'s map, so the ocean compute can
+    // overlap the previous frame's rendering instead of serializing behind it.
+    std::vector<VkImage>        m_oceanDisplacementImage;
+    std::vector<VkDeviceMemory> m_oceanDisplacementMemory;
+    std::vector<VkImageView>    m_oceanDisplacementView;
+    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat (shared)
     // Displacement copied back to host memory each frame so the CPU can float the ship on the
     // actual FFT surface (one buffer per frame in flight; read with a 2-frame latency).
     std::vector<GpuBuffer> m_oceanReadbackBuffers;
     VkDescriptorSetLayout m_oceanAssembleDescriptorSetLayout = VK_NULL_HANDLE;
-    VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanAssembleDescriptorSets; // one per frame (write target differs)
     VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
 
@@ -366,9 +386,27 @@ private:
     // The assemble pass writes it from exact texel neighbours so the water shader can build smooth
     // normals by bilinearly sampling the slope (no texel-grid artefacts from differencing the
     // bilinear displacement). Shares the displacement sampler (linear, repeat).
-    VkImage               m_oceanSlopeImage  = VK_NULL_HANDLE;
-    VkDeviceMemory        m_oceanSlopeMemory = VK_NULL_HANDLE;
-    VkImageView           m_oceanSlopeView   = VK_NULL_HANDLE;
+    std::vector<VkImage>        m_oceanSlopeImage;  // double-buffered, mirrors the displacement map
+    std::vector<VkDeviceMemory> m_oceanSlopeMemory;
+    std::vector<VkImageView>    m_oceanSlopeView;
+
+    // Ship wake mask, ping-ponged per frame so wake foam/turbulence persists through
+    // decay/diffusion/advection instead of being painted directly in the water shader.
+    static constexpr uint32_t OCEAN_WAKE_N = 1024;
+    static constexpr float    OCEAN_WAKE_WORLD_SIZE = 1024.0f;
+    std::vector<VkImage>        m_oceanWakeImage;
+    std::vector<VkDeviceMemory> m_oceanWakeMemory;
+    std::vector<VkImageView>    m_oceanWakeView;
+    VkDescriptorSetLayout       m_oceanWakeDescriptorSetLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanWakeDescriptorSets;
+    VkPipelineLayout            m_oceanWakePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline                  m_oceanWakePipeline       = VK_NULL_HANDLE;
+    glm::vec2                   m_oceanWakeShipPosition{15.0f, 15.0f};
+    glm::vec2                   m_oceanWakeShipVelocity{0.0f, 0.0f};
+    float                       m_oceanWakeShipHeading = 0.0f;
+    float                       m_oceanWakeDeltaTime   = 0.0f;
+    float                       m_oceanWakePrevTime    = 0.0f;
+    bool                        m_oceanWakeHasPrevTime = false;
 
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
@@ -387,6 +425,8 @@ private:
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+    glm::mat4                    m_prevViewProj = glm::mat4(1.0f);
+    uint32_t                     m_temporalHistoryFrames = 0;
     std::vector<VkImage>        m_sceneColorCopyImage;
     std::vector<VkDeviceMemory> m_sceneColorCopyMemory;
     std::vector<VkImageView>    m_sceneColorCopyView;
@@ -460,10 +500,20 @@ private:
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
+    struct ShipHullProfile {
+        glm::vec3 localBoundsMin{0.0f};
+        glm::vec3 localBoundsMax{0.0f};
+        float sternOffset = 16.8f;      // world metres from model origin toward stern
+        float bowOffset = 18.2f;        // world metres from model origin toward bow
+        float centerlineOffset = 0.0f;  // world metres on ship local Y
+        float halfBeam = 3.0f;          // maximum half width in world metres
+        float waterlineCutZ = 0.0f;     // local Z cut used for footprint extraction
+        std::array<float, SHIP_HULL_PROFILE_SAMPLES> halfWidthSamples{};
+    };
+    ShipHullProfile m_shipHullProfile;
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
-    ObjectMesh m_grassClumpMesh;
     ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
     ObjectMesh m_pebbleMesh;
@@ -517,22 +567,24 @@ private:
     std::vector<bool>            m_sceneDepthCopyReady;
 
     static constexpr uint32_t    SHADOW_MAP_SIZE        = 2048;
-    VkImage                      m_shadowImage          = VK_NULL_HANDLE;
+    static constexpr uint32_t    CSM_CASCADES           = 3; // cascaded shadow map slices
+    VkImage                      m_shadowImage          = VK_NULL_HANDLE; // depth array, one layer per cascade
     VkDeviceMemory               m_shadowImageMemory    = VK_NULL_HANDLE;
-    VkImageView                  m_shadowImageView      = VK_NULL_HANDLE;
+    VkImageView                  m_shadowImageView      = VK_NULL_HANDLE; // 2D_ARRAY view, sampled by receivers
+    std::array<VkImageView, CSM_CASCADES>   m_shadowLayerView{};  // per-cascade 2D views for the framebuffers
     VkRenderPass                 m_shadowRenderPass     = VK_NULL_HANDLE;
-    VkFramebuffer                m_shadowFramebuffer    = VK_NULL_HANDLE;
+    std::array<VkFramebuffer, CSM_CASCADES> m_shadowFramebuffers{}; // one framebuffer per cascade layer
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
     VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
-    VkPipeline                   m_shadowPlayerPipeline = VK_NULL_HANDLE;  // player cube shadow caster
     VkPipelineLayout             m_shadowGrassPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowGrassPipeline       = VK_NULL_HANDLE;  // alpha-tested grass caster
     VkDescriptorSetLayout        m_shadowGrassDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool             m_shadowGrassDescriptorPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_shadowGrassDescriptorSets;
     VkSampler                    m_shadowSampler        = VK_NULL_HANDLE;
-    glm::mat4                    m_lightMVP             = glm::mat4(1.0f);
+    std::array<glm::mat4, CSM_CASCADES> m_lightMVPCascade{}; // per-cascade light-space transforms
+    glm::vec4                    m_cascadeSplits        = glm::vec4(0.0f); // xyz = cascade far view-depths
     glm::vec3                    m_shadowCenter         = glm::vec3(0.0f);
     glm::vec3                    m_sunDir               = glm::vec3(0.0f, 0.0f, 1.0f);
     float                        m_dayFactor            = 0.0f;
@@ -572,6 +624,7 @@ private:
     bool             m_devTimingSupported = false;
     bool             m_devUiVisible       = true;
     bool             m_devFrameStarted    = false;
+    float            m_devMoveSpeedMultiplier = 1.0f;
     DevGpuTiming     m_devGpuTiming;
     std::array<bool, MAX_FRAMES_IN_FLIGHT> m_devQueriesWritten{};
 #endif

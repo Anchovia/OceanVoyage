@@ -1,0 +1,241 @@
+#version 450
+
+// Ship wake field simulation. This is a world-locked toroidal field, not a direct
+// screen-space paint pass: the ship injects foam/turbulence plus a signed height
+// disturbance, then the field advects, diffuses, and decays before the ocean
+// vertex/fragment shaders sample it.
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+layout(binding = 0, rgba16f) uniform readonly image2D wakePrev; // r = foam, g = turbulence, b = height, a = churn
+layout(binding = 1, rgba16f) uniform writeonly image2D wakeNext;
+
+layout(push_constant) uniform WakePush {
+    vec4 ship;   // xy = ship world position, z = heading radians, w = wake power
+    vec4 params; // xy = ship velocity, z = delta time, w = mask world size
+    vec4 hull;   // x = stern offset, y = bow offset, z = centerline offset, w = half beam
+    vec4 profile0;
+    vec4 profile1;
+    vec4 profile2;
+    vec4 profile3;
+} pc;
+
+float saturate(float v) {
+    return clamp(v, 0.0, 1.0);
+}
+
+vec2 wrapWorld(vec2 p, float worldSize) {
+    return p - floor(p / worldSize) * worldSize;
+}
+
+ivec2 wrapCoord(ivec2 p, ivec2 size) {
+    return ivec2(
+        (p.x % size.x + size.x) % size.x,
+        (p.y % size.y + size.y) % size.y);
+}
+
+vec4 loadWake(ivec2 p, ivec2 size) {
+    return imageLoad(wakePrev, wrapCoord(p, size));
+}
+
+vec2 toroidalDelta(vec2 a, vec2 b, float worldSize) {
+    vec2 d = a - b;
+    d -= round(d / worldSize) * worldSize;
+    return d;
+}
+
+float gaussian(float v, float sigma) {
+    float s = max(sigma, 0.0001);
+    return exp(-0.5 * (v * v) / (s * s));
+}
+
+float hash21(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+
+float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash21(i);
+    float b = hash21(i + vec2(1.0, 0.0));
+    float c = hash21(i + vec2(0.0, 1.0));
+    float d = hash21(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+float wakeBreakup(vec2 p) {
+    float n0 = valueNoise(p * 0.38);
+    float n1 = valueNoise(p * 0.91 + vec2(17.3, -9.1));
+    return saturate(n0 * 0.64 + n1 * 0.36);
+}
+
+float profileAt(int i) {
+    if (i < 4)
+        return pc.profile0[i];
+    if (i < 8)
+        return pc.profile1[i - 4];
+    if (i < 12)
+        return pc.profile2[i - 8];
+    return pc.profile3[i - 12];
+}
+
+float hullHalfWidth(float t) {
+    float x = saturate(t) * 15.0;
+    int i = min(int(floor(x)), 14);
+    float f = fract(x);
+    float width = mix(profileAt(i), profileAt(i + 1), f);
+
+    // Keep the measured beam through the midship, but force the exact bow/stern
+    // endpoints to resolve as cutting shoulders rather than a rounded blob.
+    float endTaper = smoothstep(0.0, 0.055, t) * smoothstep(0.0, 0.070, 1.0 - t);
+    return max(width * endTaper, pc.hull.w * 0.10);
+}
+
+void main() {
+    ivec2 id = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(wakeNext);
+    if (id.x >= size.x || id.y >= size.y)
+        return;
+
+    float dt = clamp(pc.params.z, 0.0, 0.1);
+    float worldSize = pc.params.w;
+    vec2 texelsPerMeter = vec2(size) / worldSize;
+
+    // Very light current advection keeps old foam from feeling stamped into the sea.
+    vec2 currentWorld = vec2(0.18, 0.07) * dt;
+    ivec2 advected = id - ivec2(round(currentWorld * texelsPerMeter));
+
+    vec4 center = loadWake(advected, size);
+    vec4 neighbours =
+        loadWake(advected + ivec2( 1,  0), size) +
+        loadWake(advected + ivec2(-1,  0), size) +
+        loadWake(advected + ivec2( 0,  1), size) +
+        loadWake(advected + ivec2( 0, -1), size);
+    vec4 wake = mix(center, neighbours * 0.25, saturate(dt * 0.22));
+    wake.r *= exp(-1.25 * dt); // foam
+    wake.g *= exp(-0.95 * dt); // turbulence
+    wake.b *= exp(-1.40 * dt); // signed height disturbance
+    wake.a *= exp(-0.88 * dt); // local churn energy
+
+    vec2 shipPos = wrapWorld(pc.ship.xy, worldSize);
+    vec2 velocity = pc.params.xy;
+    float speed = length(velocity);
+    float speedGate = smoothstep(0.40, 2.25, speed);
+    float wakePower = max(pc.ship.w, 1.0);
+    float speedEnergy = speedGate * mix(0.48, 1.28, saturate(speed / 7.5)) * wakePower;
+
+    vec2 fwd = normalize(vec2(cos(pc.ship.z), sin(pc.ship.z)));
+    vec2 side = vec2(-fwd.y, fwd.x);
+    vec2 cellWorld = (vec2(id) + vec2(0.5)) / vec2(size) * worldSize;
+
+    float sternOffset = max(pc.hull.x, 0.5);
+    float bowOffset = max(pc.hull.y, 0.5);
+    float hullLength = sternOffset + bowOffset;
+    float maxHalfBeam = max(pc.hull.w, 0.5);
+    vec2 stern = wrapWorld(shipPos - fwd * sternOffset, worldSize);
+
+    vec2 sternD = toroidalDelta(cellWorld, stern, worldSize);
+    float wakeX = max(-dot(sternD, fwd), 0.0); // positive behind the stern
+    float wakeY = dot(sternD, side);
+    float behind = smoothstep(0.0, 4.0, wakeX);
+    float trailT = saturate(wakeX / 150.0);
+
+    float centerWidth = mix(maxHalfBeam * 0.42, maxHalfBeam * 1.85, trailT);
+    float centerTrail = gaussian(wakeY, centerWidth) * exp(-wakeX / 72.0) * behind;
+    float centerRibbon = centerTrail
+                       * gaussian(wakeY, max(centerWidth * 0.72, 0.5))
+                       * smoothstep(12.0, 70.0, wakeX);
+    wake.r *= 1.0 - saturate(centerRibbon * speedGate * dt * 10.0);
+
+    // Kelvin-arm seed at tan(19.47 deg) ~= 0.354, kept broad enough for the mask
+    // resolution and later replaceable with a fuller pressure-field input.
+    float armTarget = wakeX * 0.36;
+    float armWidth = mix(maxHalfBeam * 0.18, maxHalfBeam * 0.72, trailT);
+    float kelvinCore = gaussian(abs(wakeY) - armTarget, armWidth)
+                     * exp(-wakeX / 165.0)
+                     * behind
+                     * smoothstep(8.0, 42.0, wakeX);
+    float kelvinPhase = wakeX * 0.42 - abs(wakeY) * 0.16;
+    float kelvinWave = sin(kelvinPhase);
+
+    float propWash = gaussian(wakeY, maxHalfBeam * 0.54) * gaussian(wakeX, 18.0) * behind;
+
+    vec2 hullD = toroidalDelta(cellWorld, shipPos, worldSize);
+    float hullX = dot(hullD, fwd);
+    float hullY = dot(hullD, side) - pc.hull.z;
+    float hullT = saturate((hullX + sternOffset) / max(hullLength, 0.001));
+    float halfWidth = hullHalfWidth(hullT);
+    float sideAbs = abs(hullY);
+    float sideDistance = sideAbs - halfWidth;
+    float lengthGate = smoothstep(0.0, 0.025, hullT) * smoothstep(0.0, 0.025, 1.0 - hullT);
+    float outsideSide = smoothstep(-0.55, 0.55, sideDistance);
+    float sideBand = gaussian(max(sideDistance, 0.0), max(0.72, maxHalfBeam * 0.24)) * outsideSide;
+    float bowBias = smoothstep(0.45, 0.96, hullT);
+    float sternFade = smoothstep(0.08, 0.24, hullT);
+    float hullShear = lengthGate * sternFade * sideBand * mix(0.90, 2.85, bowBias);
+
+    float bowX = hullX - bowOffset;
+    float bowCore = gaussian(bowX, max(1.25, maxHalfBeam * 0.46));
+    float bowSideTarget = mix(maxHalfBeam * 0.20, maxHalfBeam * 1.18, smoothstep(-3.0, 7.5, bowX));
+    float bowSplitGate = smoothstep(maxHalfBeam * 0.06, maxHalfBeam * 0.42, sideAbs);
+    float bowShoulder = bowCore
+                       * gaussian(sideAbs - bowSideTarget, max(0.78, maxHalfBeam * 0.26))
+                       * bowSplitGate;
+    float aftFromBow = max(bowOffset - hullX, 0.0);
+    float bowFanTarget = halfWidth + maxHalfBeam * 0.34 + aftFromBow * 0.105;
+    float bowFan = lengthGate
+                 * exp(-aftFromBow / 58.0)
+                 * gaussian(sideAbs - bowFanTarget, max(0.74, maxHalfBeam * 0.24))
+                 * smoothstep(0.34, 0.98, hullT);
+    float hullTrough = lengthGate
+                     * gaussian(sideAbs, max(halfWidth * 0.62, 0.70))
+                     * (1.0 - outsideSide)
+                     * smoothstep(0.12, 0.95, hullT);
+    float bowCutTrough = gaussian(bowX, max(1.35, maxHalfBeam * 0.44))
+                       * gaussian(sideAbs, max(maxHalfBeam * 0.46, 0.82));
+
+    float sternBreakup = mix(0.18, 1.0,
+        smoothstep(0.34, 0.86, wakeBreakup(vec2(wakeX * 0.16, wakeY * 0.44) + shipPos * 0.018)));
+    float sideBreakup = mix(0.62, 1.16,
+        smoothstep(0.24, 0.78, wakeBreakup(vec2(hullX * 0.22, sideAbs * 0.86) + shipPos * 0.012)));
+    float sternFoamGate = exp(-wakeX / 24.0) * behind;
+
+    float positiveKelvinCrest = pow(saturate(kelvinWave), 3.0) * kelvinCore;
+    float heightAdd = (kelvinCore * kelvinWave * 0.36
+                    - centerTrail * 0.060
+                    + hullShear * 0.58
+                    + bowShoulder * 1.05
+                    + bowFan * 0.78
+                    - hullTrough * 0.30
+                    - bowCutTrough * 0.22)
+                    * speedEnergy * dt * 3.35;
+    float foamAdd = (propWash * 0.115 * sternFoamGate * sternBreakup
+                  + positiveKelvinCrest * 0.060
+                  + hullShear * 0.270 * sideBreakup
+                  + bowShoulder * 0.560 * sideBreakup
+                  + bowFan * 0.330 * sideBreakup)
+                  * speedEnergy * dt * 1.65;
+    float turbulenceAdd = (propWash * 0.78
+                        + centerTrail * 0.160
+                        + kelvinCore * 0.24
+                        + hullShear * 0.72
+                        + bowShoulder * 0.96
+                        + bowFan * 0.62)
+                        * speedEnergy * dt * 1.58;
+    float churnAdd = (propWash * 0.88
+                   + centerTrail * 0.120
+                   + hullShear * 0.78
+                   + bowShoulder * 1.12
+                   + bowFan * 0.74)
+                   * speedEnergy * dt * 1.52;
+
+    wake.r = saturate(wake.r + foamAdd);
+    wake.g = saturate(wake.g + turbulenceAdd);
+    wake.b = clamp(wake.b + heightAdd, -0.72, 0.86);
+    wake.a = saturate(wake.a + churnAdd);
+
+    imageStore(wakeNext, id, wake);
+}

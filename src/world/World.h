@@ -41,6 +41,7 @@ public:
     static glm::vec3 tileSideColor(TileType type);
 
     void loadChunksAround(int cx, int cy, int radius);
+    int  loadChunksAroundBudgeted(int cx, int cy, int radius, int maxChunks);
     void unloadChunksOutside(int cx, int cy, int radius);
     // Drops all in-memory chunks (loaded + modified-unsaved). Used when ending a
     // world session (e.g. quitting to title) so the next session starts from disk.

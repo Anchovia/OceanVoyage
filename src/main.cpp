@@ -12,6 +12,7 @@
 
 static constexpr int LOAD_RADIUS   = 3;
 static constexpr int UNLOAD_RADIUS = 4;
+static constexpr int CHUNK_STREAM_LOADS_PER_FRAME = 2;
 
 enum class AppMode {
     MainMenu,
@@ -156,7 +157,7 @@ struct AppFlow {
 
 struct AppSettings {
     bool vsync = true;
-    int aaMode = 0; // 0=off, 1=FXAA, 2=SMAA
+    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA
     bool prevClick = false;
 
     void syncClickState(const PlayerInput& input) {
@@ -228,7 +229,7 @@ static void applyDevUiInputCapture(PlayerInput& input, const VulkanContext& ctx)
 
 int main() {
     try {
-        Window        window(1280, 720, "Pastel Farm");
+        Window        window(1280, 720, "OceanVoyage");
         World         world;
         GameState     gameState;
         VulkanContext ctx(window, world);
@@ -291,6 +292,7 @@ int main() {
             if (app.consumeDevUiToggle(input.toggleDevUi))
                 ctx.toggleDevUi();
             applyDevUiInputCapture(input, ctx);
+            input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
 #endif
 
             if (app.consumeInventoryEscape(input.quit, gameState.inventoryOpen())) {
@@ -344,28 +346,36 @@ int main() {
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
 
-            camera.update(gameState.player().position(), orbitAngle, dt);
+            const glm::vec3 playerPositionBeforeUpdate = gameState.player().position();
+            camera.update(playerPositionBeforeUpdate, orbitAngle, dt);
             if (app.gameplayActive())
                 gameState.update(dt, input, camera, world);
+            const glm::vec3 playerPosition = gameState.player().position();
+            glm::vec3 playerVelocity{0.0f};
+            if (dt > 0.0001f && app.gameplayActive())
+                playerVelocity = (playerPosition - playerPositionBeforeUpdate) / dt;
 
-            // Load/unload chunks when player crosses a chunk boundary
+            // Stream chunks around the player. Generation is capped per frame so a
+            // boundary crossing does not create every new edge chunk in one update.
             if (worldSessionStarted) {
                 glm::ivec2 playerChunk = World::chunkCoord(
-                    (int)gameState.player().position().x,
-                    (int)gameState.player().position().y
+                    (int)playerPosition.x,
+                    (int)playerPosition.y
                 );
                 if (playerChunk != lastPlayerChunk) {
-                    world.loadChunksAround(playerChunk.x, playerChunk.y, LOAD_RADIUS);
                     world.unloadChunksOutside(playerChunk.x, playerChunk.y, UNLOAD_RADIUS);
                     lastPlayerChunk = playerChunk;
                 }
+                world.loadChunksAroundBudgeted(
+                    playerChunk.x, playerChunk.y, LOAD_RADIUS,
+                    CHUNK_STREAM_LOADS_PER_FRAME);
             }
 
             const glm::vec2 facing = gameState.player().facingDirection();
             const float playerHeading = std::atan2(facing.y, facing.x);
 
             ctx.drawFrame(FrameRenderData{
-                camera, gameState.player().position(), playerHeading, gameState.targetTile(),
+                camera, playerPosition, playerVelocity, playerHeading, gameState.targetTile(),
                 gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
                 gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode

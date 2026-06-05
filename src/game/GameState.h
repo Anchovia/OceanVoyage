@@ -30,6 +30,7 @@ struct PlayerInput {
     int  scrollDelta = 0;   // slots to move from scroll wheel
     int windowWidth = 1280;
     int windowHeight = 720;
+    float moveSpeedMultiplier = 1.0f; // dev/test multiplier; 1.0 keeps normal speed
 };
 
 class GameState {

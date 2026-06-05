@@ -63,7 +63,8 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
 
     if (glm::length(move) > 0.0f) {
         const glm::vec2 direction = glm::normalize(move);
-        const glm::vec2 delta = direction * m_player.moveSpeed() * dt;
+        const float speedMultiplier = std::clamp(input.moveSpeedMultiplier, 0.1f, 12.0f);
+        const glm::vec2 delta = direction * m_player.moveSpeed() * speedMultiplier * dt;
         m_player.setFacingDirection(direction);
 
         glm::vec3 next = m_player.position();

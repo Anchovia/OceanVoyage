@@ -19,6 +19,15 @@ namespace {
 constexpr uint32_t kFftLocal = 16; // compute local size per axis (matches the .comp shaders)
 struct OceanFFTPush     { float time; };
 struct OceanFFTPassPush { int32_t stage; int32_t direction; }; // direction: 0 = horizontal, 1 = vertical
+struct OceanWakePush {
+    glm::vec4 ship;   // xy = ship world position, z = heading radians, w = wake power
+    glm::vec4 params; // xy = ship velocity, z = delta time, w = mask world size
+    glm::vec4 hull;   // x = stern offset, y = bow offset, z = centerline offset, w = half beam
+    glm::vec4 profile0; // 16 half-width samples from stern to bow, packed as 4 vec4s
+    glm::vec4 profile1;
+    glm::vec4 profile2;
+    glm::vec4 profile3;
+};
 }
 
 void VulkanContext::createOceanFFT() {
@@ -118,11 +127,13 @@ void VulkanContext::createOceanFFT() {
     cba.commandPool        = m_commandPool;
     cba.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &cba, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+        "Failed to allocate ocean h0 command buffer");
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
+    vkCheck(vkBeginCommandBuffer(cmd, &bi),
+        "Failed to begin ocean h0 command buffer");
 
     VkImageMemoryBarrier toGeneral{};
     toGeneral.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -144,7 +155,8 @@ void VulkanContext::createOceanFFT() {
         0, 1, &m_oceanSpectrumDescriptorSet, 0, nullptr);
     vkCmdDispatch(cmd, N / kFftLocal, N / kFftLocal, OCEAN_CASCADES);
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end ocean h0 command buffer");
     VkSubmitInfo si{};
     si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
@@ -152,9 +164,12 @@ void VulkanContext::createOceanFFT() {
     VkFenceCreateInfo fi{};
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fi, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+        "Failed to create ocean h0 fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+        "Failed to submit ocean h0 command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for ocean h0 fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 
@@ -193,11 +208,13 @@ void VulkanContext::createOceanFFTSim() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean spectrum transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean spectrum transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -212,7 +229,8 @@ void VulkanContext::createOceanFFTSim() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean spectrum transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -220,9 +238,12 @@ void VulkanContext::createOceanFFTSim() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean spectrum transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean spectrum transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean spectrum transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -339,11 +360,13 @@ void VulkanContext::createOceanFFTTransform() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean FFT pong transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean FFT pong transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -358,7 +381,8 @@ void VulkanContext::createOceanFFTTransform() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean FFT pong transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -366,9 +390,12 @@ void VulkanContext::createOceanFFTTransform() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean FFT pong transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean FFT pong transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean FFT pong transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -517,75 +544,40 @@ void VulkanContext::createOceanFFTTransform() {
 void VulkanContext::createOceanFFTAssemble() {
     const uint32_t N = OCEAN_FFT_N;
 
-    // ---- displacement map (TRANSFER_SRC so it can be copied back to host for buoyancy).
-    //      One array layer per cascade; the ocean shaders sum the layers. ----
-    createImage(N, N, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_oceanDisplacementImage, m_oceanDisplacementMemory, 1, OCEAN_CASCADES);
+    // ---- displacement + slope maps, double-buffered (one set per frame in flight) so this
+    //      frame's assemble can write while the previous frame's graphics still samples the
+    //      other copy. displacement: TRANSFER_SRC for host readback. One array layer per cascade. ----
+    m_oceanDisplacementImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanDisplacementMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanDisplacementView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanSlopeImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanSlopeMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanSlopeView.resize(MAX_FRAMES_IN_FLIGHT);
 
     VkImageViewCreateInfo vi{};
     vi.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    vi.image                       = m_oceanDisplacementImage;
     vi.viewType                    = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     vi.format                      = VK_FORMAT_R16G16B16A16_SFLOAT;
     vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     vi.subresourceRange.levelCount = 1;
     vi.subresourceRange.layerCount = OCEAN_CASCADES;
-    if (vkCreateImageView(m_device, &vi, nullptr, &m_oceanDisplacementView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create ocean displacement image view");
+    for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+        createImage(N, N, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_oceanDisplacementImage[f], m_oceanDisplacementMemory[f], 1, OCEAN_CASCADES);
+        vi.image = m_oceanDisplacementImage[f];
+        if (vkCreateImageView(m_device, &vi, nullptr, &m_oceanDisplacementView[f]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create ocean displacement image view");
 
-    // ---- one-time UNDEFINED -> GENERAL transition ----
-    {
-        VkCommandBufferAllocateInfo cba{};
-        cba.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-        cba.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-        cba.commandPool        = m_commandPool;
-        cba.commandBufferCount = 1;
-        VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
-        VkCommandBufferBeginInfo bi{};
-        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
-        VkImageMemoryBarrier b{};
-        b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image               = m_oceanDisplacementImage;
-        b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        b.subresourceRange.levelCount = 1;
-        b.subresourceRange.layerCount = OCEAN_CASCADES;
-        b.srcAccessMask       = 0;
-        b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
-        VkSubmitInfo si{};
-        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-        si.commandBufferCount = 1;
-        si.pCommandBuffers    = &cmd;
-        VkFenceCreateInfo fi{};
-        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-        VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
-        vkDestroyFence(m_device, fence, nullptr);
-        vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
+        createImage(N, N, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_oceanSlopeImage[f], m_oceanSlopeMemory[f], 1, OCEAN_CASCADES);
+        vi.image = m_oceanSlopeImage[f];
+        if (vkCreateImageView(m_device, &vi, nullptr, &m_oceanSlopeView[f]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create ocean slope image view");
     }
 
-    // ---- per-cascade surface-slope map (RGBA16F, .rg = world height gradient). One layer per
-    //      cascade; written by the assemble pass, sampled by the water shader for smooth normals. ----
-    createImage(N, N, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_oceanSlopeImage, m_oceanSlopeMemory, 1, OCEAN_CASCADES);
-
-    vi.image = m_oceanSlopeImage; // vi still configured as 2D_ARRAY, RGBA16F, layerCount = cascades
-    if (vkCreateImageView(m_device, &vi, nullptr, &m_oceanSlopeView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create ocean slope image view");
-
+    // ---- one-time UNDEFINED -> GENERAL transition for every displacement + slope image ----
     {
         VkCommandBufferAllocateInfo cba{};
         cba.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -593,26 +585,35 @@ void VulkanContext::createOceanFFTAssemble() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean assemble transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
-        VkImageMemoryBarrier b{};
-        b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-        b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
-        b.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
-        b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        b.image               = m_oceanSlopeImage;
-        b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        b.subresourceRange.levelCount = 1;
-        b.subresourceRange.layerCount = OCEAN_CASCADES;
-        b.srcAccessMask       = 0;
-        b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean assemble transition command buffer");
+
+        std::vector<VkImageMemoryBarrier> barriers;
+        barriers.reserve((size_t)MAX_FRAMES_IN_FLIGHT * 2);
+        for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+            VkImageMemoryBarrier b{};
+            b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+            b.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            b.subresourceRange.levelCount = 1;
+            b.subresourceRange.layerCount = OCEAN_CASCADES;
+            b.srcAccessMask       = 0;
+            b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+            b.image = m_oceanDisplacementImage[f]; barriers.push_back(b);
+            b.image = m_oceanSlopeImage[f];        barriers.push_back(b);
+        }
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-            0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+            0, 0, nullptr, 0, nullptr, (uint32_t)barriers.size(), barriers.data());
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean assemble transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -620,9 +621,12 @@ void VulkanContext::createOceanFFTAssemble() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean assemble transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean assemble transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean assemble transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -683,43 +687,47 @@ void VulkanContext::createOceanFFTAssemble() {
         throw std::runtime_error("Failed to create ocean assemble pipeline");
     vkDestroyShaderModule(m_device, mod, nullptr);
 
+    m_oceanAssembleDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    std::vector<VkDescriptorSetLayout> assembleLayouts(MAX_FRAMES_IN_FLIGHT, m_oceanAssembleDescriptorSetLayout);
     VkDescriptorSetAllocateInfo ai{};
     ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     ai.descriptorPool     = m_oceanFFTDescriptorPool;
-    ai.descriptorSetCount = 1;
-    ai.pSetLayouts        = &m_oceanAssembleDescriptorSetLayout;
-    if (vkAllocateDescriptorSets(m_device, &ai, &m_oceanAssembleDescriptorSet) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate ocean assemble descriptor set");
+    ai.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    ai.pSetLayouts        = assembleLayouts.data();
+    if (vkAllocateDescriptorSets(m_device, &ai, m_oceanAssembleDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate ocean assemble descriptor sets");
 
-    VkDescriptorImageInfo srcInfo{};
-    srcInfo.imageView   = m_oceanSpectrumView; // final IFFT result lives here
-    srcInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkDescriptorImageInfo dstInfo{};
-    dstInfo.imageView   = m_oceanDisplacementView;
-    dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkDescriptorImageInfo slopeInfo{};
-    slopeInfo.imageView   = m_oceanSlopeView;
-    slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-    VkWriteDescriptorSet writes[3]{};
-    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[0].dstSet          = m_oceanAssembleDescriptorSet;
-    writes[0].dstBinding      = 0;
-    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[0].descriptorCount = 1;
-    writes[0].pImageInfo      = &srcInfo;
-    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[1].dstSet          = m_oceanAssembleDescriptorSet;
-    writes[1].dstBinding      = 1;
-    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[1].descriptorCount = 1;
-    writes[1].pImageInfo      = &dstInfo;
-    writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    writes[2].dstSet          = m_oceanAssembleDescriptorSet;
-    writes[2].dstBinding      = 2;
-    writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-    writes[2].descriptorCount = 1;
-    writes[2].pImageInfo      = &slopeInfo;
-    vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+    for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+        VkDescriptorImageInfo srcInfo{};
+        srcInfo.imageView   = m_oceanSpectrumView; // final IFFT result lives here (shared)
+        srcInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo dstInfo{};
+        dstInfo.imageView   = m_oceanDisplacementView[f];
+        dstInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo slopeInfo{};
+        slopeInfo.imageView   = m_oceanSlopeView[f];
+        slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet writes[3]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_oceanAssembleDescriptorSets[f];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].descriptorCount = 1;
+        writes[0].pImageInfo      = &srcInfo;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_oceanAssembleDescriptorSets[f];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &dstInfo;
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_oceanAssembleDescriptorSets[f];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[2].descriptorCount = 1;
+        writes[2].pImageInfo      = &slopeInfo;
+        vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+    }
 
     // ---- host-visible readback buffers (one per frame in flight) for ship buoyancy.
     //      Holds every cascade layer (tightly packed) so the CPU can sum the surface. ----
@@ -728,8 +736,186 @@ void VulkanContext::createOceanFFTAssemble() {
     for (auto& b : m_oceanReadbackBuffers) {
         b = createBuffer(rbSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, b.memory, 0, rbSize, 0, &b.mapped);
+        vkCheck(vkMapMemory(m_device, b.memory, 0, rbSize, 0, &b.mapped),
+            "Failed to map ocean readback buffer");
         memset(b.mapped, 0, (size_t)rbSize); // clean height (0) until the first copy lands
+    }
+
+    createOceanWake();
+}
+
+void VulkanContext::createOceanWake() {
+    const uint32_t N = OCEAN_WAKE_N;
+
+    m_oceanWakeImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanWakeMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_oceanWakeView.resize(MAX_FRAMES_IN_FLIGHT);
+
+    VkImageViewCreateInfo vi{};
+    vi.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    vi.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+    vi.format                      = VK_FORMAT_R16G16B16A16_SFLOAT;
+    vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    vi.subresourceRange.levelCount = 1;
+    vi.subresourceRange.layerCount = 1;
+    for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+        createImage(N, N, VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, m_oceanWakeImage[f], m_oceanWakeMemory[f]);
+        vi.image = m_oceanWakeImage[f];
+        if (vkCreateImageView(m_device, &vi, nullptr, &m_oceanWakeView[f]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create ocean wake image view");
+    }
+
+    {
+        VkCommandBufferAllocateInfo cba{};
+        cba.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        cba.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        cba.commandPool        = m_commandPool;
+        cba.commandBufferCount = 1;
+        VkCommandBuffer cmd;
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean wake transition command buffer");
+        VkCommandBufferBeginInfo bi{};
+        bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean wake transition command buffer");
+
+        std::vector<VkImageMemoryBarrier> toGeneral;
+        toGeneral.reserve(MAX_FRAMES_IN_FLIGHT);
+        for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+            VkImageMemoryBarrier b{};
+            b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+            b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
+            b.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+            b.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            b.image               = m_oceanWakeImage[f];
+            b.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            b.subresourceRange.levelCount = 1;
+            b.subresourceRange.layerCount = 1;
+            b.srcAccessMask       = 0;
+            b.dstAccessMask       = VK_ACCESS_TRANSFER_WRITE_BIT;
+            toGeneral.push_back(b);
+        }
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            0, 0, nullptr, 0, nullptr, (uint32_t)toGeneral.size(), toGeneral.data());
+
+        VkClearColorValue zero{};
+        for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+            VkImageSubresourceRange range{};
+            range.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            range.levelCount = 1;
+            range.layerCount = 1;
+            vkCmdClearColorImage(cmd, m_oceanWakeImage[f], VK_IMAGE_LAYOUT_GENERAL, &zero, 1, &range);
+        }
+
+        std::vector<VkImageMemoryBarrier> toCompute = toGeneral;
+        for (auto& b : toCompute) {
+            b.oldLayout     = VK_IMAGE_LAYOUT_GENERAL;
+            b.newLayout     = VK_IMAGE_LAYOUT_GENERAL;
+            b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            b.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        }
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, (uint32_t)toCompute.size(), toCompute.data());
+
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean wake transition command buffer");
+        VkSubmitInfo si{};
+        si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers    = &cmd;
+        VkFenceCreateInfo fi{};
+        fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+        VkFence fence;
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean wake transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean wake transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean wake transition fence");
+        vkDestroyFence(m_device, fence, nullptr);
+        vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
+    }
+
+    VkDescriptorSetLayoutBinding binds[2]{};
+    binds[0].binding         = 0;
+    binds[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binds[0].descriptorCount = 1;
+    binds[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    binds[1].binding         = 1;
+    binds[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+    binds[1].descriptorCount = 1;
+    binds[1].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+    VkDescriptorSetLayoutCreateInfo li{};
+    li.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    li.bindingCount = 2;
+    li.pBindings    = binds;
+    if (vkCreateDescriptorSetLayout(m_device, &li, nullptr, &m_oceanWakeDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean wake descriptor set layout");
+
+    VkPushConstantRange pc{};
+    pc.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    pc.offset     = 0;
+    pc.size       = sizeof(OceanWakePush);
+    VkPipelineLayoutCreateInfo pli{};
+    pli.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pli.setLayoutCount         = 1;
+    pli.pSetLayouts            = &m_oceanWakeDescriptorSetLayout;
+    pli.pushConstantRangeCount = 1;
+    pli.pPushConstantRanges    = &pc;
+    if (vkCreatePipelineLayout(m_device, &pli, nullptr, &m_oceanWakePipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean wake pipeline layout");
+
+    auto code = readFile("shaders/ocean_wake.comp.spv");
+    VkShaderModule mod = createShaderModule(code);
+    VkPipelineShaderStageCreateInfo stage{};
+    stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+    stage.module = mod;
+    stage.pName  = "main";
+    VkComputePipelineCreateInfo cpi{};
+    cpi.sType  = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    cpi.stage  = stage;
+    cpi.layout = m_oceanWakePipelineLayout;
+    if (vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &cpi, nullptr, &m_oceanWakePipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create ocean wake pipeline");
+    vkDestroyShaderModule(m_device, mod, nullptr);
+
+    m_oceanWakeDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    std::vector<VkDescriptorSetLayout> wakeLayouts(MAX_FRAMES_IN_FLIGHT, m_oceanWakeDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool     = m_oceanFFTDescriptorPool;
+    ai.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    ai.pSetLayouts        = wakeLayouts.data();
+    if (vkAllocateDescriptorSets(m_device, &ai, m_oceanWakeDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate ocean wake descriptor sets");
+
+    for (int f = 0; f < MAX_FRAMES_IN_FLIGHT; f++) {
+        const int prev = (f + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
+        VkDescriptorImageInfo prevInfo{};
+        prevInfo.imageView   = m_oceanWakeView[prev];
+        prevInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkDescriptorImageInfo nextInfo{};
+        nextInfo.imageView   = m_oceanWakeView[f];
+        nextInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+        VkWriteDescriptorSet writes[2]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_oceanWakeDescriptorSets[f];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[0].descriptorCount = 1;
+        writes[0].pImageInfo      = &prevInfo;
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_oceanWakeDescriptorSets[f];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &nextInfo;
+        vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
     }
 }
 
@@ -738,16 +924,19 @@ void VulkanContext::createOceanFFTAssemble() {
 void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
     const uint32_t N = OCEAN_FFT_N;
 
-    // Order the previous frame's FFT-image accesses (compute writes + the vertex shader
-    // sampling the displacement map) before this frame's compute overwrites them. Barrier
-    // scopes extend to earlier submissions in submission order, so this also makes the
-    // init-time h0 write visible to the first frame's read.
+    // Order the previous frame's compute accesses of the SHARED FFT images (spectrum/pong
+    // ping-pong work + read-only h0) before this frame's compute overwrites them. The
+    // displacement/slope maps are double-buffered, so this frame writes a different copy than
+    // the previous frame's graphics samples; that cross-frame hazard is covered by the per-slot
+    // in-flight fence, so the compute no longer waits on the previous frame's graphics. Barrier
+    // scopes extend to earlier submissions, so this also makes the init-time h0 write visible
+    // to the first frame's read.
     VkMemoryBarrier pre{};
     pre.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
     pre.srcAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     pre.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
     vkCmdPipelineBarrier(cmd,
-        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         0, 1, &pre, 0, nullptr, 0, nullptr);
 
@@ -802,8 +991,10 @@ void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
     // Assemble the transformed field into the world-space displacement map.
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_oceanAssemblePipeline);
     vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_oceanAssemblePipelineLayout,
-        0, 1, &m_oceanAssembleDescriptorSet, 0, nullptr);
+        0, 1, &m_oceanAssembleDescriptorSets[m_currentFrame], 0, nullptr);
     vkCmdDispatch(cmd, N / kFftLocal, N / kFftLocal, OCEAN_CASCADES);
+
+    recordOceanWake(cmd);
 
     // Make the displacement + slope writes visible to the ocean vertex/fragment shaders in the
     // render passes (and the displacement copy to the readback buffer).
@@ -813,14 +1004,14 @@ void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
     availBarriers[0].newLayout           = VK_IMAGE_LAYOUT_GENERAL;
     availBarriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     availBarriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    availBarriers[0].image               = m_oceanDisplacementImage;
+    availBarriers[0].image               = m_oceanDisplacementImage[m_currentFrame];
     availBarriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     availBarriers[0].subresourceRange.levelCount = 1;
     availBarriers[0].subresourceRange.layerCount = OCEAN_CASCADES;
     availBarriers[0].srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
     availBarriers[0].dstAccessMask       = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
     availBarriers[1] = availBarriers[0];
-    availBarriers[1].image               = m_oceanSlopeImage;
+    availBarriers[1].image               = m_oceanSlopeImage[m_currentFrame];
     availBarriers[1].dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
         VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -833,7 +1024,7 @@ void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = OCEAN_CASCADES; // copies all cascade layers, tightly packed
     region.imageExtent                 = { N, N, 1 };
-    vkCmdCopyImageToBuffer(cmd, m_oceanDisplacementImage, VK_IMAGE_LAYOUT_GENERAL,
+    vkCmdCopyImageToBuffer(cmd, m_oceanDisplacementImage[m_currentFrame], VK_IMAGE_LAYOUT_GENERAL,
         m_oceanReadbackBuffers[m_currentFrame].buffer, 1, &region);
 
     // Make the copied data visible to host reads.
@@ -845,18 +1036,83 @@ void VulkanContext::recordOceanFFT(VkCommandBuffer cmd) {
         0, 1, &toHost, 0, nullptr, 0, nullptr);
 }
 
+void VulkanContext::recordOceanWake(VkCommandBuffer cmd) {
+    if (m_oceanWakePipeline == VK_NULL_HANDLE || m_oceanWakeDescriptorSets.empty())
+        return;
+
+    OceanWakePush push{};
+    push.ship = glm::vec4(
+        m_oceanWakeShipPosition.x,
+        m_oceanWakeShipPosition.y,
+        m_oceanWakeShipHeading,
+        SHIP_WAKE_POWER);
+    push.params = glm::vec4(
+        m_oceanWakeShipVelocity.x,
+        m_oceanWakeShipVelocity.y,
+        m_oceanWakeDeltaTime,
+        OCEAN_WAKE_WORLD_SIZE);
+    push.hull = glm::vec4(
+        m_shipHullProfile.sternOffset,
+        m_shipHullProfile.bowOffset,
+        m_shipHullProfile.centerlineOffset,
+        m_shipHullProfile.halfBeam);
+
+    auto hullWidth = [&](uint32_t index) {
+        const float width = m_shipHullProfile.halfWidthSamples[index];
+        return width > 0.0f ? width : m_shipHullProfile.halfBeam;
+    };
+    push.profile0 = glm::vec4(hullWidth(0),  hullWidth(1),  hullWidth(2),  hullWidth(3));
+    push.profile1 = glm::vec4(hullWidth(4),  hullWidth(5),  hullWidth(6),  hullWidth(7));
+    push.profile2 = glm::vec4(hullWidth(8),  hullWidth(9),  hullWidth(10), hullWidth(11));
+    push.profile3 = glm::vec4(hullWidth(12), hullWidth(13), hullWidth(14), hullWidth(15));
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_oceanWakePipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_oceanWakePipelineLayout,
+        0, 1, &m_oceanWakeDescriptorSets[m_currentFrame], 0, nullptr);
+    vkCmdPushConstants(cmd, m_oceanWakePipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+        0, sizeof(push), &push);
+    vkCmdDispatch(cmd, OCEAN_WAKE_N / kFftLocal, OCEAN_WAKE_N / kFftLocal, 1);
+
+    VkImageMemoryBarrier wakeReadable{};
+    wakeReadable.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    wakeReadable.oldLayout           = VK_IMAGE_LAYOUT_GENERAL;
+    wakeReadable.newLayout           = VK_IMAGE_LAYOUT_GENERAL;
+    wakeReadable.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    wakeReadable.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    wakeReadable.image               = m_oceanWakeImage[m_currentFrame];
+    wakeReadable.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    wakeReadable.subresourceRange.levelCount = 1;
+    wakeReadable.subresourceRange.layerCount = 1;
+    wakeReadable.srcAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
+    wakeReadable.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+        0, 0, nullptr, 0, nullptr, 1, &wakeReadable);
+}
+
 void VulkanContext::destroyOceanFFT() {
     m_oceanReadbackBuffers.clear(); // GpuBuffer RAII frees + unmaps (device still alive here)
+    vkDestroyPipeline(m_device, m_oceanWakePipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_oceanWakePipelineLayout, nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_oceanWakeDescriptorSetLayout, nullptr);
+    for (size_t f = 0; f < m_oceanWakeImage.size(); f++) {
+        vkDestroyImageView(m_device, m_oceanWakeView[f], nullptr);
+        vkDestroyImage(m_device, m_oceanWakeImage[f], nullptr);
+        vkFreeMemory(m_device, m_oceanWakeMemory[f], nullptr);
+    }
+
     vkDestroyPipeline(m_device, m_oceanAssemblePipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanAssemblePipelineLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_oceanAssembleDescriptorSetLayout, nullptr);
     vkDestroySampler(m_device, m_oceanDisplacementSampler, nullptr);
-    vkDestroyImageView(m_device, m_oceanDisplacementView, nullptr);
-    vkDestroyImage(m_device, m_oceanDisplacementImage, nullptr);
-    vkFreeMemory(m_device, m_oceanDisplacementMemory, nullptr);
-    vkDestroyImageView(m_device, m_oceanSlopeView, nullptr);
-    vkDestroyImage(m_device, m_oceanSlopeImage, nullptr);
-    vkFreeMemory(m_device, m_oceanSlopeMemory, nullptr);
+    for (size_t f = 0; f < m_oceanDisplacementImage.size(); f++) {
+        vkDestroyImageView(m_device, m_oceanDisplacementView[f], nullptr);
+        vkDestroyImage(m_device, m_oceanDisplacementImage[f], nullptr);
+        vkFreeMemory(m_device, m_oceanDisplacementMemory[f], nullptr);
+        vkDestroyImageView(m_device, m_oceanSlopeView[f], nullptr);
+        vkDestroyImage(m_device, m_oceanSlopeImage[f], nullptr);
+        vkFreeMemory(m_device, m_oceanSlopeMemory[f], nullptr);
+    }
 
     vkDestroyPipeline(m_device, m_oceanFFTPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanFFTPipelineLayout, nullptr);

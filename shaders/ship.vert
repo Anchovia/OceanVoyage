@@ -31,7 +31,6 @@ layout(location = 3) in vec2  inUV;
 
 layout(location = 0)      out vec3  fragNormal;
 layout(location = 1)      out vec3  fragTangent;
-layout(location = 2)      out vec4  fragPosLightSpace;
 layout(location = 3)      out float fragViewDepth;
 layout(location = 4)      out vec2  fragUV;
 layout(location = 5)      out vec3  fragWorldPos;
@@ -43,7 +42,6 @@ void main() {
     gl_ClipDistance[0] = dot(worldPos.xyz, ubo.clipPlane.xyz) + ubo.clipPlane.w;
     fragNormal        = mat3(pc.model) * inNormal;
     fragTangent       = mat3(pc.model) * inTangent;
-    fragPosLightSpace = ubo.lightMVP * worldPos;
     fragViewDepth     = -viewPos.z;
     fragUV            = inUV;
     fragWorldPos      = worldPos.xyz;
