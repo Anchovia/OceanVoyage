@@ -279,6 +279,8 @@ private:
         bool complete() const { return graphics && present; }
     };
     QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+    bool checkDeviceExtensionSupport(VkPhysicalDevice device);
+    bool isSwapchainAdequate(VkPhysicalDevice device);
 
     // ---- Vulkan handles ----
     Window& m_window;

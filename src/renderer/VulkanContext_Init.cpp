@@ -207,6 +207,29 @@ VulkanContext::QueueFamilyIndices VulkanContext::findQueueFamilies(VkPhysicalDev
     return indices;
 }
 
+// True if the device exposes every extension in kDeviceExtensions (currently VK_KHR_swapchain).
+bool VulkanContext::checkDeviceExtensionSupport(VkPhysicalDevice device) {
+    uint32_t count = 0;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &count, nullptr);
+    std::vector<VkExtensionProperties> available(count);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &count, available.data());
+
+    std::set<std::string> required(kDeviceExtensions.begin(), kDeviceExtensions.end());
+    for (const auto& ext : available)
+        required.erase(ext.extensionName);
+    return required.empty();
+}
+
+// True if the surface exposes at least one format and present mode. Call only after the
+// swapchain extension is confirmed (querying surface support otherwise is undefined).
+bool VulkanContext::isSwapchainAdequate(VkPhysicalDevice device) {
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, m_surface, &formatCount, nullptr);
+    uint32_t modeCount = 0;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, m_surface, &modeCount, nullptr);
+    return formatCount > 0 && modeCount > 0;
+}
+
 void VulkanContext::pickPhysicalDevice() {
     uint32_t count = 0;
     vkEnumeratePhysicalDevices(m_instance, &count, nullptr);
@@ -214,10 +237,18 @@ void VulkanContext::pickPhysicalDevice() {
     std::vector<VkPhysicalDevice> devices(count);
     vkEnumeratePhysicalDevices(m_instance, &count, devices.data());
 
+    // Suitable = required queues + swapchain extension + a usable surface format/present mode.
+    // Order matters: confirm the extension before querying surface support.
+    auto isSuitable = [&](VkPhysicalDevice device) {
+        return findQueueFamilies(device).complete()
+            && checkDeviceExtensionSupport(device)
+            && isSwapchainAdequate(device);
+    };
+
     // Prefer discrete GPU; otherwise take first suitable device
     VkPhysicalDevice fallback = VK_NULL_HANDLE;
     for (auto device : devices) {
-        if (!findQueueFamilies(device).complete()) continue;
+        if (!isSuitable(device)) continue;
         VkPhysicalDeviceProperties props;
         vkGetPhysicalDeviceProperties(device, &props);
         if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
