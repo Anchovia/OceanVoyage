@@ -717,7 +717,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[9]{};
+    VkDescriptorSetLayoutBinding bindings[10]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -770,9 +770,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[8].descriptorCount = 1;
     bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Previous frame's pre-water scene depth - rejects temporal SSR history after disocclusion.
+    bindings[9].binding         = 10;
+    bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[9].descriptorCount = 1;
+    bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 9;
+    info.bindingCount = 10;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -3892,7 +3898,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // reflection + normals + FFT maps + scene depth/color + history
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 9; // reflection + normals + FFT maps + scene depth/color + history color/depth
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3963,7 +3969,12 @@ void VulkanContext::updateOceanDescriptors() {
         sceneHistoryInfo.imageView   = m_sceneColorCopyView[i];
         sceneHistoryInfo.sampler     = m_postSampler;
 
-        VkWriteDescriptorSet writes[9]{};
+        VkDescriptorImageInfo sceneHistoryDepthInfo{};
+        sceneHistoryDepthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneHistoryDepthInfo.imageView   = m_sceneDepthCopyView[i];
+        sceneHistoryDepthInfo.sampler     = m_sceneDepthSampler;
+
+        VkWriteDescriptorSet writes[10]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -4027,7 +4038,14 @@ void VulkanContext::updateOceanDescriptors() {
         writes[8].descriptorCount = 1;
         writes[8].pImageInfo      = &sceneHistoryInfo;
 
-        vkUpdateDescriptorSets(m_device, 9, writes, 0, nullptr);
+        writes[9].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[9].dstSet          = m_oceanDescriptorSets[i];
+        writes[9].dstBinding      = 10;
+        writes[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[9].descriptorCount = 1;
+        writes[9].pImageInfo      = &sceneHistoryDepthInfo;
+
+        vkUpdateDescriptorSets(m_device, 10, writes, 0, nullptr);
     }
 }
 
@@ -4042,14 +4060,29 @@ void VulkanContext::updateOceanHistoryDescriptor(uint32_t currentFrame) {
         : m_sceneColorCopyView[currentFrame];
     historyInfo.sampler = m_postSampler;
 
-    VkWriteDescriptorSet write{};
-    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-    write.dstSet          = m_oceanDescriptorSets[currentFrame];
-    write.dstBinding      = 9;
-    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    write.descriptorCount = 1;
-    write.pImageInfo      = &historyInfo;
-    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
+    VkDescriptorImageInfo historyDepthInfo{};
+    historyDepthInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    historyDepthInfo.imageView = (m_temporalHistoryFrames > 0)
+        ? m_sceneDepthCopyView[historyIndex]
+        : m_sceneDepthCopyView[currentFrame];
+    historyDepthInfo.sampler = m_sceneDepthSampler;
+
+    VkWriteDescriptorSet writes[2]{};
+    writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet          = m_oceanDescriptorSets[currentFrame];
+    writes[0].dstBinding      = 9;
+    writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[0].descriptorCount = 1;
+    writes[0].pImageInfo      = &historyInfo;
+
+    writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[1].dstSet          = m_oceanDescriptorSets[currentFrame];
+    writes[1].dstBinding      = 10;
+    writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    writes[1].descriptorCount = 1;
+    writes[1].pImageInfo      = &historyDepthInfo;
+
+    vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
 }
 
 // ============================================================

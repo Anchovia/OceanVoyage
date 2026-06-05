@@ -27,6 +27,7 @@ layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg 
 layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
 layout(binding = 8) uniform sampler2D sceneColor;            // pre-water scene color copy for refraction
 layout(binding = 9) uniform sampler2D sceneHistory;          // previous frame resolved scene color for temporal SSR
+layout(binding = 10) uniform sampler2D sceneHistoryDepth;    // previous frame pre-water depth for SSR history rejection
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -77,13 +78,14 @@ bool projectWorldToScreen(vec3 worldPos, out vec2 uv, out float viewDepth) {
            ndc.z >= 0.0 && ndc.z <= 1.0;
 }
 
-bool projectHistoryWorldToScreen(vec3 worldPos, out vec2 uv) {
+bool projectHistoryWorldToScreen(vec3 worldPos, out vec2 uv, out float depth) {
     vec4 clip = ubo.prevViewProj * vec4(worldPos, 1.0);
     if (clip.w <= 0.0001)
         return false;
 
     vec3 ndc = clip.xyz / clip.w;
     uv = ndc.xy * 0.5 + 0.5;
+    depth = ndc.z;
     return uv.x >= 0.0 && uv.x <= 1.0 &&
            uv.y >= 0.0 && uv.y <= 1.0 &&
            ndc.z >= 0.0 && ndc.z <= 1.0;
@@ -256,12 +258,19 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
 
             if (ubo.temporalParams.x > 0.5) {
                 vec2 historyUV;
-                if (projectHistoryWorldToScreen(scenePos, historyUV)) {
+                float expectedHistoryDepth;
+                if (projectHistoryWorldToScreen(scenePos, historyUV, expectedHistoryDepth)) {
+                    float historyDepth = texture(sceneHistoryDepth, historyUV).r;
                     vec3 historyColor = texture(sceneHistory, historyUV).rgb;
                     float hitLum = luminance(hitColor);
                     float historyLum = luminance(historyColor);
                     float lumDelta = abs(hitLum - historyLum) / max(max(hitLum, historyLum), 0.04);
-                    float historyTrust = (1.0 - smoothstep(0.18, 0.62, lumDelta)) * screenEdgeFade(historyUV);
+                    float depthDelta = abs(historyDepth - expectedHistoryDepth);
+                    float depthTrust = (1.0 - step(0.9999, historyDepth))
+                                     * (1.0 - smoothstep(0.0006, 0.0060, depthDelta));
+                    float historyTrust = (1.0 - smoothstep(0.18, 0.62, lumDelta))
+                                       * depthTrust
+                                       * screenEdgeFade(historyUV);
                     hitColor = mix(hitColor, historyColor, historyTrust * confidence * 0.42);
                 }
             }
