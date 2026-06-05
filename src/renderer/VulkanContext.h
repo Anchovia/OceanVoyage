@@ -100,6 +100,7 @@ struct TextureResource {
 struct FrameRenderData {
     const Camera&                            camera;
     glm::vec3                                playerPosition;
+    glm::vec3                                playerVelocity;
     float                                    playerHeading;  // radians; ship bow orientation
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
@@ -135,6 +136,11 @@ public:
 #endif
 
 private:
+    static constexpr float    SHIP_WORLD_SCALE = 6.0f; // LSV018 source length ~5.6 -> ~34 world units
+    static constexpr float    SHIP_VISUAL_DRAFT = 0.02f;
+    static constexpr float    SHIP_WAKE_POWER = 1.45f;
+    static constexpr uint32_t SHIP_HULL_PROFILE_SAMPLES = 16;
+
     void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
     void transitionImageLayout(VkImage image, VkImageLayout oldLayout, VkImageLayout newLayout);
     void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
@@ -230,7 +236,9 @@ private:
     void createOceanFFTSim();  // per-frame spectrum animation resources
     void createOceanFFTTransform(); // butterfly texture + IFFT pipeline + ping-pong
     void createOceanFFTAssemble();   // displacement map + assembly pipeline
+    void createOceanWake();          // ship-driven wake mask simulation resources
     void recordOceanFFT(VkCommandBuffer cmd); // per-frame compute dispatch (records into the frame cmd buffer)
+    void recordOceanWake(VkCommandBuffer cmd);
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
@@ -382,6 +390,24 @@ private:
     std::vector<VkDeviceMemory> m_oceanSlopeMemory;
     std::vector<VkImageView>    m_oceanSlopeView;
 
+    // Ship wake mask, ping-ponged per frame so wake foam/turbulence persists through
+    // decay/diffusion/advection instead of being painted directly in the water shader.
+    static constexpr uint32_t OCEAN_WAKE_N = 1024;
+    static constexpr float    OCEAN_WAKE_WORLD_SIZE = 1024.0f;
+    std::vector<VkImage>        m_oceanWakeImage;
+    std::vector<VkDeviceMemory> m_oceanWakeMemory;
+    std::vector<VkImageView>    m_oceanWakeView;
+    VkDescriptorSetLayout       m_oceanWakeDescriptorSetLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanWakeDescriptorSets;
+    VkPipelineLayout            m_oceanWakePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline                  m_oceanWakePipeline       = VK_NULL_HANDLE;
+    glm::vec2                   m_oceanWakeShipPosition{15.0f, 15.0f};
+    glm::vec2                   m_oceanWakeShipVelocity{0.0f, 0.0f};
+    float                       m_oceanWakeShipHeading = 0.0f;
+    float                       m_oceanWakeDeltaTime   = 0.0f;
+    float                       m_oceanWakePrevTime    = 0.0f;
+    bool                        m_oceanWakeHasPrevTime = false;
+
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
 
@@ -474,6 +500,17 @@ private:
     std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
+    struct ShipHullProfile {
+        glm::vec3 localBoundsMin{0.0f};
+        glm::vec3 localBoundsMax{0.0f};
+        float sternOffset = 16.8f;      // world metres from model origin toward stern
+        float bowOffset = 18.2f;        // world metres from model origin toward bow
+        float centerlineOffset = 0.0f;  // world metres on ship local Y
+        float halfBeam = 3.0f;          // maximum half width in world metres
+        float waterlineCutZ = 0.0f;     // local Z cut used for footprint extraction
+        std::array<float, SHIP_HULL_PROFILE_SAMPLES> halfWidthSamples{};
+    };
+    ShipHullProfile m_shipHullProfile;
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;

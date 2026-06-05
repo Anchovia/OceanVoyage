@@ -346,16 +346,21 @@ int main() {
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
 
-            camera.update(gameState.player().position(), orbitAngle, dt);
+            const glm::vec3 playerPositionBeforeUpdate = gameState.player().position();
+            camera.update(playerPositionBeforeUpdate, orbitAngle, dt);
             if (app.gameplayActive())
                 gameState.update(dt, input, camera, world);
+            const glm::vec3 playerPosition = gameState.player().position();
+            glm::vec3 playerVelocity{0.0f};
+            if (dt > 0.0001f && app.gameplayActive())
+                playerVelocity = (playerPosition - playerPositionBeforeUpdate) / dt;
 
             // Stream chunks around the player. Generation is capped per frame so a
             // boundary crossing does not create every new edge chunk in one update.
             if (worldSessionStarted) {
                 glm::ivec2 playerChunk = World::chunkCoord(
-                    (int)gameState.player().position().x,
-                    (int)gameState.player().position().y
+                    (int)playerPosition.x,
+                    (int)playerPosition.y
                 );
                 if (playerChunk != lastPlayerChunk) {
                     world.unloadChunksOutside(playerChunk.x, playerChunk.y, UNLOAD_RADIUS);
@@ -370,7 +375,7 @@ int main() {
             const float playerHeading = std::atan2(facing.y, facing.x);
 
             ctx.drawFrame(FrameRenderData{
-                camera, gameState.player().position(), playerHeading, gameState.targetTile(),
+                camera, playerPosition, playerVelocity, playerHeading, gameState.targetTile(),
                 gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
                 gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode

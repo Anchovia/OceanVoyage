@@ -748,7 +748,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[10]{};
+    VkDescriptorSetLayoutBinding bindings[11]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -777,39 +777,45 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Per-cascade surface-slope map — fragment builds smooth wave normals from it.
-    bindings[5].binding         = 6;
+    // Ship wake mask — vertex samples height, fragment samples foam/turbulence.
+    bindings[5].binding         = 5;
     bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings[5].stageFlags      = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Pre-water scene depth copy — sampled by water for thickness/refraction decisions.
-    bindings[6].binding         = 7;
+    // Per-cascade surface-slope map — fragment builds smooth wave normals from it.
+    bindings[6].binding         = 6;
     bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[6].descriptorCount = 1;
     bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Pre-water scene color copy — sampled by water for screen-space refraction.
-    bindings[7].binding         = 8;
+    // Pre-water scene depth copy — sampled by water for thickness/refraction decisions.
+    bindings[7].binding         = 7;
     bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[7].descriptorCount = 1;
     bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Previous frame's resolved scene color - sampled by water for temporal SSR stability.
-    bindings[8].binding         = 9;
+    // Pre-water scene color copy — sampled by water for screen-space refraction.
+    bindings[8].binding         = 8;
     bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[8].descriptorCount = 1;
     bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    // Previous frame's pre-water scene depth - rejects temporal SSR history after disocclusion.
-    bindings[9].binding         = 10;
+    // Previous frame's resolved scene color - sampled by water for temporal SSR stability.
+    bindings[9].binding         = 9;
     bindings[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[9].descriptorCount = 1;
     bindings[9].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Previous frame's pre-water scene depth - rejects temporal SSR history after disocclusion.
+    bindings[10].binding         = 10;
+    bindings[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[10].descriptorCount = 1;
+    bindings[10].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 10;
+    info.bindingCount = 11;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -1169,6 +1175,95 @@ void VulkanContext::loadImportedShipMesh() {
 
     if (verts.empty())
         throw std::runtime_error("Ship OBJ produced no triangles: " + objPath);
+
+    glm::vec3 localMin = verts[0].pos;
+    glm::vec3 localMax = verts[0].pos;
+    std::vector<float> zValues;
+    zValues.reserve(verts.size());
+    for (const ShipVertex& v : verts) {
+        localMin = glm::min(localMin, v.pos);
+        localMax = glm::max(localMax, v.pos);
+        zValues.push_back(v.pos.z);
+    }
+
+    const size_t zCutIndex = std::min(zValues.size() - 1, (size_t)((float)zValues.size() * 0.35f));
+    std::nth_element(zValues.begin(), zValues.begin() + zCutIndex, zValues.end());
+    const float footprintZMax = zValues[zCutIndex];
+
+    glm::vec3 footprintMin{0.0f};
+    glm::vec3 footprintMax{0.0f};
+    uint32_t footprintCount = 0;
+    auto includeFootprintVertex = [&](const glm::vec3& p) {
+        if (footprintCount == 0) {
+            footprintMin = p;
+            footprintMax = p;
+        } else {
+            footprintMin = glm::min(footprintMin, p);
+            footprintMax = glm::max(footprintMax, p);
+        }
+        ++footprintCount;
+    };
+
+    for (const ShipVertex& v : verts) {
+        if (v.pos.z <= footprintZMax)
+            includeFootprintVertex(v.pos);
+    }
+    if (footprintCount < 128) {
+        footprintCount = 0;
+        for (const ShipVertex& v : verts)
+            includeFootprintVertex(v.pos);
+    }
+
+    const float lengthLocal = std::max(footprintMax.x - footprintMin.x, 0.001f);
+    const float centerlineLocal = (footprintMin.y + footprintMax.y) * 0.5f;
+    const float fallbackHalfBeam = std::max(
+        std::abs(footprintMax.y - centerlineLocal),
+        std::abs(footprintMin.y - centerlineLocal)) * SHIP_WORLD_SCALE;
+
+    m_shipHullProfile.localBoundsMin = localMin;
+    m_shipHullProfile.localBoundsMax = localMax;
+    m_shipHullProfile.sternOffset = std::max(-footprintMin.x * SHIP_WORLD_SCALE, 0.5f);
+    m_shipHullProfile.bowOffset = std::max(footprintMax.x * SHIP_WORLD_SCALE, 0.5f);
+    m_shipHullProfile.centerlineOffset = centerlineLocal * SHIP_WORLD_SCALE;
+    m_shipHullProfile.halfBeam = std::max(fallbackHalfBeam, 0.5f);
+    m_shipHullProfile.waterlineCutZ = footprintZMax;
+    m_shipHullProfile.halfWidthSamples.fill(0.0f);
+
+    for (const ShipVertex& v : verts) {
+        if (v.pos.z > footprintZMax)
+            continue;
+        const float t = std::clamp((v.pos.x - footprintMin.x) / lengthLocal, 0.0f, 1.0f);
+        const uint32_t sample = (uint32_t)std::round(t * (float)(SHIP_HULL_PROFILE_SAMPLES - 1));
+        const float halfWidth = std::abs(v.pos.y - centerlineLocal) * SHIP_WORLD_SCALE;
+        m_shipHullProfile.halfWidthSamples[sample] =
+            std::max(m_shipHullProfile.halfWidthSamples[sample], halfWidth);
+    }
+
+    for (uint32_t i = 0; i < SHIP_HULL_PROFILE_SAMPLES; ++i) {
+        if (m_shipHullProfile.halfWidthSamples[i] > 0.0f)
+            continue;
+
+        int left = (int)i - 1;
+        while (left >= 0 && m_shipHullProfile.halfWidthSamples[(size_t)left] <= 0.0f)
+            --left;
+        uint32_t right = i + 1;
+        while (right < SHIP_HULL_PROFILE_SAMPLES && m_shipHullProfile.halfWidthSamples[right] <= 0.0f)
+            ++right;
+
+        if (left >= 0 && right < SHIP_HULL_PROFILE_SAMPLES) {
+            const float span = (float)(right - (uint32_t)left);
+            const float f = (float)(i - (uint32_t)left) / span;
+            m_shipHullProfile.halfWidthSamples[i] =
+                glm::mix(m_shipHullProfile.halfWidthSamples[(size_t)left],
+                         m_shipHullProfile.halfWidthSamples[right], f);
+        } else if (left >= 0) {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfWidthSamples[(size_t)left];
+        } else if (right < SHIP_HULL_PROFILE_SAMPLES) {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfWidthSamples[right];
+        } else {
+            m_shipHullProfile.halfWidthSamples[i] = m_shipHullProfile.halfBeam;
+        }
+    }
 
     m_shipMesh.count = (uint32_t)verts.size();
     VkDeviceSize size = sizeof(ShipVertex) * verts.size();
@@ -3833,7 +3928,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 9; // reflection + normals + FFT maps + scene depth/color + history color/depth
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 10; // reflection + normals + FFT/wake maps + scene depth/color + history color/depth
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3884,6 +3979,11 @@ void VulkanContext::updateOceanDescriptors() {
         displacementInfo.imageView   = m_oceanDisplacementView[i]; // double-buffered per frame
         displacementInfo.sampler     = m_oceanDisplacementSampler;
 
+        VkDescriptorImageInfo wakeInfo{};
+        wakeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
+        wakeInfo.imageView   = m_oceanWakeView[i]; // current frame's wake simulation target
+        wakeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared ocean sampler
+
         VkDescriptorImageInfo slopeInfo{};
         slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
         slopeInfo.imageView   = m_oceanSlopeView[i]; // double-buffered per frame
@@ -3909,7 +4009,7 @@ void VulkanContext::updateOceanDescriptors() {
         sceneHistoryDepthInfo.imageView   = m_sceneDepthCopyView[i];
         sceneHistoryDepthInfo.sampler     = m_sceneDepthSampler;
 
-        VkWriteDescriptorSet writes[10]{};
+        VkWriteDescriptorSet writes[11]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3947,40 +4047,47 @@ void VulkanContext::updateOceanDescriptors() {
 
         writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[5].dstSet          = m_oceanDescriptorSets[i];
-        writes[5].dstBinding      = 6;
+        writes[5].dstBinding      = 5;
         writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &slopeInfo;
+        writes[5].pImageInfo      = &wakeInfo;
 
         writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[6].dstSet          = m_oceanDescriptorSets[i];
-        writes[6].dstBinding      = 7;
+        writes[6].dstBinding      = 6;
         writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &sceneDepthInfo;
+        writes[6].pImageInfo      = &slopeInfo;
 
         writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[7].dstSet          = m_oceanDescriptorSets[i];
-        writes[7].dstBinding      = 8;
+        writes[7].dstBinding      = 7;
         writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &sceneColorInfo;
+        writes[7].pImageInfo      = &sceneDepthInfo;
 
         writes[8].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[8].dstSet          = m_oceanDescriptorSets[i];
-        writes[8].dstBinding      = 9;
+        writes[8].dstBinding      = 8;
         writes[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[8].descriptorCount = 1;
-        writes[8].pImageInfo      = &sceneHistoryInfo;
+        writes[8].pImageInfo      = &sceneColorInfo;
 
         writes[9].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[9].dstSet          = m_oceanDescriptorSets[i];
-        writes[9].dstBinding      = 10;
+        writes[9].dstBinding      = 9;
         writes[9].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[9].descriptorCount = 1;
-        writes[9].pImageInfo      = &sceneHistoryDepthInfo;
+        writes[9].pImageInfo      = &sceneHistoryInfo;
 
-        vkUpdateDescriptorSets(m_device, 10, writes, 0, nullptr);
+        writes[10].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[10].dstSet          = m_oceanDescriptorSets[i];
+        writes[10].dstBinding      = 10;
+        writes[10].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[10].descriptorCount = 1;
+        writes[10].pImageInfo      = &sceneHistoryDepthInfo;
+
+        vkUpdateDescriptorSets(m_device, 11, writes, 0, nullptr);
     }
 }
 

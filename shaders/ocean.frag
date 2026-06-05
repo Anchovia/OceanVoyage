@@ -23,6 +23,7 @@ layout(binding = 1) uniform sampler2D planarReflection;
 layout(binding = 2) uniform sampler2D oceanNormalA;
 layout(binding = 3) uniform sampler2D oceanNormalB;
 layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xyz = world displacement (z = height), w = whitecap seed
+layout(binding = 5) uniform sampler2D oceanWakeMask;          // r = foam, g = turbulence, b = wake height, a = churn
 layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
 layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
 layout(binding = 8) uniform sampler2D sceneColor;            // pre-water scene color copy for refraction
@@ -39,6 +40,9 @@ const float PI    = 3.14159265;
 const float SEA_LEVEL = 0.5;
 const int   CASCADES = 3;
 const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size per cascade (must match the compute shaders)
+const float WAKE_WORLD_SIZE = 1024.0; // must match VulkanContext::OCEAN_WAKE_WORLD_SIZE
+const float WAKE_TEXEL_UV = 1.0 / 1024.0; // must match VulkanContext::OCEAN_WAKE_N
+const float WAKE_TEXEL_WORLD = WAKE_WORLD_SIZE * WAKE_TEXEL_UV;
 
 float saturate(float v) {
     return clamp(v, 0.0, 1.0);
@@ -177,6 +181,35 @@ float oceanWhitecapCoverage(OceanFrame frame, float viewDepth) {
     float distanceFade = 1.0 - smoothstep(420.0, 920.0, viewDepth);
     float coverage = smoothstep(0.46, 0.88, ridgeSeed) * breakup * mix(0.24, 1.0, slopeGate);
     return saturate(coverage * distanceFade * 0.34);
+}
+
+vec4 oceanWakeData(vec2 worldXY, float viewDepth) {
+    vec4 wake = texture(oceanWakeMask, worldXY / WAKE_WORLD_SIZE);
+    float distanceFade = 1.0 - smoothstep(300.0, 620.0, viewDepth);
+    wake *= distanceFade;
+    return wake;
+}
+
+vec3 applyWakeNormal(OceanFrame frame, vec3 normal, vec2 worldXY, vec4 wakeData) {
+    if (abs(wakeData.b) <= 0.001 && wakeData.g <= 0.002)
+        return normal;
+
+    vec2 uv = worldXY / WAKE_WORLD_SIZE;
+    float l = texture(oceanWakeMask, uv - vec2(WAKE_TEXEL_UV, 0.0)).b;
+    float r = texture(oceanWakeMask, uv + vec2(WAKE_TEXEL_UV, 0.0)).b;
+    float d = texture(oceanWakeMask, uv - vec2(0.0, WAKE_TEXEL_UV)).b;
+    float u = texture(oceanWakeMask, uv + vec2(0.0, WAKE_TEXEL_UV)).b;
+    vec2 wakeSlope = vec2(r - l, u - d) / max(2.0 * WAKE_TEXEL_WORLD, 0.001);
+    wakeSlope *= 1.12 + wakeData.g * 0.56 + wakeData.a * 0.24;
+
+    vec2 churnDetail = vec2(
+        texture(oceanNormalB, uv * 39.0 + vec2(0.017, -0.011) * ubo.animationParams.x).r - 0.5,
+        texture(oceanNormalB, uv * 43.0 + vec2(-0.019, 0.013) * ubo.animationParams.x).g - 0.5)
+        * wakeData.g * 0.16;
+
+    return normalize(normal
+                   + frame.tangentX * (wakeSlope.x + churnDetail.x)
+                   + frame.tangentY * (wakeSlope.y + churnDetail.y));
 }
 
 vec3 oceanDetailNormal(OceanFrame frame, float t) {
@@ -363,7 +396,9 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
 
 void main() {
     OceanFrame frame = oceanBaseFrame(fragWorldPos.xy);
+    vec4 wakeData = oceanWakeData(fragWorldPos.xy, fragViewDepth);
     vec3  N = oceanDetailNormal(frame, ubo.animationParams.x);
+    N = applyWakeNormal(frame, N, fragWorldPos.xy, wakeData);
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
@@ -395,8 +430,11 @@ void main() {
     vec3  sunColor = vec3(1.0, 0.92, 0.70);
     float sunGate = smoothstep(0.02, 0.70, dayFactor);
     float distanceRoughness = smoothstep(90.0, 620.0, fragViewDepth);
-    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.050, 0.082, distanceRoughness));
-    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL, mix(0.150, 0.220, distanceRoughness));
+    float wakeRoughness = wakeData.g * 0.070 + wakeData.a * 0.035;
+    float tightSun = sunGlitterLobe(NdotH, NdotV, NdotL,
+        clamp(mix(0.050, 0.082, distanceRoughness) + wakeRoughness, 0.045, 0.240));
+    float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL,
+        clamp(mix(0.150, 0.220, distanceRoughness) + wakeRoughness * 0.55, 0.120, 0.340));
     float grazingPath = pow(saturate(dot(R, L)), 18.0) * clamp(1.0 - NdotV, 0.0, 1.0);
     vec3  sunSpec = (tightSun * 0.32 + broadSun * 0.15 + grazingPath * 0.45)
                   * Fs * sunColor * NdotL * sunGate;
@@ -428,9 +466,13 @@ void main() {
     water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
     water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
-    float foamCoverage = oceanWhitecapCoverage(frame, fragViewDepth);
+    float wakeCrestEnergy = max(wakeData.b, 0.0) + wakeData.a * 0.28 + wakeData.g * 0.15;
+    float wakeCrestFoam = smoothstep(0.016, 0.125, wakeData.r)
+                        * smoothstep(0.026, 0.185, wakeCrestEnergy);
+    float wakeFoam = wakeCrestFoam * 0.34;
+    float foamCoverage = saturate(oceanWhitecapCoverage(frame, fragViewDepth) + wakeFoam);
     float foamSun = smoothstep(0.0, 0.92, NdotL) * dayFactor;
-    vec3 foamColor = mix(vec3(0.42, 0.55, 0.58), vec3(0.88, 0.94, 0.90),
+    vec3 foamColor = mix(vec3(0.28, 0.36, 0.39), vec3(0.88, 0.94, 0.90),
                          smoothstep(0.02, 0.85, dayFactor));
     foamColor = mix(foamColor, sunColor, foamSun * 0.18);
 
@@ -460,12 +502,15 @@ void main() {
 
     color += shallowColor * thinWater * facingScatter * (1.0 - reflectance) * 0.035;
     color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.080, sceneDepthEdge);
-    color = mix(color, foamColor, foamCoverage * 0.60);
-    color += foamColor * foamCoverage * sunScatter * 0.020;
 
     // Daylight modulation (night = dim).
     color *= mix(0.22, 1.0, dayFactor);
     color = max(color, water * mix(0.55, 0.92, dayFactor));
+    vec3 litFoamColor = foamColor * mix(0.58, 1.0, smoothstep(0.02, 0.85, dayFactor));
+    float foamBlend = foamCoverage * mix(0.42, 0.62, dayFactor);
+    color = mix(color, litFoamColor, foamBlend);
+    color = mix(color, max(color, litFoamColor * 0.54), wakeFoam * (1.0 - dayFactor) * 0.35);
+    color += litFoamColor * foamCoverage * (0.010 + sunScatter * 0.018);
     color = mix(color, vec3(luminance(color)), smoothstep(520.0, 1200.0, fragViewDepth) * 0.08);
 
     // Long-range atmospheric extinction for the sailing camera. Terrain/grass still use

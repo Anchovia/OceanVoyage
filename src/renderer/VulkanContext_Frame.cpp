@@ -957,6 +957,14 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     m_oceanTime = frame.gameTime;
+    m_oceanWakeShipPosition = glm::vec2(frame.playerPosition.x, frame.playerPosition.y);
+    m_oceanWakeShipVelocity = glm::vec2(frame.playerVelocity.x, frame.playerVelocity.y);
+    m_oceanWakeShipHeading  = frame.playerHeading;
+    m_oceanWakeDeltaTime    = m_oceanWakeHasPrevTime ? frame.gameTime - m_oceanWakePrevTime : 0.0f;
+    if (m_oceanWakeDeltaTime < 0.0f || m_oceanWakeDeltaTime > 0.1f)
+        m_oceanWakeDeltaTime = 0.0f;
+    m_oceanWakePrevTime = frame.gameTime;
+    m_oceanWakeHasPrevTime = true;
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateOceanHistoryDescriptor(m_currentFrame);
@@ -1159,8 +1167,6 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
     // its deck aligns with the surface normal and the bow points toward the heading.
     (void)gameTime; // wave phase now lives entirely in the GPU FFT
-    constexpr float SHIP_WORLD_SCALE = 6.0f; // LSV018 source length 5.83 -> ~35 world units
-    constexpr float DRAFT     = 0.0f;
     constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
     const int   n        = (int)OCEAN_FFT_N;
     const int   cascades = (int)OCEAN_CASCADES;
@@ -1184,7 +1190,7 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
         up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
     }
 
-    glm::vec3 pos  = glm::vec3(position.x, position.y, height - DRAFT);
+    glm::vec3 pos  = glm::vec3(position.x, position.y, height - SHIP_VISUAL_DRAFT);
     glm::vec3 fwd0 = glm::vec3(std::cos(heading), std::sin(heading), 0.0f);
     glm::vec3 left = glm::normalize(glm::cross(up, fwd0));  // ship +Y (port)
     glm::vec3 fwd  = glm::normalize(glm::cross(left, up));  // ship +X (bow), perpendicular to up
