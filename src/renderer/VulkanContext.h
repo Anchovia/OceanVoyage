@@ -359,15 +359,18 @@ private:
 
     // Assembled world-space displacement map (R16F, GENERAL): sampled by the ocean vertex
     // shader. xyz = (choppy x, choppy z, height), w = Jacobian whitecap seed.
-    VkImage               m_oceanDisplacementImage   = VK_NULL_HANDLE;
-    VkDeviceMemory        m_oceanDisplacementMemory  = VK_NULL_HANDLE;
-    VkImageView           m_oceanDisplacementView    = VK_NULL_HANDLE;
-    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat
+    // Double-buffered (one per frame in flight): the assemble pass writes frame i's map while
+    // the previous frame's graphics still reads frame (i-1)'s map, so the ocean compute can
+    // overlap the previous frame's rendering instead of serializing behind it.
+    std::vector<VkImage>        m_oceanDisplacementImage;
+    std::vector<VkDeviceMemory> m_oceanDisplacementMemory;
+    std::vector<VkImageView>    m_oceanDisplacementView;
+    VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat (shared)
     // Displacement copied back to host memory each frame so the CPU can float the ship on the
     // actual FFT surface (one buffer per frame in flight; read with a 2-frame latency).
     std::vector<GpuBuffer> m_oceanReadbackBuffers;
     VkDescriptorSetLayout m_oceanAssembleDescriptorSetLayout = VK_NULL_HANDLE;
-    VkDescriptorSet       m_oceanAssembleDescriptorSet       = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanAssembleDescriptorSets; // one per frame (write target differs)
     VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;
     VkPipeline            m_oceanAssemblePipeline            = VK_NULL_HANDLE;
 
@@ -375,9 +378,9 @@ private:
     // The assemble pass writes it from exact texel neighbours so the water shader can build smooth
     // normals by bilinearly sampling the slope (no texel-grid artefacts from differencing the
     // bilinear displacement). Shares the displacement sampler (linear, repeat).
-    VkImage               m_oceanSlopeImage  = VK_NULL_HANDLE;
-    VkDeviceMemory        m_oceanSlopeMemory = VK_NULL_HANDLE;
-    VkImageView           m_oceanSlopeView   = VK_NULL_HANDLE;
+    std::vector<VkImage>        m_oceanSlopeImage;  // double-buffered, mirrors the displacement map
+    std::vector<VkDeviceMemory> m_oceanSlopeMemory;
+    std::vector<VkImageView>    m_oceanSlopeView;
 
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;

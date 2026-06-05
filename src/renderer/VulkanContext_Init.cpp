@@ -3977,12 +3977,12 @@ void VulkanContext::updateOceanDescriptors() {
 
         VkDescriptorImageInfo displacementInfo{};
         displacementInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
-        displacementInfo.imageView   = m_oceanDisplacementView;
+        displacementInfo.imageView   = m_oceanDisplacementView[i]; // double-buffered per frame
         displacementInfo.sampler     = m_oceanDisplacementSampler;
 
         VkDescriptorImageInfo slopeInfo{};
         slopeInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL; // storage image, kept in GENERAL
-        slopeInfo.imageView   = m_oceanSlopeView;
+        slopeInfo.imageView   = m_oceanSlopeView[i]; // double-buffered per frame
         slopeInfo.sampler     = m_oceanDisplacementSampler; // linear, repeat — shared with displacement
 
         VkDescriptorImageInfo sceneDepthInfo{};
