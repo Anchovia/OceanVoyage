@@ -222,6 +222,7 @@ private:
     void createReflectionDescriptorSets();
     void createOceanDescriptors();
     void updateOceanDescriptors();
+    void updateOceanHistoryDescriptor(uint32_t currentFrame);
     void copySceneColorForWater(VkCommandBuffer cmd);
     void copySceneDepthForWater(VkCommandBuffer cmd);
     void createOceanFFT();    // Tessendorf FFT ocean: compute resources + spectrum (VulkanContext_Ocean.cpp)
@@ -393,6 +394,8 @@ private:
     std::vector<VkImage>        m_offscreenImage;   // per frame in flight
     std::vector<VkDeviceMemory> m_offscreenMemory;
     std::vector<VkImageView>    m_offscreenView;
+    glm::mat4                    m_prevViewProj = glm::mat4(1.0f);
+    uint32_t                     m_temporalHistoryFrames = 0;
     std::vector<VkImage>        m_sceneColorCopyImage;
     std::vector<VkDeviceMemory> m_sceneColorCopyMemory;
     std::vector<VkImageView>    m_sceneColorCopyView;

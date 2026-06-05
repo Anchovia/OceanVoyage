@@ -21,6 +21,8 @@ struct UniformBufferObject {
     glm::vec4 cameraPos; // xyz = camera world position (ocean Fresnel / specular)
     glm::mat4 reflectionViewProj; // planar water reflection projection for ocean sampling
     glm::mat4 invViewProj; // inverse camera projection-view for full-screen sky reconstruction
+    glm::mat4 prevViewProj; // previous main-camera projection-view for temporal reprojection
+    glm::vec4 temporalParams; // x = history valid, yzw reserved
 };
 
 struct PostPushConstants {

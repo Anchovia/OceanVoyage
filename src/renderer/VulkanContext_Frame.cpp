@@ -909,6 +909,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_oceanTime = frame.gameTime;
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
+    updateOceanHistoryDescriptor(m_currentFrame);
     updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
@@ -952,11 +953,15 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         result != VK_ERROR_OUT_OF_DATE_KHR) {
         throw std::runtime_error("Failed to present swapchain image");
     }
+    bool swapchainRecreated = false;
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || m_window.wasResized()) {
         m_window.resetResized();
         recreateSwapchain();
+        swapchainRecreated = true;
     }
 
+    if (!swapchainRecreated && m_temporalHistoryFrames < MAX_FRAMES_IN_FLIGHT)
+        m_temporalHistoryFrames++;
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1003,6 +1008,10 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.cameraPos       = glm::vec4(camera.position(), 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
     ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
+    glm::mat4 currentViewProj = ubo.proj * ubo.view;
+    ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
+    ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    m_prevViewProj = currentViewProj;
     m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
@@ -1023,6 +1032,8 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.cameraPos       = glm::vec4(reflectionCameraPos, 1.0f);
     ubo.reflectionViewProj = camera.proj() * reflectionView;
     ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
+    ubo.prevViewProj = ubo.proj * ubo.view;
+    ubo.temporalParams = glm::vec4(0.0f);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 

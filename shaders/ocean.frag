@@ -15,6 +15,8 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 cameraPos;       // xyz = camera world position
     mat4 reflectionViewProj;
     mat4 invViewProj;
+    mat4 prevViewProj;
+    vec4 temporalParams;  // x = history valid
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
@@ -24,6 +26,7 @@ layout(binding = 4) uniform sampler2DArray oceanDisplacement; // per cascade: xy
 layout(binding = 6) uniform sampler2DArray oceanSlope;       // per cascade: rg = world height gradient (dH/dx, dH/dy)
 layout(binding = 7) uniform sampler2D sceneDepth;            // pre-water scene depth copy
 layout(binding = 8) uniform sampler2D sceneColor;            // pre-water scene color copy for refraction
+layout(binding = 9) uniform sampler2D sceneHistory;          // previous frame resolved scene color for temporal SSR
 
 layout(location = 0) in vec3  fragWorldPos;
 layout(location = 1) in float fragViewDepth;
@@ -64,6 +67,18 @@ bool projectWorldToScreen(vec3 worldPos, out vec2 uv, out float viewDepth) {
     vec4 viewPos = ubo.view * vec4(worldPos, 1.0);
     viewDepth = -viewPos.z;
     vec4 clip = ubo.proj * viewPos;
+    if (clip.w <= 0.0001)
+        return false;
+
+    vec3 ndc = clip.xyz / clip.w;
+    uv = ndc.xy * 0.5 + 0.5;
+    return uv.x >= 0.0 && uv.x <= 1.0 &&
+           uv.y >= 0.0 && uv.y <= 1.0 &&
+           ndc.z >= 0.0 && ndc.z <= 1.0;
+}
+
+bool projectHistoryWorldToScreen(vec3 worldPos, out vec2 uv) {
+    vec4 clip = ubo.prevViewProj * vec4(worldPos, 1.0);
     if (clip.w <= 0.0001)
         return false;
 
@@ -237,7 +252,21 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
             float thicknessFade = closeHit ? (1.0 - saturate(delta / thickness)) : 0.55;
             float aboveWater = smoothstep(SEA_LEVEL - 0.20, SEA_LEVEL + 0.15, scenePos.z);
             float confidence = edgeFade * distanceFade * thicknessFade * rayUp * aboveWater;
-            return vec4(texture(sceneColor, hitUV).rgb, saturate(confidence));
+            vec3 hitColor = texture(sceneColor, hitUV).rgb;
+
+            if (ubo.temporalParams.x > 0.5) {
+                vec2 historyUV;
+                if (projectHistoryWorldToScreen(scenePos, historyUV)) {
+                    vec3 historyColor = texture(sceneHistory, historyUV).rgb;
+                    float hitLum = luminance(hitColor);
+                    float historyLum = luminance(historyColor);
+                    float lumDelta = abs(hitLum - historyLum) / max(max(hitLum, historyLum), 0.04);
+                    float historyTrust = (1.0 - smoothstep(0.18, 0.62, lumDelta)) * screenEdgeFade(historyUV);
+                    hitColor = mix(hitColor, historyColor, historyTrust * confidence * 0.42);
+                }
+            }
+
+            return vec4(hitColor, saturate(confidence));
         }
 
         lastDelta = delta;

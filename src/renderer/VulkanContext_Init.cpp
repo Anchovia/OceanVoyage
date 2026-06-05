@@ -717,7 +717,7 @@ void VulkanContext::createObjectPipeline() {
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[8]{};
+    VkDescriptorSetLayoutBinding bindings[9]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -764,9 +764,15 @@ void VulkanContext::createOceanDescriptorSetLayout() {
     bindings[7].descriptorCount = 1;
     bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
+    // Previous frame's resolved scene color - sampled by water for temporal SSR stability.
+    bindings[8].binding         = 9;
+    bindings[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[8].descriptorCount = 1;
+    bindings[8].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 8;
+    info.bindingCount = 9;
     info.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_oceanDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create ocean descriptor set layout");
@@ -2035,6 +2041,8 @@ void VulkanContext::createSmaaRenderPass() {
 }
 
 void VulkanContext::createOffscreenResources() {
+    m_temporalHistoryFrames = 0;
+    m_prevViewProj = glm::mat4(1.0f);
     m_offscreenImage.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenMemory.resize(MAX_FRAMES_IN_FLIGHT);
     m_offscreenView.resize(MAX_FRAMES_IN_FLIGHT);
@@ -3884,7 +3892,7 @@ void VulkanContext::createOceanDescriptors() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 7; // reflection + 2 normal maps + displacement + slope + scene depth/color
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // reflection + normals + FFT maps + scene depth/color + history
 
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3950,7 +3958,12 @@ void VulkanContext::updateOceanDescriptors() {
         sceneColorInfo.imageView   = m_sceneColorCopyView[i];
         sceneColorInfo.sampler     = m_postSampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkDescriptorImageInfo sceneHistoryInfo{};
+        sceneHistoryInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        sceneHistoryInfo.imageView   = m_sceneColorCopyView[i];
+        sceneHistoryInfo.sampler     = m_postSampler;
+
+        VkWriteDescriptorSet writes[9]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_oceanDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -4007,8 +4020,36 @@ void VulkanContext::updateOceanDescriptors() {
         writes[7].descriptorCount = 1;
         writes[7].pImageInfo      = &sceneColorInfo;
 
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        writes[8].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[8].dstSet          = m_oceanDescriptorSets[i];
+        writes[8].dstBinding      = 9;
+        writes[8].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[8].descriptorCount = 1;
+        writes[8].pImageInfo      = &sceneHistoryInfo;
+
+        vkUpdateDescriptorSets(m_device, 9, writes, 0, nullptr);
     }
+}
+
+void VulkanContext::updateOceanHistoryDescriptor(uint32_t currentFrame) {
+    const uint32_t historyIndex =
+        (currentFrame + MAX_FRAMES_IN_FLIGHT - 1) % MAX_FRAMES_IN_FLIGHT;
+
+    VkDescriptorImageInfo historyInfo{};
+    historyInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    historyInfo.imageView = (m_temporalHistoryFrames > 0)
+        ? m_offscreenView[historyIndex]
+        : m_sceneColorCopyView[currentFrame];
+    historyInfo.sampler = m_postSampler;
+
+    VkWriteDescriptorSet write{};
+    write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet          = m_oceanDescriptorSets[currentFrame];
+    write.dstBinding      = 9;
+    write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    write.descriptorCount = 1;
+    write.pImageInfo      = &historyInfo;
+    vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
 }
 
 // ============================================================
