@@ -156,7 +156,7 @@ struct AppFlow {
 
 struct AppSettings {
     bool vsync = true;
-    int aaMode = 0; // 0=off, 1=FXAA, 2=SMAA
+    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA
     bool prevClick = false;
 
     void syncClickState(const PlayerInput& input) {

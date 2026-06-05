@@ -7,12 +7,18 @@
 #include <string>
 #include <unordered_map>
 #include <array>
+#include <stdexcept>
 #include "world/Chunk.h"
 #include "renderer/Frustum.h"
 
 class Window;
 class World;
 class Camera;
+
+inline void vkCheck(VkResult result, const char* message) {
+    if (result != VK_SUCCESS)
+        throw std::runtime_error(message);
+}
 
 // Owning RAII pair for a VkBuffer + its VkDeviceMemory (and optional persistent map).
 // Move-only; frees on destruction. Implicitly converts to VkBuffer for bind/draw calls,

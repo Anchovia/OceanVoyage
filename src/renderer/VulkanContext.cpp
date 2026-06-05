@@ -266,7 +266,8 @@ GpuBuffer VulkanContext::createBuffer(VkDeviceSize size, VkBufferUsageFlags usag
     if (vkAllocateMemory(m_device, &allocInfo, nullptr, &buf.memory) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate buffer memory");
 
-    vkBindBufferMemory(m_device, buf.buffer, buf.memory, 0);
+    vkCheck(vkBindBufferMemory(m_device, buf.buffer, buf.memory, 0),
+        "Failed to bind buffer memory");
     return buf;
 }
 
@@ -327,7 +328,8 @@ void VulkanContext::createImage(uint32_t width, uint32_t height, VkFormat format
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, properties);
     if (vkAllocateMemory(m_device, &allocInfo, nullptr, &memory) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate image memory");
-    vkBindImageMemory(m_device, image, memory, 0);
+    vkCheck(vkBindImageMemory(m_device, image, memory, 0),
+        "Failed to bind image memory");
 }
 
 // ============================================================
@@ -399,13 +401,16 @@ void VulkanContext::recreateSwapchain() {
     updateSmaaDescriptors();   // SMAA intermediate views were recreated
 
     // Swapchain image count may have changed — recreate per-image present semaphores
-    for (auto sem : m_renderFinished)
+    for (auto& sem : m_renderFinished) {
         vkDestroySemaphore(m_device, sem, nullptr);
-    m_renderFinished.resize(m_swapchainImages.size());
+        sem = VK_NULL_HANDLE;
+    }
+    m_renderFinished.assign(m_swapchainImages.size(), VK_NULL_HANDLE);
     VkSemaphoreCreateInfo semInfo{};
     semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
     for (auto& sem : m_renderFinished)
-        vkCreateSemaphore(m_device, &semInfo, nullptr, &sem);
+        vkCheck(vkCreateSemaphore(m_device, &semInfo, nullptr, &sem),
+            "Failed to create present semaphore");
     m_imagesInFlight.assign(m_swapchainImages.size(), VK_NULL_HANDLE);
 }
 
@@ -420,18 +425,21 @@ void VulkanContext::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceS
     allocInfo.commandBufferCount = 1;
 
     VkCommandBuffer commandBuffer;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer),
+        "Failed to allocate copy command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(commandBuffer, &beginInfo),
+        "Failed to begin copy command buffer");
 
     VkBufferCopy copyRegion{};
     copyRegion.size = size;
     vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
 
-    vkEndCommandBuffer(commandBuffer);
+    vkCheck(vkEndCommandBuffer(commandBuffer),
+        "Failed to end copy command buffer");
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -441,10 +449,13 @@ void VulkanContext::copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceS
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create copy fence");
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence),
+        "Failed to submit copy command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for copy fence");
 
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &commandBuffer);
@@ -462,12 +473,14 @@ void VulkanContext::transitionImageLayout(VkImage image, VkImageLayout oldLayout
     allocInfo.commandPool        = m_commandPool;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate layout transition command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin layout transition command buffer");
 
     VkImageMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -497,7 +510,8 @@ void VulkanContext::transitionImageLayout(VkImage image, VkImageLayout oldLayout
         throw std::runtime_error("Unsupported image layout transition");
     }
     vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end layout transition command buffer");
 
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -506,9 +520,12 @@ void VulkanContext::transitionImageLayout(VkImage image, VkImageLayout oldLayout
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create layout transition fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit layout transition command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for layout transition fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 }
@@ -520,19 +537,22 @@ void VulkanContext::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t w
     allocInfo.commandPool        = m_commandPool;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate buffer-to-image command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin buffer-to-image command buffer");
 
     VkBufferImageCopy region{};
     region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     region.imageSubresource.layerCount = 1;
     region.imageExtent                 = {width, height, 1};
     vkCmdCopyBufferToImage(cmd, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end buffer-to-image command buffer");
 
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -541,9 +561,12 @@ void VulkanContext::copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t w
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create buffer-to-image fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit buffer-to-image command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for buffer-to-image fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 }
@@ -565,11 +588,13 @@ void VulkanContext::generateMipmaps(VkImage image, VkFormat format, int32_t widt
     allocInfo.commandPool        = m_commandPool;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate mipmap command buffer");
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
+    vkCheck(vkBeginCommandBuffer(cmd, &begin),
+        "Failed to begin mipmap command buffer");
 
     VkImageMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -641,7 +666,8 @@ void VulkanContext::generateMipmaps(VkImage image, VkFormat format, int32_t widt
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end mipmap command buffer");
     VkSubmitInfo mipSubmit{};
     mipSubmit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     mipSubmit.commandBufferCount = 1;
@@ -649,9 +675,12 @@ void VulkanContext::generateMipmaps(VkImage image, VkFormat format, int32_t widt
     VkFenceCreateInfo mipFenceInfo{};
     mipFenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence mipFence;
-    vkCreateFence(m_device, &mipFenceInfo, nullptr, &mipFence);
-    vkQueueSubmit(m_graphicsQueue, 1, &mipSubmit, mipFence);
-    vkWaitForFences(m_device, 1, &mipFence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &mipFenceInfo, nullptr, &mipFence),
+        "Failed to create mipmap fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &mipSubmit, mipFence),
+        "Failed to submit mipmap command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &mipFence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for mipmap fence");
     vkDestroyFence(m_device, mipFence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 }

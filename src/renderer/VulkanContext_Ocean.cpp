@@ -118,11 +118,13 @@ void VulkanContext::createOceanFFT() {
     cba.commandPool        = m_commandPool;
     cba.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &cba, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+        "Failed to allocate ocean h0 command buffer");
     VkCommandBufferBeginInfo bi{};
     bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &bi);
+    vkCheck(vkBeginCommandBuffer(cmd, &bi),
+        "Failed to begin ocean h0 command buffer");
 
     VkImageMemoryBarrier toGeneral{};
     toGeneral.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -144,7 +146,8 @@ void VulkanContext::createOceanFFT() {
         0, 1, &m_oceanSpectrumDescriptorSet, 0, nullptr);
     vkCmdDispatch(cmd, N / kFftLocal, N / kFftLocal, OCEAN_CASCADES);
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end ocean h0 command buffer");
     VkSubmitInfo si{};
     si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     si.commandBufferCount = 1;
@@ -152,9 +155,12 @@ void VulkanContext::createOceanFFT() {
     VkFenceCreateInfo fi{};
     fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fi, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+        "Failed to create ocean h0 fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+        "Failed to submit ocean h0 command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for ocean h0 fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 
@@ -193,11 +199,13 @@ void VulkanContext::createOceanFFTSim() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean spectrum transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean spectrum transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -212,7 +220,8 @@ void VulkanContext::createOceanFFTSim() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean spectrum transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -220,9 +229,12 @@ void VulkanContext::createOceanFFTSim() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean spectrum transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean spectrum transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean spectrum transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -339,11 +351,13 @@ void VulkanContext::createOceanFFTTransform() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean FFT pong transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean FFT pong transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -358,7 +372,8 @@ void VulkanContext::createOceanFFTTransform() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean FFT pong transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -366,9 +381,12 @@ void VulkanContext::createOceanFFTTransform() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean FFT pong transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean FFT pong transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean FFT pong transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -542,11 +560,13 @@ void VulkanContext::createOceanFFTAssemble() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean displacement transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean displacement transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -561,7 +581,8 @@ void VulkanContext::createOceanFFTAssemble() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean displacement transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -569,9 +590,12 @@ void VulkanContext::createOceanFFTAssemble() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean displacement transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean displacement transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean displacement transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -593,11 +617,13 @@ void VulkanContext::createOceanFFTAssemble() {
         cba.commandPool        = m_commandPool;
         cba.commandBufferCount = 1;
         VkCommandBuffer cmd;
-        vkAllocateCommandBuffers(m_device, &cba, &cmd);
+        vkCheck(vkAllocateCommandBuffers(m_device, &cba, &cmd),
+            "Failed to allocate ocean slope transition command buffer");
         VkCommandBufferBeginInfo bi{};
         bi.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-        vkBeginCommandBuffer(cmd, &bi);
+        vkCheck(vkBeginCommandBuffer(cmd, &bi),
+            "Failed to begin ocean slope transition command buffer");
         VkImageMemoryBarrier b{};
         b.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
         b.oldLayout           = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -612,7 +638,8 @@ void VulkanContext::createOceanFFTAssemble() {
         b.dstAccessMask       = VK_ACCESS_SHADER_WRITE_BIT;
         vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             0, 0, nullptr, 0, nullptr, 1, &b);
-        vkEndCommandBuffer(cmd);
+        vkCheck(vkEndCommandBuffer(cmd),
+            "Failed to end ocean slope transition command buffer");
         VkSubmitInfo si{};
         si.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
         si.commandBufferCount = 1;
@@ -620,9 +647,12 @@ void VulkanContext::createOceanFFTAssemble() {
         VkFenceCreateInfo fi{};
         fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         VkFence fence;
-        vkCreateFence(m_device, &fi, nullptr, &fence);
-        vkQueueSubmit(m_graphicsQueue, 1, &si, fence);
-        vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+        vkCheck(vkCreateFence(m_device, &fi, nullptr, &fence),
+            "Failed to create ocean slope transition fence");
+        vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &si, fence),
+            "Failed to submit ocean slope transition command buffer");
+        vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+            "Failed to wait for ocean slope transition fence");
         vkDestroyFence(m_device, fence, nullptr);
         vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     }
@@ -728,7 +758,8 @@ void VulkanContext::createOceanFFTAssemble() {
     for (auto& b : m_oceanReadbackBuffers) {
         b = createBuffer(rbSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, b.memory, 0, rbSize, 0, &b.mapped);
+        vkCheck(vkMapMemory(m_device, b.memory, 0, rbSize, 0, &b.mapped),
+            "Failed to map ocean readback buffer");
         memset(b.mapped, 0, (size_t)rbSize); // clean height (0) until the first copy lands
     }
 }

@@ -134,7 +134,8 @@ void VulkanContext::buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk) {
     data.vertexBuffer = createBuffer(vSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* vMapped;
-    vkMapMemory(m_device, data.vertexBuffer.memory, 0, vSize, 0, &vMapped);
+    vkCheck(vkMapMemory(m_device, data.vertexBuffer.memory, 0, vSize, 0, &vMapped),
+        "Failed to map chunk vertex buffer");
     memcpy(vMapped, vertices.data(), vSize);
     vkUnmapMemory(m_device, data.vertexBuffer.memory);
 
@@ -142,7 +143,8 @@ void VulkanContext::buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk) {
     data.indexBuffer = createBuffer(iSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* iMapped;
-    vkMapMemory(m_device, data.indexBuffer.memory, 0, iSize, 0, &iMapped);
+    vkCheck(vkMapMemory(m_device, data.indexBuffer.memory, 0, iSize, 0, &iMapped),
+        "Failed to map chunk index buffer");
     memcpy(iMapped, indices.data(), iSize);
     vkUnmapMemory(m_device, data.indexBuffer.memory);
 
@@ -269,7 +271,8 @@ void VulkanContext::buildGrassDressingBuffer(const glm::ivec2& coord, Chunk& chu
     data.grassBuffer = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, data.grassBuffer.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, data.grassBuffer.memory, 0, size, 0, &mapped),
+        "Failed to map grass dressing buffer");
     memcpy(mapped, insts.data(), size);
     vkUnmapMemory(m_device, data.grassBuffer.memory);
 }
@@ -383,7 +386,8 @@ void VulkanContext::buildGroundDressingBuffer(const glm::ivec2& coord, Chunk& ch
         data.groundPatchBuffer = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, data.groundPatchBuffer.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, data.groundPatchBuffer.memory, 0, size, 0, &mapped),
+            "Failed to map ground patch buffer");
         memcpy(mapped, patches.data(), size);
         vkUnmapMemory(m_device, data.groundPatchBuffer.memory);
     }
@@ -394,7 +398,8 @@ void VulkanContext::buildGroundDressingBuffer(const glm::ivec2& coord, Chunk& ch
         data.pebbleBuffer = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, data.pebbleBuffer.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, data.pebbleBuffer.memory, 0, size, 0, &mapped),
+            "Failed to map pebble buffer");
         memcpy(mapped, pebbles.data(), size);
         vkUnmapMemory(m_device, data.pebbleBuffer.memory);
     }
@@ -430,7 +435,8 @@ void VulkanContext::buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk
         group.buffer = createBuffer(oSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* oMapped;
-        vkMapMemory(m_device, group.buffer.memory, 0, oSize, 0, &oMapped);
+        vkCheck(vkMapMemory(m_device, group.buffer.memory, 0, oSize, 0, &oMapped),
+            "Failed to map chunk object instance buffer");
         memcpy(oMapped, insts.data(), oSize);
         vkUnmapMemory(m_device, group.buffer.memory);
 

@@ -857,7 +857,8 @@ void VulkanContext::createOceanMesh() {
     m_oceanVertexBuffer = createBuffer(vSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* vMapped;
-    vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped);
+    vkCheck(vkMapMemory(m_device, m_oceanVertexBuffer.memory, 0, vSize, 0, &vMapped),
+        "Failed to map ocean vertex buffer");
     memcpy(vMapped, verts.data(), vSize);
     vkUnmapMemory(m_device, m_oceanVertexBuffer.memory);
 
@@ -865,7 +866,8 @@ void VulkanContext::createOceanMesh() {
     m_oceanIndexBuffer = createBuffer(iSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* iMapped;
-    vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped);
+    vkCheck(vkMapMemory(m_device, m_oceanIndexBuffer.memory, 0, iSize, 0, &iMapped),
+        "Failed to map ocean index buffer");
     memcpy(iMapped, indices.data(), iSize);
     vkUnmapMemory(m_device, m_oceanIndexBuffer.memory);
 }
@@ -1022,7 +1024,8 @@ void VulkanContext::createUIBuffer() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         m_uiBuffer[i] = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_uiBuffer[i].memory, 0, size, 0, &m_uiBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_uiBuffer[i].memory, 0, size, 0, &m_uiBuffer[i].mapped),
+            "Failed to map UI vertex buffer");
     }
 }
 
@@ -1129,7 +1132,8 @@ void VulkanContext::loadImportedShipMesh() {
     m_shipMesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, m_shipMesh.vbuf.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, m_shipMesh.vbuf.memory, 0, size, 0, &mapped),
+        "Failed to map ship mesh buffer");
     memcpy(mapped, verts.data(), (size_t)size);
     vkUnmapMemory(m_device, m_shipMesh.vbuf.memory);
 }
@@ -1145,7 +1149,8 @@ void VulkanContext::createObjectMeshes() {
         mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
+            "Failed to map object mesh buffer");
         memcpy(mapped, verts.data(), size);
         vkUnmapMemory(m_device, mesh.vbuf.memory);
     };
@@ -1155,7 +1160,8 @@ void VulkanContext::createObjectMeshes() {
         mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         void* mapped;
-        vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped);
+        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
+            "Failed to map grass mesh buffer");
         memcpy(mapped, verts.data(), size);
         vkUnmapMemory(m_device, mesh.vbuf.memory);
     };
@@ -1538,7 +1544,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     GpuBuffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped),
+        "Failed to map texture array staging buffer");
     memcpy(mapped, bytes, (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -1571,7 +1578,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     allocInfo.memoryTypeIndex = findMemoryType(memReq.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     if (vkAllocateMemory(m_device, &allocInfo, nullptr, &tex.memory) != VK_SUCCESS)
         throw std::runtime_error("Failed to allocate texture array memory");
-    vkBindImageMemory(m_device, tex.image, tex.memory, 0);
+    vkCheck(vkBindImageMemory(m_device, tex.image, tex.memory, 0),
+        "Failed to bind texture array memory");
 
     // One-shot upload: transition all layers, copy the contiguous layer-major buffer, transition to read.
     VkCommandBufferAllocateInfo cbAlloc{};
@@ -1580,11 +1588,13 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     cbAlloc.commandPool        = m_commandPool;
     cbAlloc.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &cbAlloc, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &cbAlloc, &cmd),
+        "Failed to allocate texture array upload command buffer");
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
+    vkCheck(vkBeginCommandBuffer(cmd, &begin),
+        "Failed to begin texture array upload command buffer");
 
     VkImageMemoryBarrier barrier{};
     barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -1618,7 +1628,8 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
             0, 0, nullptr, 0, nullptr, 1, &barrier);
     }
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end texture array upload command buffer");
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     submit.commandBufferCount = 1;
@@ -1626,9 +1637,12 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create texture array upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit texture array upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for texture array upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     // staging frees here (GpuBuffer RAII); the fence already waited on all transfers.
@@ -2124,7 +2138,8 @@ TextureResource VulkanContext::createTexture(uint32_t width, uint32_t height, Vk
     GpuBuffer staging = createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &mapped),
+        "Failed to map texture staging buffer");
     memcpy(mapped, bytes, (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -2195,7 +2210,8 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     GpuBuffer staging = createBuffer(payloadSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* mapped;
-    vkMapMemory(m_device, staging.memory, 0, payloadSize, 0, &mapped);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, payloadSize, 0, &mapped),
+        "Failed to map DDS texture staging buffer");
     memcpy(mapped, payload, (size_t)payloadSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -2212,12 +2228,14 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     allocInfo.commandPool        = m_commandPool;
     allocInfo.commandBufferCount = 1;
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate DDS upload command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin DDS upload command buffer");
 
     VkImageMemoryBarrier toDst{};
     toDst.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
@@ -2275,7 +2293,8 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0, 0, nullptr, 0, nullptr, 1, &toRead);
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end DDS upload command buffer");
 
     VkSubmitInfo submit{};
     submit.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2284,9 +2303,12 @@ TextureResource VulkanContext::createDDSBC1Texture(const std::string& path, bool
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create DDS upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, fence),
+        "Failed to submit DDS upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for DDS upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
 
@@ -2840,14 +2862,17 @@ void VulkanContext::createDevTools() {
     allocInfo.commandBufferCount = 1;
 
     VkCommandBuffer cmd;
-    vkAllocateCommandBuffers(m_device, &allocInfo, &cmd);
+    vkCheck(vkAllocateCommandBuffers(m_device, &allocInfo, &cmd),
+        "Failed to allocate dev font upload command buffer");
 
     VkCommandBufferBeginInfo beginInfo{};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &beginInfo);
+    vkCheck(vkBeginCommandBuffer(cmd, &beginInfo),
+        "Failed to begin dev font upload command buffer");
     ImGui_ImplVulkan_CreateFontsTexture(cmd);
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end dev font upload command buffer");
 
     VkSubmitInfo submitInfo{};
     submitInfo.sType              = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2857,9 +2882,12 @@ void VulkanContext::createDevTools() {
     VkFenceCreateInfo fenceInfo{};
     fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     VkFence fence;
-    vkCreateFence(m_device, &fenceInfo, nullptr, &fence);
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence);
-    vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX);
+    vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &fence),
+        "Failed to create dev font upload fence");
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, fence),
+        "Failed to submit dev font upload command buffer");
+    vkCheck(vkWaitForFences(m_device, 1, &fence, VK_TRUE, UINT64_MAX),
+        "Failed to wait for dev font upload fence");
     vkDestroyFence(m_device, fence, nullptr);
     vkFreeCommandBuffers(m_device, m_commandPool, 1, &cmd);
     ImGui_ImplVulkan_DestroyFontUploadObjects();
@@ -2909,11 +2937,14 @@ void VulkanContext::createSyncObjects() {
     fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;  // start signaled so frame 0 doesn't wait forever
 
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        vkCreateSemaphore(m_device, &semInfo,   nullptr, &m_imageAvailable[i]);
-        vkCreateFence    (m_device, &fenceInfo, nullptr, &m_inFlight[i]);
+        vkCheck(vkCreateSemaphore(m_device, &semInfo, nullptr, &m_imageAvailable[i]),
+            "Failed to create image-available semaphore");
+        vkCheck(vkCreateFence(m_device, &fenceInfo, nullptr, &m_inFlight[i]),
+            "Failed to create in-flight fence");
     }
     for (auto& sem : m_renderFinished)
-        vkCreateSemaphore(m_device, &semInfo, nullptr, &sem);
+        vkCheck(vkCreateSemaphore(m_device, &semInfo, nullptr, &sem),
+            "Failed to create render-finished semaphore");
 }
 
 // ============================================================
@@ -3582,7 +3613,8 @@ void VulkanContext::createUniformBuffers() {
         m_uniformBuffers[i] = createBuffer(size,
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_uniformBuffers[i].memory, 0, size, 0, &m_uniformBuffers[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_uniformBuffers[i].memory, 0, size, 0, &m_uniformBuffers[i].mapped),
+            "Failed to map uniform buffer");
     }
 }
 
@@ -3594,7 +3626,8 @@ void VulkanContext::createReflectionUniformBuffers() {
         m_reflectionUniformBuffers[i] = createBuffer(size,
             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_reflectionUniformBuffers[i].memory, 0, size, 0, &m_reflectionUniformBuffers[i].mapped),
+            "Failed to map reflection uniform buffer");
     }
 }
 
@@ -3989,7 +4022,8 @@ void VulkanContext::createIndexBuffer() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map index staging buffer");
     memcpy(data, kIndices.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4009,7 +4043,8 @@ void VulkanContext::createVertexBuffer() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map vertex staging buffer");
     memcpy(data, kVertices.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4032,7 +4067,8 @@ void VulkanContext::createItemMesh() {
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, size, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
+        "Failed to map item mesh staging buffer");
     memcpy(data, verts.data(), (size_t)size);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4051,7 +4087,8 @@ void VulkanContext::createDropInstanceBuffer() {
         m_dropInstBuffer[i] = createBuffer(size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped),
+            "Failed to map drop instance buffer");
     }
 }
 
@@ -4062,7 +4099,8 @@ void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) 
         m_playerInstBuffer[i] = createBuffer(size,
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped),
+            "Failed to map player instance buffer");
     }
 
     updatePlayerInstanceBuffer(playerPosition);
@@ -4074,7 +4112,8 @@ void VulkanContext::createSelectorBuffers() {
     GpuBuffer staging = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     void* data;
-    vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data),
+        "Failed to map selector vertex staging buffer");
     memcpy(data, kSelectorVertices.data(), vertexSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4086,7 +4125,8 @@ void VulkanContext::createSelectorBuffers() {
     staging = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-    vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data);
+    vkCheck(vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data),
+        "Failed to map selector index staging buffer");
     memcpy(data, kSelectorIndices.data(), indexSize);
     vkUnmapMemory(m_device, staging.memory);
 
@@ -4100,6 +4140,7 @@ void VulkanContext::createSelectorBuffers() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
         m_selectorInstBuffer[i] = createBuffer(instanceSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped);
+        vkCheck(vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped),
+            "Failed to map selector instance buffer");
     }
 }

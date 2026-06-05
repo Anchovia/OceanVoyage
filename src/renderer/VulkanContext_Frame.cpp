@@ -254,7 +254,8 @@ void VulkanContext::copySceneDepthForWater(VkCommandBuffer cmd) {
 void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    vkBeginCommandBuffer(cmd, &begin);
+    vkCheck(vkBeginCommandBuffer(cmd, &begin),
+        "Failed to begin frame command buffer");
 
 #ifdef PASTEL_DEV_BUILD
     if (m_devTimingSupported) {
@@ -779,7 +780,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdEndRenderPass(cmd);
     }
 
-    vkEndCommandBuffer(cmd);
+    vkCheck(vkEndCommandBuffer(cmd),
+        "Failed to end frame command buffer");
 }
 
 // ============================================================
@@ -835,7 +837,8 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         m_skyColor[i] = kSkyKeys[seg][i] * (1.0f - f) + kSkyKeys[next][i] * f;
 
     // Wait for the previous frame using this slot to finish
-    vkWaitForFences(m_device, 1, &m_inFlight[m_currentFrame], VK_TRUE, UINT64_MAX);
+    vkCheck(vkWaitForFences(m_device, 1, &m_inFlight[m_currentFrame], VK_TRUE, UINT64_MAX),
+        "Failed to wait for in-flight frame fence");
 #ifdef PASTEL_DEV_BUILD
     readDevGpuTimings(m_currentFrame);
 #endif
@@ -860,18 +863,22 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 
     // If a previous frame is still using this image, wait on its fence first
     if (m_imagesInFlight[imageIndex] != VK_NULL_HANDLE)
-        vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX);
+        vkCheck(vkWaitForFences(m_device, 1, &m_imagesInFlight[imageIndex], VK_TRUE, UINT64_MAX),
+            "Failed to wait for swapchain image fence");
     m_imagesInFlight[imageIndex] = m_inFlight[m_currentFrame];
 
-    vkResetFences(m_device, 1, &m_inFlight[m_currentFrame]);
+    vkCheck(vkResetFences(m_device, 1, &m_inFlight[m_currentFrame]),
+        "Failed to reset in-flight frame fence");
 
     // Sun direction + light space matrix — orthographic from sun, centered on player
     {
         const float kSunAzimuth = glm::radians(225.0f); // rotate light direction in world (tune to taste)
-        float elevation = sinf(frame.timeOfDay * 3.14159265f);
-        float azimuth   = (frame.timeOfDay - 0.5f) * 3.14159265f + kSunAzimuth; // π → 180° sweep (sunrise→noon→sunset)
+        constexpr float kPi = 3.14159265f;
+        constexpr float kTwoPi = 6.28318530f;
+        float elevation = sinf(frame.timeOfDay * kTwoPi - kPi * 0.5f);
+        float azimuth   = (frame.timeOfDay - 0.25f) * kTwoPi + kSunAzimuth;
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
-        m_dayFactor = elevation; // 0 at midnight, 1 at noon
+        m_dayFactor = glm::clamp(elevation, 0.0f, 1.0f); // 0 at night, 1 at noon
 
         // Light frustum half-extent for the ship-scale chase camera. This keeps the
         // enlarged hero ship inside the shadow box without throwing away too much of
@@ -911,7 +918,8 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 #ifdef PASTEL_DEV_BUILD
     buildDevUi(frame);
 #endif
-    vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0);
+    vkCheck(vkResetCommandBuffer(m_commandBuffers[m_currentFrame], 0),
+        "Failed to reset frame command buffer");
     recordCommandBuffer(m_commandBuffers[m_currentFrame], imageIndex);
 #ifdef PASTEL_DEV_BUILD
     m_devQueriesWritten[m_currentFrame] = m_devTimingSupported;
@@ -927,7 +935,8 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     submit.pCommandBuffers      = &m_commandBuffers[m_currentFrame];
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores    = &m_renderFinished[imageIndex];
-    vkQueueSubmit(m_graphicsQueue, 1, &submit, m_inFlight[m_currentFrame]);
+    vkCheck(vkQueueSubmit(m_graphicsQueue, 1, &submit, m_inFlight[m_currentFrame]),
+        "Failed to submit frame command buffer");
 
     VkPresentInfoKHR present{};
     present.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
@@ -938,6 +947,11 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     present.pImageIndices      = &imageIndex;
 
     result = vkQueuePresentKHR(m_presentQueue, &present);
+    if (result != VK_SUCCESS &&
+        result != VK_SUBOPTIMAL_KHR &&
+        result != VK_ERROR_OUT_OF_DATE_KHR) {
+        throw std::runtime_error("Failed to present swapchain image");
+    }
     if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || m_window.wasResized()) {
         m_window.resetResized();
         recreateSwapchain();
