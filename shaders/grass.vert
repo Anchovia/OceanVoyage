@@ -25,7 +25,7 @@ layout(location = 5) in float instanceRot;
 
 layout(location = 0)      out vec3 fragNormal;
 layout(location = 1)      out vec2 fragUV;
-layout(location = 2)      out vec4 fragPosLightSpace;
+layout(location = 2)      out vec3 fragWorldPos;
 layout(location = 3)      out float fragViewDepth;
 layout(location = 4)      out vec3 fragTint;
 layout(location = 5)      out float fragFade;
@@ -73,7 +73,7 @@ void main() {
     gl_ClipDistance[0] = dot(worldPos, ubo.clipPlane.xyz) + ubo.clipPlane.w;
     fragNormal        = rn;
     fragUV            = inUV;
-    fragPosLightSpace = ubo.lightMVP * vec4(worldPos, 1.0);
+    fragWorldPos      = worldPos;
     fragViewDepth     = viewDepth;
     fragTint          = mix(vec3(0.76, 0.98, 0.72), vec3(0.90, 1.04, 0.68), h2);
     fragFade          = clamp(1.0 - smoothstep(36.0, 62.0, viewDepth), 0.0, 1.0);

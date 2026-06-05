@@ -529,11 +529,13 @@ private:
     std::vector<bool>            m_sceneDepthCopyReady;
 
     static constexpr uint32_t    SHADOW_MAP_SIZE        = 2048;
-    VkImage                      m_shadowImage          = VK_NULL_HANDLE;
+    static constexpr uint32_t    CSM_CASCADES           = 3; // cascaded shadow map slices
+    VkImage                      m_shadowImage          = VK_NULL_HANDLE; // depth array, one layer per cascade
     VkDeviceMemory               m_shadowImageMemory    = VK_NULL_HANDLE;
-    VkImageView                  m_shadowImageView      = VK_NULL_HANDLE;
+    VkImageView                  m_shadowImageView      = VK_NULL_HANDLE; // 2D_ARRAY view, sampled by receivers
+    std::array<VkImageView, CSM_CASCADES>   m_shadowLayerView{};  // per-cascade 2D views for the framebuffers
     VkRenderPass                 m_shadowRenderPass     = VK_NULL_HANDLE;
-    VkFramebuffer                m_shadowFramebuffer    = VK_NULL_HANDLE;
+    std::array<VkFramebuffer, CSM_CASCADES> m_shadowFramebuffers{}; // one framebuffer per cascade layer
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
     VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
@@ -543,7 +545,8 @@ private:
     VkDescriptorPool             m_shadowGrassDescriptorPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_shadowGrassDescriptorSets;
     VkSampler                    m_shadowSampler        = VK_NULL_HANDLE;
-    glm::mat4                    m_lightMVP             = glm::mat4(1.0f);
+    std::array<glm::mat4, CSM_CASCADES> m_lightMVPCascade{}; // per-cascade light-space transforms
+    glm::vec4                    m_cascadeSplits        = glm::vec4(0.0f); // xyz = cascade far view-depths
     glm::vec3                    m_shadowCenter         = glm::vec3(0.0f);
     glm::vec3                    m_sunDir               = glm::vec3(0.0f, 0.0f, 1.0f);
     float                        m_dayFactor            = 0.0f;

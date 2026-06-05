@@ -150,7 +150,10 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline      (m_device, m_shadowPipeline,       nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);
     vkDestroySampler       (m_device, m_shadowSampler,        nullptr);
-    vkDestroyFramebuffer   (m_device, m_shadowFramebuffer,    nullptr);
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+        vkDestroyFramebuffer(m_device, m_shadowFramebuffers[c], nullptr);
+        vkDestroyImageView  (m_device, m_shadowLayerView[c],    nullptr);
+    }
     vkDestroyRenderPass    (m_device, m_shadowRenderPass,     nullptr);
     vkDestroyImageView  (m_device, m_shadowImageView,    nullptr);
     vkDestroyImage      (m_device, m_shadowImage,        nullptr);

@@ -5,16 +5,47 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     vec4 lightDir;
-    mat4 lightMVP;
+    mat4 lightMVP;          // legacy (cascade 0)
     vec4 fogColor;
+    vec4 clipPlane;
+    vec4 animationParams;
+    vec4 cameraPos;
+    mat4 reflectionViewProj;
+    mat4 invViewProj;
+    mat4 prevViewProj;
+    vec4 temporalParams;
+    mat4 lightMVPCascade[3]; // CSM per-cascade transforms
+    vec4 cascadeSplits;      // xyz = cascade far view-depths
 } ubo;
 
-layout(binding = 1) uniform sampler2DShadow shadowMap;
+layout(binding = 1) uniform sampler2DArrayShadow shadowMap;
+
+// Cascaded shadow: pick the cascade by view depth, then PCF-sample that array layer.
+float sampleShadowCSM(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir) {
+    int cascade = 0;
+    if (viewDepth > ubo.cascadeSplits.x) cascade = 1;
+    if (viewDepth > ubo.cascadeSplits.y) cascade = 2;
+    if (viewDepth > ubo.cascadeSplits.z) return 1.0;
+
+    vec4 lightSpace = ubo.lightMVPCascade[cascade] * vec4(worldPos, 1.0);
+    vec3 projCoords = lightSpace.xyz / lightSpace.w;
+    projCoords.xy   = projCoords.xy * 0.5 + 0.5;
+    if (projCoords.z < 0.0 || projCoords.z > 1.0) return 1.0;
+
+    float NdotL = max(dot(normal, lightDir), 0.0);
+    float bias  = mix(0.0015, 0.0003, NdotL) * float(cascade + 1);
+    float texel = 1.0 / 2048.0;
+    float shadow = 0.0;
+    for (int x = -2; x <= 2; x++)
+        for (int y = -2; y <= 2; y++)
+            shadow += texture(shadowMap, vec4(projCoords.xy + vec2(x, y) * texel, float(cascade), projCoords.z - bias));
+    return shadow / 25.0;
+}
 
 layout(location = 0) flat in vec3 fragNormal;
 layout(location = 1) flat in vec3 fragTopColor;
 layout(location = 2) flat in vec3 fragSideColor;
-layout(location = 3)      in vec4 fragPosLightSpace;
+layout(location = 3)      in vec3 fragWorldPos;
 layout(location = 4)      in float fragViewDepth;
 layout(location = 0) out vec4 outColor;
 
@@ -23,20 +54,10 @@ void main() {
     vec3  lightDir  = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
 
-    // Shadow
-    vec3  projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
-    projCoords.xy    = projCoords.xy * 0.5 + 0.5;
-    float shadow     = 1.0;
-    if (dayFactor > 0.01 && projCoords.z >= 0.0 && projCoords.z <= 1.0) {
-        float NdotL = max(dot(normal, lightDir), 0.0);
-        float bias  = mix(0.0015, 0.0003, NdotL);
-        float texel = 1.0 / 2048.0;
-        shadow = 0.0;
-        for (int x = -2; x <= 2; x++)
-            for (int y = -2; y <= 2; y++)
-                shadow += texture(shadowMap, vec3(projCoords.xy + vec2(x, y) * texel, projCoords.z - bias));
-        shadow /= 25.0;
-    }
+    // Cascaded shadow
+    float shadow = 1.0;
+    if (dayFactor > 0.01)
+        shadow = sampleShadowCSM(fragWorldPos, fragViewDepth, normal, lightDir);
     float shadowFactor = max(shadow, 0.4);
 
     // top face (normal.z > 0.9) uses topColor, sides use sideColor

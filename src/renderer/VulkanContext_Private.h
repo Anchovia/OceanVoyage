@@ -23,6 +23,10 @@ struct UniformBufferObject {
     glm::mat4 invViewProj; // inverse camera projection-view for full-screen sky reconstruction
     glm::mat4 prevViewProj; // previous main-camera projection-view for temporal reprojection
     glm::vec4 temporalParams; // x = history valid, yzw reserved
+    // CSM (appended at the end so shaders that don't sample shadows keep their layout). The
+    // legacy single `lightMVP` above is left in place for layout stability and holds cascade 0.
+    glm::mat4 lightMVPCascade[3]; // per-cascade light-space transforms
+    glm::vec4 cascadeSplits;      // xyz = cascade far view-depths (view space); w unused
 };
 
 struct PostPushConstants {

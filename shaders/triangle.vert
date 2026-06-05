@@ -18,7 +18,7 @@ layout(location = 4) in vec3 instanceSideColor;
 layout(location = 0) flat out vec3 fragNormal;
 layout(location = 1) flat out vec3 fragTopColor;
 layout(location = 2) flat out vec3 fragSideColor;
-layout(location = 3)      out vec4 fragPosLightSpace;
+layout(location = 3)      out vec3 fragWorldPos;
 layout(location = 4)      out float fragViewDepth;
 
 void main() {
@@ -28,6 +28,6 @@ void main() {
     fragNormal        = inNormal;
     fragTopColor      = instanceTopColor;
     fragSideColor     = instanceSideColor;
-    fragPosLightSpace = ubo.lightMVP * vec4(worldPos, 1.0);
+    fragWorldPos      = worldPos;
     fragViewDepth     = -viewPos.z;
 }

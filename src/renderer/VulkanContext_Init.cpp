@@ -3022,24 +3022,35 @@ void VulkanContext::createDepthResources() {
 void VulkanContext::createShadowResources() {
     VkFormat depthFormat = findDepthFormat();
 
+    // Depth array: one layer per cascade. Sampled through a 2D_ARRAY view; each layer is
+    // rendered into through its own single-layer 2D view.
     createImage(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
         VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-        m_shadowImage, m_shadowImageMemory);
+        m_shadowImage, m_shadowImageMemory, 1, CSM_CASCADES);
 
     VkImageViewCreateInfo viewInfo{};
     viewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     viewInfo.image                           = m_shadowImage;
-    viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
     viewInfo.format                          = depthFormat;
     viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_DEPTH_BIT;
     viewInfo.subresourceRange.baseMipLevel   = 0;
     viewInfo.subresourceRange.levelCount     = 1;
     viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount     = 1;
+    viewInfo.subresourceRange.layerCount     = CSM_CASCADES;
     if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_shadowImageView) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow image view");
+        throw std::runtime_error("Failed to create shadow array image view");
+
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+        VkImageViewCreateInfo lv = viewInfo;
+        lv.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        lv.subresourceRange.baseArrayLayer = c;
+        lv.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &lv, nullptr, &m_shadowLayerView[c]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create shadow cascade layer view");
+    }
 
     VkAttachmentDescription depthAttachment{};
     depthAttachment.format         = depthFormat;
@@ -3093,12 +3104,14 @@ void VulkanContext::createShadowResources() {
     fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
     fbInfo.renderPass      = m_shadowRenderPass;
     fbInfo.attachmentCount = 1;
-    fbInfo.pAttachments    = &m_shadowImageView;
     fbInfo.width           = SHADOW_MAP_SIZE;
     fbInfo.height          = SHADOW_MAP_SIZE;
     fbInfo.layers          = 1;
-    if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_shadowFramebuffer) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow framebuffer");
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+        fbInfo.pAttachments = &m_shadowLayerView[c];
+        if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_shadowFramebuffers[c]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create shadow framebuffer");
+    }
 }
 
 // ============================================================

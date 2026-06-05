@@ -275,29 +275,31 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     if (worldVisible)
         recordOceanFFT(cmd);
 
-    // Shadow pass — render chunk depth from sun's perspective
-    {
+    // Shadow pass — render the scene depth into each cascade layer from the sun's view.
+    for (uint32_t cascade = 0; cascade < CSM_CASCADES; cascade++) {
+        const glm::mat4& lightMVP = m_lightMVPCascade[cascade];
+
         VkClearValue shadowClear{};
         shadowClear.depthStencil = {1.0f, 0};
         VkRenderPassBeginInfo shadowRp{};
         shadowRp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
         shadowRp.renderPass      = m_shadowRenderPass;
-        shadowRp.framebuffer     = m_shadowFramebuffer;
+        shadowRp.framebuffer     = m_shadowFramebuffers[cascade];
         shadowRp.renderArea      = {{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
         shadowRp.clearValueCount = 1;
         shadowRp.pClearValues    = &shadowClear;
 
-        // Always begin/end so the shadow image is cleared (depth=1.0 → fully lit) and
-        // transitioned to READ_ONLY_OPTIMAL. At night skip the chunk geometry: the
-        // fragment shaders gate shadow sampling on dayFactor > 0.01 anyway.
+        // Always begin/end so each cascade layer is cleared (depth=1.0 → fully lit) and
+        // transitioned to READ_ONLY_OPTIMAL. At night skip the geometry: the fragment
+        // shaders gate shadow sampling on dayFactor > 0.01 anyway.
         vkCmdBeginRenderPass(cmd, &shadowRp, VK_SUBPASS_CONTENTS_INLINE);
         if (m_dayFactor > 0.01f) {
-            // Cull chunks outside the light's ortho box — they aren't captured anyway
-            Frustum lightFrustum = Frustum::extractFrom(m_lightMVP);
+            // Cull chunks outside this cascade's ortho box — they aren't captured anyway
+            Frustum lightFrustum = Frustum::extractFrom(lightMVP);
 
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
             vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
+                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
 
             for (auto& [coord, data] : m_chunkBuffers) {
                 if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
@@ -317,7 +319,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             {
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowObjectPipeline);
                 vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
+                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
                 for (auto& [coord, data] : m_chunkBuffers) {
                     if (data.objGroups.empty()) continue;
 
@@ -350,7 +352,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     m_shadowGrassPipelineLayout, 0, 1, &m_shadowGrassDescriptorSets[m_currentFrame], 0, nullptr);
                 vkCmdPushConstants(cmd, m_shadowGrassPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &m_lightMVP);
+                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
 
                 for (auto& [coord, data] : m_chunkBuffers) {
                     if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
@@ -376,7 +378,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
             // push lightMVP * shipModel so the tilted hull casts a correct shadow.
             if (m_shipMesh.count > 0) {
-                glm::mat4 shipLightMVP = m_lightMVP * m_shipModel;
+                glm::mat4 shipLightMVP = lightMVP * m_shipModel;
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
                 vkCmdPushConstants(cmd, m_shadowPipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &shipLightMVP);
@@ -874,7 +876,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     vkCheck(vkResetFences(m_device, 1, &m_inFlight[m_currentFrame]),
         "Failed to reset in-flight frame fence");
 
-    // Sun direction + light space matrix — orthographic from sun, centered on player
+    // Sun direction + cascaded shadow map (CSM): fit one ortho box per view-frustum slice.
     {
         const float kSunAzimuth = glm::radians(225.0f); // rotate light direction in world (tune to taste)
         constexpr float kPi = 3.14159265f;
@@ -883,31 +885,74 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         float azimuth   = (frame.timeOfDay - 0.25f) * kTwoPi + kSunAzimuth;
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
         m_dayFactor = glm::clamp(elevation, 0.0f, 1.0f); // 0 at night, 1 at noon
-
-        // Light frustum half-extent for the ship-scale chase camera. This keeps the
-        // enlarged hero ship inside the shadow box without throwing away too much of
-        // the 2048 shadow map's effective texel density.
-        const float range = 96.0f;
-        glm::mat4 lightView = glm::lookAt(
-            frame.playerPosition + m_sunDir * 240.0f,
-            frame.playerPosition,
-            glm::vec3(0.0f, 0.0f, 1.0f));
-        glm::mat4 lightProj = glm::ortho(-range, range, -range, range, 1.0f, 480.0f);
-        lightProj[1][1] *= -1.0f;
-
-        // Texel snapping: anchor the shadow texel grid to world space so the projected
-        // scene shifts in whole-texel steps. Removes per-frame shadow edge shimmering.
-        // World origin is the fixed reference; ortho keeps w == 1 so no perspective divide.
-        glm::mat4 unsnapped = lightProj * lightView;
-        glm::vec4 originLS  = unsnapped * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
-        float texelScale    = (float)SHADOW_MAP_SIZE * 0.5f;
-        glm::vec2 inTexels  = glm::vec2(originLS) * texelScale;
-        glm::vec2 offset    = (glm::round(inTexels) - inTexels) / texelScale;
-        lightProj[3][0]    += offset.x;
-        lightProj[3][1]    += offset.y;
-
-        m_lightMVP = lightProj * lightView;
         m_shadowCenter = frame.playerPosition;
+
+        // Practical split scheme (log + uniform blend) over the shadowed view-depth range.
+        // Beyond shadowFar the receivers stay lit (imperceptible at the low sailing view).
+        const float shadowNear = 0.5f;
+        const float shadowFar  = 400.0f;
+        const float lambda     = 0.7f;
+        float splitFar[CSM_CASCADES];
+        for (uint32_t i = 0; i < CSM_CASCADES; i++) {
+            float p    = float(i + 1) / float(CSM_CASCADES);
+            float logd = shadowNear * std::pow(shadowFar / shadowNear, p);
+            float unid = shadowNear + (shadowFar - shadowNear) * p;
+            splitFar[i] = lambda * logd + (1.0f - lambda) * unid;
+        }
+        m_cascadeSplits = glm::vec4(splitFar[0], splitFar[1], splitFar[2], 0.0f);
+
+        // Per-cascade fit: bounding sphere of the frustum slice (rotation-invariant → no
+        // shimmer) + whole-texel snapping of the sphere centre.
+        const glm::mat4 invCamView = glm::inverse(frame.camera.view());
+        const float tanHalfV = std::tan(glm::radians(frame.camera.fov()) * 0.5f);
+        const float tanHalfH = tanHalfV * frame.camera.aspect();
+        const glm::vec3 up(0.0f, 0.0f, 1.0f); // sun elevation keeps |sunDir.z| <= ~0.71, never parallel
+        const float casterMargin = 120.0f;    // pull the light back to catch tall casters (ship masts)
+
+        for (uint32_t c = 0; c < CSM_CASCADES; c++) {
+            float nearD = (c == 0) ? shadowNear : splitFar[c - 1];
+            float farD  = splitFar[c];
+
+            // 8 slice corners in world space (view looks down -z).
+            glm::vec3 center(0.0f);
+            glm::vec3 corners[8];
+            int idx = 0;
+            for (int s = 0; s < 2; s++) {
+                float d = (s == 0) ? nearD : farD;
+                float hh = d * tanHalfV, hw = d * tanHalfH;
+                for (int cy = -1; cy <= 1; cy += 2)
+                for (int cx = -1; cx <= 1; cx += 2) {
+                    glm::vec4 wp = invCamView * glm::vec4(cx * hw, cy * hh, -d, 1.0f);
+                    corners[idx] = glm::vec3(wp);
+                    center += corners[idx];
+                    idx++;
+                }
+            }
+            center /= 8.0f;
+
+            float radius = 0.0f;
+            for (int i = 0; i < 8; i++) {
+                float len = glm::length(corners[i] - center);
+                if (len > radius) radius = len;
+            }
+            radius = std::ceil(radius * 16.0f) / 16.0f; // stabilize the extent
+
+            glm::vec3 eye = center + m_sunDir * (radius + casterMargin);
+            glm::mat4 lightView = glm::lookAt(eye, center, up);
+            glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius,
+                                             0.0f, 2.0f * radius + casterMargin + 1.0f);
+            lightProj[1][1] *= -1.0f;
+
+            // Snap the sphere centre to whole shadow texels (kills translational shimmer).
+            glm::vec4 centerLS     = (lightProj * lightView) * glm::vec4(center, 1.0f);
+            float     texelsPerNdc = (float)SHADOW_MAP_SIZE * 0.5f;
+            glm::vec2 inTexels     = glm::vec2(centerLS) * texelsPerNdc;
+            glm::vec2 snapOffset   = (glm::round(inTexels) - inTexels) / texelsPerNdc;
+            lightProj[3][0] += snapOffset.x;
+            lightProj[3][1] += snapOffset.y;
+
+            m_lightMVPCascade[c] = lightProj * lightView;
+        }
     }
 
     m_oceanTime = frame.gameTime;
@@ -1005,7 +1050,9 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.view     = camera.view();
     ubo.proj     = camera.proj();
     ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor); // w = dayFactor (0=night, 1=noon)
-    ubo.lightMVP = m_lightMVP;
+    ubo.lightMVP = m_lightMVPCascade[0]; // legacy field kept for layout; holds cascade 0
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) ubo.lightMVPCascade[c] = m_lightMVPCascade[c];
+    ubo.cascadeSplits = m_cascadeSplits;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
     ubo.clipPlane = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);
@@ -1029,7 +1076,9 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.view     = reflectionView;
     ubo.proj     = camera.proj();
     ubo.lightDir = glm::vec4(m_sunDir, m_dayFactor);
-    ubo.lightMVP = m_lightMVP;
+    ubo.lightMVP = m_lightMVPCascade[0]; // legacy field kept for layout; holds cascade 0
+    for (uint32_t c = 0; c < CSM_CASCADES; c++) ubo.lightMVPCascade[c] = m_lightMVPCascade[c];
+    ubo.cascadeSplits = m_cascadeSplits;
     ubo.fogColor = glm::vec4(m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f);
     ubo.clipPlane = glm::vec4(0.0f, 0.0f, 1.0f, -WATER_REFLECTION_PLANE_Z);
     ubo.animationParams = glm::vec4(gameTime, 0.0f, 0.0f, 0.0f);

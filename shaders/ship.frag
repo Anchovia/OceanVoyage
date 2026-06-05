@@ -5,39 +5,50 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
     vec4 lightDir;
-    mat4 lightMVP;
+    mat4 lightMVP;          // legacy (cascade 0)
     vec4 fogColor;
     vec4 clipPlane;
     vec4 animationParams;
     vec4 cameraPos;
+    mat4 reflectionViewProj;
+    mat4 invViewProj;
+    mat4 prevViewProj;
+    vec4 temporalParams;
+    mat4 lightMVPCascade[3]; // CSM per-cascade transforms
+    vec4 cascadeSplits;      // xyz = cascade far view-depths
 } ubo;
 
-layout(binding = 1) uniform sampler2DShadow shadowMap;
+layout(binding = 1) uniform sampler2DArrayShadow shadowMap;
 layout(binding = 5) uniform sampler2D shipAlbedo;
 layout(binding = 6) uniform sampler2D shipNormal;
 layout(binding = 7) uniform sampler2D shipSpecular;
 
 layout(location = 0)      in vec3 fragNormal;
 layout(location = 1)      in vec3 fragTangent;
-layout(location = 2)      in vec4 fragPosLightSpace;
 layout(location = 3)      in float fragViewDepth;
 layout(location = 4)      in vec2 fragUV;
 layout(location = 5)      in vec3 fragWorldPos;
 layout(location = 0) out vec4 outColor;
 
-float sampleShadow(vec3 normal, vec3 lightDir, float dayFactor) {
-    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+float sampleShadow(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir, float dayFactor) {
+    if (dayFactor <= 0.01) return 1.0;
+    int cascade = 0;
+    if (viewDepth > ubo.cascadeSplits.x) cascade = 1;
+    if (viewDepth > ubo.cascadeSplits.y) cascade = 2;
+    if (viewDepth > ubo.cascadeSplits.z) return 1.0;
+
+    vec4 lightSpace = ubo.lightMVPCascade[cascade] * vec4(worldPos, 1.0);
+    vec3 projCoords = lightSpace.xyz / lightSpace.w;
     projCoords.xy = projCoords.xy * 0.5 + 0.5;
-    if (dayFactor <= 0.01 || projCoords.z < 0.0 || projCoords.z > 1.0)
-        return 1.0;
+    if (projCoords.z < 0.0 || projCoords.z > 1.0) return 1.0;
 
     float ndotl = max(dot(normal, lightDir), 0.0);
-    float bias = mix(0.0018, 0.00035, ndotl);
+    float bias = mix(0.0018, 0.00035, ndotl) * float(cascade + 1);
     float texel = 1.0 / 2048.0;
     float shadow = 0.0;
     for (int x = -2; x <= 2; ++x)
         for (int y = -2; y <= 2; ++y)
-            shadow += texture(shadowMap, vec3(projCoords.xy + vec2(x, y) * texel, projCoords.z - bias));
+            shadow += texture(shadowMap, vec4(projCoords.xy + vec2(x, y) * texel, float(cascade), projCoords.z - bias));
     return shadow / 25.0;
 }
 
@@ -58,7 +69,7 @@ void main() {
     vec3 specTex = texture(shipSpecular, fragUV).rgb;
     float specMask = clamp(dot(specTex, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
 
-    float shadow = max(sampleShadow(N, L, dayFactor), 0.34);
+    float shadow = max(sampleShadow(fragWorldPos, fragViewDepth, N, L, dayFactor), 0.34);
     float ndotl = max(dot(N, L), 0.0);
 
     const vec3 SKY_AMBIENT    = vec3(0.96, 0.93, 0.88);

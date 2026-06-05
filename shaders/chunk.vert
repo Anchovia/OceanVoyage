@@ -23,7 +23,7 @@ layout(location = 4) in float inLayer;
 
 layout(location = 0) flat out vec3 fragNormal;
 layout(location = 1)      out vec3 fragColor;
-layout(location = 2)      out vec4 fragPosLightSpace;
+layout(location = 2)      out vec3 fragWorldPos;
 layout(location = 3)      out float fragViewDepth;
 layout(location = 4)      out vec2 fragUV;
 layout(location = 5) flat out float fragLayer;
@@ -34,7 +34,7 @@ void main() {
     gl_ClipDistance[0] = dot(inPosition, ubo.clipPlane.xyz) + ubo.clipPlane.w;
     fragNormal        = inNormal;
     fragColor         = inColor;
-    fragPosLightSpace = ubo.lightMVP * vec4(inPosition, 1.0);
+    fragWorldPos      = inPosition; // chunk verts are already in world space
     fragViewDepth     = -viewPos.z;
     fragUV            = inUV;
     fragLayer         = inLayer;
