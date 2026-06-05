@@ -1,5 +1,6 @@
 #include "World.h"
 #include "TerrainGen.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -49,11 +50,8 @@ void World::loadChunksAround(int cx, int cy, int radius) {
 int World::loadChunksAroundBudgeted(int cx, int cy, int radius, int maxChunks) {
     if (maxChunks <= 0) return 0;
 
-    int loaded = 0;
-    for (int dy = -radius; dy <= radius; dy++)
-    for (int dx = -radius; dx <= radius; dx++) {
-        glm::ivec2 coord = { cx + dx, cy + dy };
-        if (m_chunks.find(coord) != m_chunks.end()) continue;
+    auto loadChunk = [&](const glm::ivec2& coord) -> bool {
+        if (m_chunks.find(coord) != m_chunks.end()) return false;
 
         auto it = m_modifiedUnloaded.find(coord);
         if (it != m_modifiedUnloaded.end()) {
@@ -62,8 +60,17 @@ int World::loadChunksAroundBudgeted(int cx, int cy, int radius, int maxChunks) {
         } else {
             generateChunk(coord.x, coord.y);
         }
-        loaded++;
-        if (loaded >= maxChunks) return loaded;
+        return true;
+    };
+
+    int loaded = 0;
+    for (int ring = 0; ring <= radius; ring++) {
+        for (int dy = -ring; dy <= ring; dy++)
+        for (int dx = -ring; dx <= ring; dx++) {
+            if (std::max(std::abs(dx), std::abs(dy)) != ring) continue;
+            if (loadChunk({cx + dx, cy + dy}) && ++loaded >= maxChunks)
+                return loaded;
+        }
     }
     return loaded;
 }
