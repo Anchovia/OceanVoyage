@@ -221,6 +221,15 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
     float horizonAerial = exp(-viewUp * 7.5) * smoothstep(0.02, 0.75, dayFactor);
     sky += horizon * horizonAerial * 0.16;
 
+    // Solar radiance for the reflected-sky fallback. The water shader samples this with
+    // the reflected view vector, so the sun term becomes a physically plausible glint path.
+    float sunCos = saturate(dot(dir, sunDir));
+    float miePower = mix(14.0, 86.0, sunUp);
+    float sunGlow = pow(sunCos, miePower) * smoothstep(0.02, 0.70, dayFactor);
+    float sunDisc = smoothstep(0.99965, 0.99995, sunCos) * smoothstep(0.02, 0.35, dayFactor);
+    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
+    sky += sunTint * (sunGlow * mix(0.95, 0.46, sunUp) + sunDisc * 2.2);
+
     return max(sky, vec3(0.0));
 }
 
