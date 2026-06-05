@@ -292,6 +292,7 @@ int main() {
             if (app.consumeDevUiToggle(input.toggleDevUi))
                 ctx.toggleDevUi();
             applyDevUiInputCapture(input, ctx);
+            input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
 #endif
 
             if (app.consumeInventoryEscape(input.quit, gameState.inventoryOpen())) {

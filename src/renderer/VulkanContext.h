@@ -131,6 +131,7 @@ public:
     bool devWantsMouse() const;
     bool devWantsKeyboard() const;
     void toggleDevUi();
+    float devMoveSpeedMultiplier() const { return m_devMoveSpeedMultiplier; }
 #endif
 
 private:
@@ -586,6 +587,7 @@ private:
     bool             m_devTimingSupported = false;
     bool             m_devUiVisible       = true;
     bool             m_devFrameStarted    = false;
+    float            m_devMoveSpeedMultiplier = 1.0f;
     DevGpuTiming     m_devGpuTiming;
     std::array<bool, MAX_FRAMES_IN_FLIGHT> m_devQueriesWritten{};
 #endif

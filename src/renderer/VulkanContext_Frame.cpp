@@ -58,6 +58,7 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
             ImGui::Text("Drops: %d", (int)frame.drops.size());
             ImGui::Text("Selected slot: %d", frame.hotbarSelected + 1);
             ImGui::Text("Near workbench: %s", frame.nearWorkbench ? "yes" : "no");
+            ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
             if (!m_devTimingSupported) {
                 ImGui::TextUnformatted("GPU timing: unavailable");
