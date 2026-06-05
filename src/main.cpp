@@ -12,6 +12,7 @@
 
 static constexpr int LOAD_RADIUS   = 3;
 static constexpr int UNLOAD_RADIUS = 4;
+static constexpr int CHUNK_STREAM_LOADS_PER_FRAME = 2;
 
 enum class AppMode {
     MainMenu,
@@ -348,17 +349,20 @@ int main() {
             if (app.gameplayActive())
                 gameState.update(dt, input, camera, world);
 
-            // Load/unload chunks when player crosses a chunk boundary
+            // Stream chunks around the player. Generation is capped per frame so a
+            // boundary crossing does not create every new edge chunk in one update.
             if (worldSessionStarted) {
                 glm::ivec2 playerChunk = World::chunkCoord(
                     (int)gameState.player().position().x,
                     (int)gameState.player().position().y
                 );
                 if (playerChunk != lastPlayerChunk) {
-                    world.loadChunksAround(playerChunk.x, playerChunk.y, LOAD_RADIUS);
                     world.unloadChunksOutside(playerChunk.x, playerChunk.y, UNLOAD_RADIUS);
                     lastPlayerChunk = playerChunk;
                 }
+                world.loadChunksAroundBudgeted(
+                    playerChunk.x, playerChunk.y, LOAD_RADIUS,
+                    CHUNK_STREAM_LOADS_PER_FRAME);
             }
 
             const glm::vec2 facing = gameState.player().facingDirection();

@@ -42,6 +42,14 @@ void World::generateChunk(int cx, int cy) {
 }
 
 void World::loadChunksAround(int cx, int cy, int radius) {
+    const int diameter = radius * 2 + 1;
+    loadChunksAroundBudgeted(cx, cy, radius, diameter * diameter);
+}
+
+int World::loadChunksAroundBudgeted(int cx, int cy, int radius, int maxChunks) {
+    if (maxChunks <= 0) return 0;
+
+    int loaded = 0;
     for (int dy = -radius; dy <= radius; dy++)
     for (int dx = -radius; dx <= radius; dx++) {
         glm::ivec2 coord = { cx + dx, cy + dy };
@@ -54,7 +62,10 @@ void World::loadChunksAround(int cx, int cy, int radius) {
         } else {
             generateChunk(coord.x, coord.y);
         }
+        loaded++;
+        if (loaded >= maxChunks) return loaded;
     }
+    return loaded;
 }
 
 void World::unloadChunksOutside(int cx, int cy, int radius) {
