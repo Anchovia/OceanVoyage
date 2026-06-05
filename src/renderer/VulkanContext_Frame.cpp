@@ -265,9 +265,15 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 #endif
 
+    // In menus/loading the ocean is not drawn, so skip the whole FFT sim (spectrum + IFFT +
+    // assemble, ~60 dispatches) on those screens. The gate matches the ocean draw condition
+    // below, so a drawn ocean always has its displacement computed this same frame.
+    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
+
     // FFT ocean simulation (compute) — animate the wave spectrum for this frame before
     // the render passes. Runs on the graphics queue; barriers order it ahead of sampling.
-    recordOceanFFT(cmd);
+    if (worldVisible)
+        recordOceanFFT(cmd);
 
     // Shadow pass — render chunk depth from sun's perspective
     {
@@ -385,8 +391,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 #ifdef PASTEL_DEV_BUILD
     writeDevTimestamp(cmd, 1);
 #endif
-
-    const bool worldVisible = !(m_mainMenuHud || m_settingsHud || m_loadingHud);
 
     // Planar reflection pass — render the scene once from a camera mirrored across the
     // water plane. The ocean shader samples this color target with projected UVs.
