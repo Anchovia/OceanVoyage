@@ -132,6 +132,7 @@ struct OceanFrame {
     vec3 tangentY;
     vec3 normal;
     vec2 sourceXY;
+    vec2 slope;
 };
 
 // Sum the displacement of every cascade at a world position (each cascade tiles at its own
@@ -162,7 +163,20 @@ OceanFrame oceanBaseFrame(vec2 worldXY) {
     frame.tangentY = normalize(vec3(0.0, 1.0, grad.y));
     frame.normal   = normalize(vec3(-grad.x, -grad.y, 1.0));
     frame.sourceXY = sourceXY;
+    frame.slope    = grad;
     return frame;
+}
+
+float oceanWhitecapCoverage(OceanFrame frame, float viewDepth) {
+    float mid  = texture(oceanDisplacement, vec3(frame.sourceXY / CASCADE_L[1], 1.0)).w;
+    float fine = texture(oceanDisplacement, vec3(frame.sourceXY / CASCADE_L[2], 2.0)).w;
+
+    float ridgeSeed = max(mid * 0.64, fine);
+    float breakup = smoothstep(0.16, 0.56, mid * 0.45 + fine);
+    float slopeGate = smoothstep(0.060, 0.190, length(frame.slope));
+    float distanceFade = 1.0 - smoothstep(420.0, 920.0, viewDepth);
+    float coverage = smoothstep(0.46, 0.88, ridgeSeed) * breakup * mix(0.24, 1.0, slopeGate);
+    return saturate(coverage * distanceFade * 0.34);
 }
 
 vec3 oceanDetailNormal(OceanFrame frame, float t) {
@@ -405,6 +419,12 @@ void main() {
     water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
     water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
+    float foamCoverage = oceanWhitecapCoverage(frame, fragViewDepth);
+    float foamSun = smoothstep(0.0, 0.92, NdotL) * dayFactor;
+    vec3 foamColor = mix(vec3(0.42, 0.55, 0.58), vec3(0.88, 0.94, 0.90),
+                         smoothstep(0.02, 0.85, dayFactor));
+    foamColor = mix(foamColor, sunColor, foamSun * 0.18);
+
     vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
     vec2 reflUV   = reflProj.xy * 0.5 + 0.5;
     reflUV += N.xy * 0.035 * clamp(1.0 - NdotV, 0.0, 1.0);
@@ -431,6 +451,8 @@ void main() {
 
     color += shallowColor * thinWater * facingScatter * (1.0 - reflectance) * 0.035;
     color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.080, sceneDepthEdge);
+    color = mix(color, foamColor, foamCoverage * 0.60);
+    color += foamColor * foamCoverage * sunScatter * 0.020;
 
     // Daylight modulation (night = dim).
     color *= mix(0.22, 1.0, dayFactor);
