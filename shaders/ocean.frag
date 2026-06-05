@@ -212,6 +212,7 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
 
 vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
     const int SSR_STEPS = 28;
+    const int SSR_REFINE_STEPS = 5;
 
     float grazing = smoothstep(0.08, 0.78, 1.0 - nDotV);
     float rayUp = smoothstep(-0.030, 0.120, rayDir.z);
@@ -221,11 +222,14 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
     float maxDistance = mix(80.0, 260.0, grazing);
     float jitter = interleavedGradientNoise(gl_FragCoord.xy);
     float lastDelta = -100000.0;
+    float lastRayDistance = 1.0;
+    bool hasLastSample = false;
+    vec3 rayStart = origin + normal * 0.12;
 
     for (int i = 0; i < SSR_STEPS; ++i) {
         float t = (float(i) + jitter) / float(SSR_STEPS);
         float rayDistance = mix(1.0, maxDistance, t * t);
-        vec3 rayPos = origin + normal * 0.12 + rayDir * rayDistance;
+        vec3 rayPos = rayStart + rayDir * rayDistance;
 
         vec2 hitUV;
         float rayViewDepth;
@@ -237,6 +241,7 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
         float sceneDepthSample = texture(sceneDepth, hitUV).r;
         if (sceneDepthSample >= 0.9999) {
             lastDelta = -100000.0;
+            hasLastSample = false;
             continue;
         }
 
@@ -245,9 +250,56 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
         float delta = rayViewDepth - sceneViewDepth;
         float thickness = max(0.75, rayDistance * 0.018);
         bool closeHit = delta > 0.0 && delta < thickness;
-        bool crossedHit = lastDelta < 0.0 && delta > 0.0 && delta < thickness * 2.5;
+        bool crossedHit = hasLastSample && lastDelta < 0.0 && delta > 0.0 && delta < thickness * 2.5;
 
         if (closeHit || crossedHit) {
+            if (hasLastSample && lastDelta <= 0.0) {
+                float lo = lastRayDistance;
+                float hi = rayDistance;
+                float refinedDistance = rayDistance;
+                vec2 refinedUV = hitUV;
+                vec3 refinedScenePos = scenePos;
+                float refinedDelta = delta;
+
+                for (int r = 0; r < SSR_REFINE_STEPS; ++r) {
+                    float mid = 0.5 * (lo + hi);
+                    vec2 midUV;
+                    float midRayViewDepth;
+                    if (!projectWorldToScreen(rayStart + rayDir * mid, midUV, midRayViewDepth)) {
+                        lo = mid;
+                        continue;
+                    }
+
+                    float midSceneDepth = texture(sceneDepth, midUV).r;
+                    if (midSceneDepth >= 0.9999) {
+                        lo = mid;
+                        continue;
+                    }
+
+                    vec3 midScenePos = reconstructWorldPosition(midUV, midSceneDepth);
+                    float midDelta = midRayViewDepth - viewDepthOf(midScenePos);
+                    if (midDelta > 0.0) {
+                        hi = mid;
+                        float midThickness = max(0.75, mid * 0.018);
+                        if (midDelta < midThickness * 2.5) {
+                            refinedDistance = mid;
+                            refinedUV = midUV;
+                            refinedScenePos = midScenePos;
+                            refinedDelta = midDelta;
+                        }
+                    } else {
+                        lo = mid;
+                    }
+                }
+
+                rayDistance = refinedDistance;
+                hitUV = refinedUV;
+                scenePos = refinedScenePos;
+                delta = refinedDelta;
+                thickness = max(0.75, rayDistance * 0.018);
+                closeHit = delta > 0.0 && delta < thickness;
+            }
+
             float hitT = rayDistance / maxDistance;
             float edgeFade = screenEdgeFade(hitUV);
             float distanceFade = 1.0 - smoothstep(0.56, 1.0, hitT);
@@ -279,6 +331,8 @@ vec4 screenSpaceReflection(vec3 origin, vec3 normal, vec3 rayDir, float nDotV) {
         }
 
         lastDelta = delta;
+        lastRayDistance = rayDistance;
+        hasLastSample = true;
     }
 
     return vec4(0.0);
