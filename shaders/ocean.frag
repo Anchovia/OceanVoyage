@@ -242,6 +242,10 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
     float viewUp = saturate(dir.z);
     float sunUp = saturate(sunDir.z);
     float lowSun = 1.0 - smoothstep(0.18, 0.78, sunUp);
+    float nightFactor = 1.0 - smoothstep(0.02, 0.38, dayFactor);
+    vec3 moonDir = normalize(-sunDir);
+    float moonUp = saturate(moonDir.z);
+    float moonGate = nightFactor * smoothstep(0.02, 0.72, moonUp);
 
     vec3 nightZenith = vec3(0.010, 0.015, 0.035);
     vec3 dayZenith = fogColor * vec3(0.48, 0.66, 1.12);
@@ -257,11 +261,19 @@ vec3 skyRadiance(vec3 dir, vec3 sunDir, float dayFactor, vec3 fogColor) {
     // Solar radiance for the reflected-sky fallback. The water shader samples this with
     // the reflected view vector, so the sun term becomes a physically plausible glint path.
     float sunCos = saturate(dot(dir, sunDir));
+    float moonCos = saturate(dot(dir, moonDir));
+    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
+    vec3 moonTint = vec3(0.55, 0.68, 1.0);
+
     float miePower = mix(14.0, 86.0, sunUp);
     float sunGlow = pow(sunCos, miePower) * smoothstep(0.02, 0.70, dayFactor);
-    float sunDisc = smoothstep(0.99965, 0.99995, sunCos) * smoothstep(0.02, 0.35, dayFactor);
-    vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.93, 0.72), sunUp);
-    sky += sunTint * (sunGlow * mix(0.95, 0.46, sunUp) + sunDisc * 2.2);
+    float sunAureole = pow(sunCos, mix(2.2, 7.5, sunUp)) * smoothstep(0.02, 0.85, dayFactor);
+    float sunDisc = smoothstep(0.99855, 0.99992, sunCos) * smoothstep(0.02, 0.35, dayFactor);
+    sky += sunTint * (sunAureole * 0.34 + sunGlow * mix(1.35, 0.64, sunUp) + sunDisc * 8.0);
+
+    float moonGlow = pow(moonCos, 38.0) * moonGate;
+    float moonDisc = smoothstep(0.99880, 0.99992, moonCos) * moonGate;
+    sky += moonTint * (moonGlow * 0.42 + moonDisc * 4.2);
 
     return max(sky, vec3(0.0));
 }
@@ -402,6 +414,10 @@ void main() {
     vec3  V = normalize(ubo.cameraPos.xyz - fragWorldPos);
     vec3  L = normalize(ubo.lightDir.xyz);
     float dayFactor = ubo.lightDir.w;
+    float nightFactor = 1.0 - smoothstep(0.02, 0.38, dayFactor);
+    vec3  moonDir = normalize(-L);
+    float moonUp = saturate(moonDir.z);
+    float moonGate = nightFactor * smoothstep(0.02, 0.72, moonUp);
 
     const vec3 WATER_F0 = vec3(0.02);
 
@@ -436,9 +452,21 @@ void main() {
     float broadSun = sunGlitterLobe(NdotH, NdotV, NdotL,
         clamp(mix(0.150, 0.220, distanceRoughness) + wakeRoughness * 0.55, 0.120, 0.340));
     float grazingPath = pow(saturate(dot(R, L)), 18.0) * clamp(1.0 - NdotV, 0.0, 1.0);
-    vec3  sunSpec = (tightSun * 0.32 + broadSun * 0.15 + grazingPath * 0.45)
+    float sparkle = pow(NdotH, mix(96.0, 180.0, 1.0 - distanceRoughness));
+    vec3  sunSpec = (tightSun * 0.52 + broadSun * 0.22 + grazingPath * 0.40 + sparkle * 0.32)
                   * Fs * sunColor * NdotL * sunGate;
     sunSpec = min(sunSpec, vec3(3.0));
+
+    vec3  Hm = normalize(V + moonDir + vec3(0.0, 0.0, 0.0001));
+    float NdotMoon = max(dot(N, moonDir), 0.0);
+    float NdotMoonH = max(dot(N, Hm), 0.0);
+    float VdotMoonH = max(dot(V, Hm), 0.0);
+    vec3  Fm = fresnelSchlick(VdotMoonH, WATER_F0);
+    float moonLobe = sunGlitterLobe(NdotMoonH, NdotV, NdotMoon,
+        clamp(mix(0.045, 0.075, distanceRoughness) + wakeRoughness * 0.70, 0.045, 0.220));
+    float moonSparkle = pow(NdotMoonH, mix(90.0, 160.0, 1.0 - distanceRoughness));
+    vec3 moonSpec = (moonLobe * 0.46 + moonSparkle * 0.16)
+                  * Fm * vec3(0.50, 0.63, 0.92) * NdotMoon * moonGate;
 
     vec2 screenUV = gl_FragCoord.xy / vec2(textureSize(sceneDepth, 0));
     float sceneDepthSample = texture(sceneDepth, screenUV).r;
@@ -504,7 +532,8 @@ void main() {
     color += scatterColor * sunScatter * (1.0 - reflectance) * mix(0.050, 0.080, sceneDepthEdge);
 
     // Daylight modulation (night = dim).
-    color *= mix(0.22, 1.0, dayFactor);
+    color *= mix(0.24, 1.0, dayFactor);
+    color += moonSpec;
     color = max(color, water * mix(0.55, 0.92, dayFactor));
     vec3 litFoamColor = foamColor * mix(0.58, 1.0, smoothstep(0.02, 0.85, dayFactor));
     float foamBlend = foamCoverage * mix(0.34, 0.54, dayFactor);
