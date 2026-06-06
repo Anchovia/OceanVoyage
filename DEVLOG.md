@@ -6,6 +6,44 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-06 — 프로젝트 문서 최신화
+
+- README/DESIGN/ARCHITECTURE/ENGINE_TODO/MIGRATION_PLAN/CODE_CLASSIFICATION/VULKAN_REFERENCES/RUN_CHECKLIST를 현재 코드 기준으로 정리.
+- 핵심 정정:
+  - 해양 렌더링은 다중 캐스케이드 FFT·SSR/플래너 반사·CSM·PBR·wake 시뮬레이션까지 구현된 상태로 명확화.
+  - 게임플레이는 아직 농장 `Player`/타일 충돌 이동을 선박처럼 렌더링하는 상태이며, `ShipState`/항해 물리가 다음 핵심 작업임을 명확화.
+  - 기본 월드 생성은 물 타일 기반 해상 테스트 상태지만, `World`/`Chunk`/`TileType`/인벤토리/핫바/저장 포맷 구조가 남아 있음을 문서화.
+  - SMAA는 edge pass에서 톤매핑 luma를 쓰지만 neighborhood는 HDR scene color를 섞은 뒤 톤매핑하므로, 완전한 tone-map 후 SMAA 구조는 아직 아님을 정정.
+  - displacement 리드백 크기를 512²×3 RGBA16F = 약 6.0 MiB/프레임으로 정정.
+- 빌드/실행 점검은 수행하지 않음. 사용자가 다음 빌드에서 `docs/RUN_CHECKLIST.md` 기준으로 확인.
+
+### 2026-06-06 — 항적(wake) 시뮬레이션 + 조명/선박 머티리얼
+
+- **선박 항적을 시뮬레이션 마스크로 구현** (화면 도색이 아님). `shaders/ocean_wake.comp` + `VulkanContext_Ocean.cpp`의 `createOceanWake`/`recordOceanWake`.
+  - world-locked 토로이달 R16F 마스크를 프레임 간 ping-pong(frame-in-flight별 이미지)으로 유지. 채널 = `r` foam / `g` turbulence / `b` signed height / `a` churn.
+  - 매 프레임 이류(advection)·확산·감쇠 후 선박 입력 주입: Kelvin arm(tan 19.47°), prop wash, bow shoulder/fan, hull shear, 선체 half-width 프로파일 16샘플(`m_shipHullProfile`).
+  - `ocean.vert`는 wake height + choppiness를, `ocean.frag`는 foam/노멀 섭동을 샘플. 거리 페이드로 원거리 안정화.
+- **중앙 흰 리본 아티팩트 제거** + foam 생성 위치를 스턴/현측/bow로 재분배.
+- **조명 + 선박 머티리얼 보강**: `ship.frag` PBR을 specular 맵 기반 roughness/F0, 달빛 specular, 하늘광 ambient/반사, 흘수선(wetline) 처리까지 확장. 낮/밤·달 조명 경로 정리. 빛 보간(day/night 전이) fix.
+
+### 2026-06-05 — 깊이 기반 물 · SSR · CSM · 선박 PBR
+
+- **pre-water scene color/depth 복사 패스 분리**: 불투명 패스를 끝낸 뒤 색·깊이를 복사하고, 별도 water 패스에서 물이 이를 샘플 → 실제 씬 깊이 기반 굴절·흡수(Beer-Lambert)·얕은 물 처리. `copySceneColorForWater`/`copySceneDepthForWater`.
+- **화면공간 반사(SSR)**: 28스텝 레이마치 + 5스텝 이분 refinement + temporal reprojection(이전 프레임 색/깊이 history rejection). 플래너 반사·분석적 하늘과 confidence 가중 합성. 여러 커밋에 걸쳐 1차→안정화→refinement로 발전.
+- **CSM(3 캐스케이드)**: 뷰 프러스텀 슬라이스 바운딩 스피어 fit + 텍셀 스냅(shimmer 제거) + 캐스케이드 블렌드 밴드 + Poisson 16탭 PCF. (Phase 2까지)
+- **선박 PBR 에셋**: LSV018 선체 모델 + albedo/normal/specular DDS 텍스처 로드(`createDDSBC1Texture`).
+- 기타: displacement+slope 맵 더블버퍼(컴퓨트/그래픽스 오버랩), 메뉴/로딩 시 FFT 디스패치 게이팅, Jacobian whitecap seed를 `ocean.frag` foam coverage로 연결, 디바이스/스왑체인 적합성 검사, Dev 이동 속도 조절.
+
+### 2026-06-04 (후반) — 농장→바다 전환 + FFT 해양 스택 구축
+
+> 이 날 같은 날짜의 앞 항목(원칙 재명문화/세이브 무결성/그림자·풀)은 농장 시기 작업이고, 아래는 그 뒤 진행된 바다 전환 작업이다.
+
+- **전환 1단계**: 농장 게임플레이 행동 비활성화, 카메라를 UWO식 배 추적 시점으로, 월드를 평평한 바다 기준점으로, 플레이어 큐브를 임시 선박(선체·돛·그림자)으로 교체.
+- **해수면을 Gerstner 1차에서 다중 캐스케이드 Tessendorf FFT로 발전**. GPU 컴퓨트 체인: 초기 스펙트럼 h0(k) 생성 → per-frame 스펙트럼 애니메이션 H(k,t) → butterfly IFFT(log2N 수평+수직) → displacement/slope 조립. 512² × 3 캐스케이드. `VulkanContext_Ocean.cpp`, `shaders/ocean_spectrum*.comp`/`ocean_fft.comp`/`ocean_assemble.comp`.
+- **해수면 셰이딩**: 픽셀 단위 FFT 노멀(slope 맵 샘플) + 수평 변위(choppiness), GGX 태양 반사·윤슬, 하늘/태양 반사 + 플래너 반사(평면 클리핑), 다중 스케일 타일 노멀맵 디테일, HDR(R16F) + ACES 톤매핑, 원거리 LOD 방사형 메시 + 장거리 대기 fog, procedural sky 배경 패스.
+- **선박 부력**: FFT displacement를 host로 리드백하고 수평 변위를 역산해 선박을 실제 파면 위에 부유·틸트.
+- 정리: 위험한 spectrum 튜닝과 임시/저품질 foam 제거, Jacobian 기반 whitecap seed 도입.
+
 ### 2026-06-04 — RTX 3060 / AAA급 해양 렌더링 원칙 재명문화
 
 - 반복적으로 저사양 임시 기법이나 화면 도색식 fake 효과가 들어가는 문제를 막기 위해 프로젝트 최상위 개발 원칙을 다시 명문화했다.
