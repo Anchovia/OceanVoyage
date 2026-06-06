@@ -3,6 +3,8 @@
 이 문서는 OceanVoyage 엔진 수준의 작업을 추적한다. 농장 게임 전용 문제가 아니라, Vulkan 기반 자체 엔진의 공통 기반 품질·안정성·성능과 관련된 항목이다.
 
 > 갱신: 2026-06-06. 초기 P0/P1 항목 대부분은 바다 전환 과정에서 완료됐다. 아래는 완료분과 남은 과제, 그리고 현재 코드 리뷰에서 확인한 한계를 분리해 정리한다.
+>
+> 이 문서는 엔진/렌더 기술 과제의 단일 출처다. 이 과제들이 전체 개발 순서 어디에 들어가는지는 `docs/ROADMAP.md` Phase 4(렌더링 후속)·Phase 9(기술 부채/구조 안정화)를 본다.
 
 ---
 
@@ -70,8 +72,22 @@
 - VulkanContext 초기화 실패 시 부분 생성 리소스 정리(현재는 throw 후 프로세스 종료 — 허용 가능하나 개선 여지)
 - `VulkanContext_Init.cpp`(4000+줄) one-shot 커맨드버퍼/배리어 보일러플레이트를 `begin/endSingleTimeCommands`로 추출
 
+### P3: 엔진 구조·디버깅·테스트 (ROADMAP Phase 9)
+
+큰 기능 교체가 안정된 뒤 진행한다. 모두 기능 변화 없이, 작은 diff로.
+
+- **VulkanContext 파일 분리.** `VulkanContext_Init.cpp`를 기능별(Swapchain/Pipelines/Textures/Shadow/Post/Dev)로 점진 분리. 공통 private struct는 `VulkanContext_Private.h` 유지. texture helper 또는 post/SMAA처럼 독립적인 것부터.
+- **descriptor 관리 정리.** scene/reflection/ocean/post/SMAA/shadow/ship descriptor set layout과 binding 번호 문서화 → C++↔GLSL desync 위험 제거. 반복 `VkWriteDescriptorSet` 패턴 정리(과한 추상화 금지). descriptor pool sizing을 frame-in-flight 기준으로.
+- **debug utils / RenderDoc.** 커맨드버퍼 region label(Ocean FFT/Shadow/Planar/Opaque/Water/Post/UI) + 주요 image/buffer/pipeline object name(dev 빌드 한정). validation warning 0 목표(known false positive 제외).
+- **dev profiling 확대.** GPU timestamp 구간을 ocean compute/shadow/reflection/opaque/water/post/UI로 세분, CPU timing(update/snapshot/record), draw count, 토글별(SSR/Planar/TAA/SMAA) 비용 비교.
+- **pure logic 테스트.** ship physics step / cargo capacity / market buy-sell / save-load 검증 / wind angle efficiency를 렌더 실행 없이 검증하는 작은 test executable(새 의존성 없이, golden 값). CI는 후순위.
+- **save migration 정책.** version table(v1 ship → v2 cargo/money → v3 ports/market → v4 upgrades/contracts), corruption test(truncated/wrong magic/bad count/NaN/huge). 구 PFRM은 legacy로 명시 거부.
+- **품질 tier.** High(RTX 3060 기본) / Medium(fallback) / Low(디버그·호환용, 최종 지향 아님). 옵션: shadow size, reflection mode, SSR steps, TAA on/off, planar half-res, ocean mesh quality. 품질을 싸게 낮추는 게 아니라 비싼 기능을 명시적으로 tier화. 옵션 변경 시 swapchain recreate 안정성 확인.
+- **legacy farm code 제거.** `ItemType`/`TileType`/`World` 실행 경로 0(`rg`로 확인), farm asset(terrain/grass/object mesh) 정리. legacy는 기록/별도 reference로만.
+
 ### P3: 향후 해양/대기 고도화
 
-- wake 스프레이 파티클, 해안선 거품
-- port lighting
-- weather / 동적 시간대 연동 강화
+- wake 스프레이 파티클, 해안선 거품(shore distance + wave energy, mask/advection 기반 — 단순 노이즈 띠 금지)
+- port lighting(등대 beacon, point light 수 제한, emissive 발광)
+- weather / 동적 시간대 연동 강화(wind→roughness/whitecap/wave detail, storm visibility)
+- reflection mode enum(SkyOnly/SSR/Planar/SSR+Planar) + 플래너 해상도·대상 제한 + SSR step 옵션

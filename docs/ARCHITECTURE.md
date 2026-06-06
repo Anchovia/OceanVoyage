@@ -6,6 +6,8 @@
 
 이 문서의 목적은 무작정 파일을 삭제하기 전에 각 시스템의 역할을 분류하고, 이후 OceanVoyage 전환 과정에서 어떤 코드를 유지 / 임시 유지 / 제거 / 교체할지 판단하는 기준을 세우는 것이다.
 
+> 코드 *구조*는 이 문서가, *개발 순서*(무엇을 어떤 순서로 만들지)는 `docs/ROADMAP.md`가 단일 출처다. 아래 신규 데이터 구조(`OceanWorld`/`Port`/`Island`/`CargoHold`/`ShipDef`/`VoyageSave` 등)의 세부 필드는 ROADMAP의 해당 Phase에 진입할 때 이 문서에서 확정한다.
+
 ---
 
 ## 1. 기본 원칙
@@ -265,6 +267,25 @@ World Save             Voyage Save
 GameState              VoyageGameState
 ```
 
+### 7.1 신규 데이터 구조 (도입 시 확정)
+
+아래는 ROADMAP Phase 1·3·5·6에서 도입할 새 시스템의 1차 스케치다. 필드는 해당 Phase 진입 시 확정하며, 여기서는 경계와 책임만 잡는다.
+
+```text
+ShipState   (Phase 1) — position, velocity, heading, yawRate, throttle, rudder   // 현재 상태(가변)
+ShipDef     (Phase 6) — cargoCapacity, maxSpeed, accel, turnRate, drag, draft    // 불변 스펙, upgrade는 modifier
+CargoHold   (Phase 3) — capacity, stacks[]                                        // 인벤토리 대체, weight 제약
+Port        (Phase 3) — id, name, position; (Phase 5) type, market
+MarketEntry (Phase 3) — good, buyPrice, sellPrice, stock
+Island      (Phase 5) — center, radiusX, radiusY, rotation                        // 충돌은 ellipse distance
+Wind        (Phase 5) — direction, speed, gust                                    // gameplay 우선, FFT 연동 후순위
+VoyageSave  (Phase 3) — magic "OVYG" + version. v1: gameTime + ShipState
+                        v2: +money/cargo, v3: +ports/market, v4: +upgrades/contracts
+```
+
+- 이 구조들은 농장 `World/Chunk/TileType`/`Player`/`Inventory`를 대체하며, 렌더러는 이들을 직접 읽지 않는다(§9 렌더 스냅샷 경계).
+- `OceanWorld`는 ports/islands/wind/region seed/discovered를 소유하고 렌더러를 모른다. renderer용 mesh 인스턴스는 `OceanWorld → RenderSceneSnapshot` 변환에서 생성한다.
+
 ---
 
 ## 8. 장기 목표 폴더 구조
@@ -418,7 +439,7 @@ OceanVoyage에서는 최소 세 가지 카메라 모드가 필요할 수 있다.
 
 ## 14. 현재 권장 작업 순서
 
-권장 작업 순서:
+권장 작업 순서(요약):
 
 1. `ShipState`/`ShipController` 또는 동등한 항해 상태 모델 도입
 2. 농장 타일-워크 이동을 관성·타각·풍향/추진 입력 기반 선박 이동으로 교체
@@ -427,6 +448,19 @@ OceanVoyage에서는 최소 세 가지 카메라 모드가 필요할 수 있다.
 5. 렌더링 후속 과제(TAA, 리드백 축소, 반사 비용 정책, 셰이더 상수 단일화)를 작은 작업으로 진행
 6. 항구·시장·교역 루프 추가
 7. 기능 교체가 충분히 진행된 뒤 폴더 구조 재정리
+
+> 이 7단계는 `docs/ROADMAP.md`의 Phase 1~9를 압축한 것이다. 단계별 세부 작업·검증·닿는 파일은 ROADMAP을 단일 출처로 본다(1~2 → ROADMAP Phase 1, 3~4 → Phase 2, 6 → Phase 3·5, 5 → Phase 4, 7 → Phase 9).
+
+### 14.1 엔진 구조 안정화 (ROADMAP Phase 9)
+
+기능 교체가 충분히 진행된 뒤, 폴더 이동(§8)과 함께 다음 구조 정리를 진행한다. 세부는 `docs/ENGINE_TODO.md`.
+
+- `VulkanContext_Init.cpp`(4000+줄)를 기능별 cpp(Swapchain/Pipelines/Textures/Shadow/Post/Dev)로 점진 분리 — 기능 변화 없이 작은 diff로.
+- one-shot 커맨드버퍼 boilerplate를 `begin/endSingleTimeCommands`로 통합.
+- descriptor set layout / binding 번호 문서화 + C++↔GLSL desync 위험 제거, 비활성 grass shadow 리소스 정리.
+- shader interface 단일화: UBO alignment(std140/std430) 문서화, common GLSL include, shadow 상수 uniform화.
+- save migration 정책(version table v1~v4 + corruption test), legacy farm code 실행 경로 0.
+- release/dev 빌드 분리 + 품질 tier(High=RTX 3060 기본 / Medium / Low=디버그용). 품질을 싸게 낮추는 게 아니라 비싼 기능을 명시적으로 tier화.
 
 ---
 

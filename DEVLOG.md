@@ -6,6 +6,21 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-06 — 개발 로드맵 문서화 (`docs/ROADMAP.md`)
+
+- AI 브레인스토밍으로 뽑은 장기 개발 순서(10개 묶음, 약 580개 세부 항목)를 프로젝트 문서 체계에 맞게 정리.
+- **신규 `docs/ROADMAP.md`**: Phase 0~10으로 정제 압축. 근거리(Phase 1~4)는 작업·검증·닿는 파일까지 상세, 원거리(Phase 5~10)는 가볍게. 중복 제거.
+  - Phase 1 항해 물리 → Phase 2 농장 제거/렌더 경계 → Phase 3 VoyageSave/교역 1차 → Phase 4 렌더 후속(TAA 등) → Phase 5~7 세계/경제/항해 심화 → Phase 8 비주얼·에셋 → Phase 9 기술 부채/구조 → Phase 10 완성도.
+  - 핵심 결정: **항해 물리가 TAA/async보다 먼저**, async compute는 마지막. 첫 작업 단위 = `ShipState` + WASD throttle/rudder + 관성 이동 1차.
+- **전체 동기화**: 문서 역할 경계를 지키며 교차 참조로 연결.
+  - `README.md`: 현재 개발 목표에 ROADMAP/Phase 1 포인터.
+  - `DESIGN.md`(안정 닻 유지): 헤더·MVP에 ROADMAP 포인터만.
+  - `docs/ARCHITECTURE.md`: §7.1 신규 데이터 구조 스케치(ShipState/ShipDef/CargoHold/Port/Island/Wind/VoyageSave), §14.1 엔진 구조 안정화, §14에 ROADMAP 매핑.
+  - `docs/ENGINE_TODO.md`: P3에 엔진 구조·디버깅·테스트(파일 분리/descriptor 정리/debug label/pure logic 테스트/save migration/품질 tier/legacy 제거) 추가, ROADMAP Phase 4/9 연결.
+  - `docs/MIGRATION_PLAN.md`: 범위를 "농장 전환(Phase 0~5)"으로 명확화, 이후 게임 구축은 ROADMAP로. Phase 3 → ROADMAP Phase 1 티켓 포인터.
+  - `docs/RUN_CHECKLIST.md`: §9.1 ROADMAP Phase별 점검(도입 시 활성) 추가.
+- 코드 변경 없음. 문서 전용이라 빌드/실행 점검 불필요.
+
 ### 2026-06-06 — 프로젝트 문서 최신화
 
 - README/DESIGN/ARCHITECTURE/ENGINE_TODO/MIGRATION_PLAN/CODE_CLASSIFICATION/VULKAN_REFERENCES/RUN_CHECKLIST를 현재 코드 기준으로 정리.

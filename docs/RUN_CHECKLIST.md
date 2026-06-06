@@ -182,6 +182,33 @@ cmake --build build --config Debug
 
 ---
 
+## 9.1 ROADMAP Phase별 점검 (도입 시 활성)
+
+아래 항목은 해당 `docs/ROADMAP.md` Phase가 구현되면 활성화한다. 지금은 미구현이므로 점검 대상이 아니다.
+
+**Phase 1 — 항해 물리**
+- [ ] W 가속 → 떼면 관성 후 감속(즉시 정지 아님)
+- [ ] W+A / W+D가 곡선 선회(즉각 90° 꺾임 아님)
+- [ ] 정지 중 A/D만으로 제자리 회전하지 않음
+- [ ] 선회·이동 중에도 선박이 파면에 계속 떠 있고 wake가 heading/velocity를 따라감
+
+**Phase 2 — 농장 제거 / HUD**
+- [ ] 화면에 hotbar/inventory/crafting 농장 UI가 보이지 않음
+- [ ] 선박 HUD(SPD/HDG/THR/RUD)가 보임
+- [ ] 메뉴/설정/로딩 UI는 정상 동작
+
+**Phase 3 — VoyageSave / 교역**
+- [ ] 재실행 후 선박 위치·heading·money·cargo 복원
+- [ ] 손상 save에서 즉시 크래시하지 않음, 구 PFRM save를 잘못 읽지 않음
+- [ ] 항구 근처에서 매매 가능, 항구 2개 간 교역으로 이익 발생
+
+**Phase 4 이후 — 렌더/항해 심화**
+- [ ] (TAA) 선박 edge/wake 끌림·윤슬 shimmer 감소, 카메라 회전 시 과한 번짐 없음
+- [ ] (풍향/돛) 풍각에 따라 같은 throttle에서도 속도 변화, no-go zone 경고
+- [ ] (항구/섬) 섬 충돌로 통과 불가, 항구·등대가 장소처럼 보임(컬러 큐브 아님)
+
+---
+
 ## 10. 현재 기준 합격 조건
 
 전환 초기 단계에서는 모든 항목이 완벽할 필요는 없다.
@@ -232,3 +259,9 @@ cmake --build build --config Debug
 
 - 문서 점검: README/DESIGN/ARCHITECTURE/ENGINE_TODO/MIGRATION/CODE_CLASSIFICATION/VULKAN_REFERENCES와 기준 용어 동기화.
 - 실제 빌드/실행 점검: 미수행. 사용자가 다음 빌드에서 본 점검표 기준으로 확인.
+
+## 2026-06-06 로드맵 문서화 메모
+
+- `docs/ROADMAP.md` 신규 작성(Phase 0~10), 기존 문서 전체 동기화(README/DESIGN/ARCHITECTURE/ENGINE_TODO/MIGRATION).
+- §9.1 ROADMAP Phase별 점검 항목 추가 — 해당 Phase 구현 시 활성. 현재는 미구현이라 점검 대상 아님.
+- 코드 변경 없음. 빌드/실행 점검 불필요(문서 전용).
