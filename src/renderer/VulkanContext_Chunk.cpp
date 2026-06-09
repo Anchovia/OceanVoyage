@@ -151,130 +151,12 @@ void VulkanContext::buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk) {
     // Visual dressing instances change only when terrain/open sky or blocking objects change.
     if (chunk.grassDirty) {
         buildGroundDressingBuffer(coord, chunk);
-        buildGrassDressingBuffer(coord, chunk);
         chunk.grassDirty = false;
     }
     if (chunk.objectsDirty) {
         buildChunkObjectBuffer(coord, chunk);
         chunk.objectsDirty = false;
     }
-}
-
-// ============================================================
-//  Per-chunk visual grass dressing
-// ============================================================
-void VulkanContext::buildGrassDressingBuffer(const glm::ivec2& coord, Chunk& chunk) {
-    auto& data = m_chunkBuffers[coord];
-    deferDestroy(std::move(data.grassBuffer));
-    data.grassCount = 0;
-
-    const int baseX = coord.x * CHUNK_SIZE;
-    const int baseY = coord.y * CHUNK_SIZE;
-    std::vector<ObjectInstance> insts;
-    insts.reserve(1024);
-
-    auto hash01 = [](int wx, int wy, int salt) -> float {
-        uint32_t h = (uint32_t)wx * 73856093u ^ (uint32_t)wy * 19349663u ^ (uint32_t)salt * 83492791u;
-        h ^= h >> 13;
-        h *= 1274126177u;
-        return (float)(h & 65535u) / 65535.0f;
-    };
-    auto floorDiv = [](int v, int d) -> int {
-        return v >= 0 ? v / d : -((-v + d - 1) / d);
-    };
-    auto smooth = [](float t) -> float {
-        return t * t * (3.0f - 2.0f * t);
-    };
-    auto lerp = [](float a, float b, float t) -> float {
-        return a + (b - a) * t;
-    };
-    auto clamp01 = [](float v) -> float {
-        return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-    };
-    auto valueNoise = [&](int wx, int wy, int scale, int salt) -> float {
-        const int gx = floorDiv(wx, scale);
-        const int gy = floorDiv(wy, scale);
-        const float fx = (float)(wx - gx * scale) / (float)scale;
-        const float fy = (float)(wy - gy * scale) / (float)scale;
-        const float sx = smooth(fx);
-        const float sy = smooth(fy);
-
-        const float a = hash01(gx,     gy,     salt);
-        const float b = hash01(gx + 1, gy,     salt);
-        const float c = hash01(gx,     gy + 1, salt);
-        const float d = hash01(gx + 1, gy + 1, salt);
-        return lerp(lerp(a, b, sx), lerp(c, d, sx), sy);
-    };
-    auto densityField = [&](int wx, int wy) -> float {
-        const float broad = valueNoise(wx, wy, 23, 101);
-        const float local = valueNoise(wx, wy, 9,  137);
-        float d = broad * 0.60f + local * 0.40f;
-        d = clamp01((d - 0.18f) / 0.74f);
-        return smooth(d);
-    };
-    auto hasObjectAt = [&chunk](int wx, int wy) {
-        for (const Object& o : chunk.objects)
-            if ((int)o.pos.x == wx && (int)o.pos.y == wy)
-                return true;
-        return false;
-    };
-
-    for (int z  = 0; z  < CHUNK_DEPTH - 1; z++)
-    for (int ly = 0; ly < CHUNK_SIZE;      ly++)
-    for (int lx = 0; lx < CHUNK_SIZE;      lx++) {
-        if (chunk.tiles[z][ly][lx] != TileType::GRASS) continue;
-        if (chunk.tiles[z + 1][ly][lx] != TileType::AIR) continue;
-
-        const int wx = baseX + lx;
-        const int wy = baseY + ly;
-        if (hasObjectAt(wx, wy)) continue;
-
-        int openGrass = 0;
-        for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++) {
-            if (dx == 0 && dy == 0) continue;
-            if (m_world.getTile(wx + dx, wy + dy, z) == TileType::GRASS &&
-                m_world.getTile(wx + dx, wy + dy, z + 1) == TileType::AIR)
-                openGrass++;
-        }
-
-        float density = densityField(wx, wy);
-        density = clamp01(density * (0.72f + ((float)openGrass / 8.0f) * 0.38f));
-
-        for (int attempt = 0; attempt < 3; attempt++) {
-            float chance = 0.0f;
-            if (attempt == 0) {
-                chance = 0.030f + density * 0.42f;
-            } else if (attempt == 1) {
-                chance = clamp01((density - 0.18f) / 0.82f) * 0.42f;
-            } else {
-                chance = clamp01((density - 0.56f) / 0.44f) * 0.24f;
-            }
-            const int salt = attempt * 101;
-            if (hash01(wx, wy, 11 + salt) > chance) continue;
-
-            const float jitter = 0.66f + density * 0.18f;
-            const float ox = (hash01(wx, wy, 23 + salt) - 0.5f) * jitter;
-            const float oy = (hash01(wx, wy, 37 + salt) - 0.5f) * jitter;
-            const float variant = hash01(wx, wy, 67 + salt);
-            const float variantScale = variant < 0.25f ? 0.86f : (variant > 0.80f ? 1.06f : 1.0f);
-            const float sc = (0.74f + density * 0.16f + hash01(wx, wy, 41 + salt) * (0.14f + density * 0.08f)) * variantScale;
-            const float rt = hash01(wx, wy, 53 + salt) * 6.2831853f;
-            insts.push_back({{(float)wx + ox, (float)wy + oy, (float)z + 0.505f}, sc, rt});
-        }
-    }
-
-    if (insts.empty()) return;
-
-    data.grassCount = (uint32_t)insts.size();
-    VkDeviceSize size = sizeof(ObjectInstance) * insts.size();
-    data.grassBuffer = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    void* mapped;
-    vkCheck(vkMapMemory(m_device, data.grassBuffer.memory, 0, size, 0, &mapped),
-        "Failed to map grass dressing buffer");
-    memcpy(mapped, insts.data(), size);
-    vkUnmapMemory(m_device, data.grassBuffer.memory);
 }
 
 // ============================================================
@@ -454,7 +336,6 @@ void VulkanContext::rebuildDirtyChunks() {
             auto& d = it->second;
             deferDestroy(std::move(d.vertexBuffer));
             deferDestroy(std::move(d.indexBuffer));
-            deferDestroy(std::move(d.grassBuffer));
             deferDestroy(std::move(d.groundPatchBuffer));
             deferDestroy(std::move(d.pebbleBuffer));
             for (auto& g : d.objGroups)

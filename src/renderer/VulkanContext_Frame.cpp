@@ -338,42 +338,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 }
             }
 
-            // Grass shadow casting disabled: thin alpha-card blades are ~1 texel wide in
-            // the shadow map, so they alias/flicker badly as the sun sweeps (DEVLOG
-            // 2026-06-03, confirmed via capture). Grass still receives shadow + uses root
-            // darkening for grounding; only the noisy casting is removed. Flip to re-enable.
-            constexpr bool kGrassCastsShadow = false;
-            if (kGrassCastsShadow && !m_shadowGrassDescriptorSets.empty()) {
-                static constexpr float GRASS_SHADOW_RADIUS = 56.0f;
-                static constexpr float GRASS_SHADOW_RADIUS_SQ = GRASS_SHADOW_RADIUS * GRASS_SHADOW_RADIUS;
-
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowGrassPipeline);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    m_shadowGrassPipelineLayout, 0, 1, &m_shadowGrassDescriptorSets[m_currentFrame], 0, nullptr);
-                vkCmdPushConstants(cmd, m_shadowGrassPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-
-                for (auto& [coord, data] : m_chunkBuffers) {
-                    if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-                    glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                    glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                    if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                    const glm::vec2 chunkCenter = {
-                        (coord.x + 0.5f) * (float)CHUNK_SIZE,
-                        (coord.y + 0.5f) * (float)CHUNK_SIZE
-                    };
-                    const glm::vec2 d = chunkCenter - glm::vec2(m_shadowCenter);
-                    if (glm::dot(d, d) > GRASS_SHADOW_RADIUS_SQ) continue;
-
-                    VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-                    VkDeviceSize offs[] = { 0, 0 };
-                    vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                    vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
-                }
-            }
-
             // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
             // push lightMVP * shipModel so the tilted hull casts a correct shadow.
             if (m_shipMesh.count > 0) {
@@ -465,20 +429,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             }
         }
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-            VkDeviceSize offs[] = { 0, 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
-        }
-
         if (m_shipMesh.count > 0) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -558,23 +508,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
                 vkCmdDraw(cmd, m_pebbleMesh.count, data.pebbleCount, 0, 0);
             }
-        }
-    }
-
-    // Grass alpha cards — visual-only dressing, not a shadow caster
-    {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-            VkDeviceSize offs[] = { 0, 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
         }
     }
 

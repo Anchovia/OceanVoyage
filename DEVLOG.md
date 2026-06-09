@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 그래스 렌더링 제거 (ROADMAP Phase 2d-1a)
+
+- 렌더러-`World` 분리(Phase 2d)의 첫 슬라이스. 농장 grass dressing은 grass 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(189줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: 그래스 draw 3블록(shadow[비활성]/reflection/scene), `buildGrassDressingBuffer`(호출+정의, 내부 `m_world.getTile` 그래스 샘플 포함), `rebuildDirtyChunks`의 grassBuffer 정리, 선언, `ChunkRenderData`의 `grassBuffer/grassCount`.
+- 남은 그래스 리소스(`m_grassPipeline`/`m_grassCardMesh`/`m_grassTex`/`m_shadowGrass*`)는 이제 죽은 채 생성/파괴만 됨 → 다음 슬라이스(2d-1b).
+- 2d는 농장 voxel 지형·그래스·지면·오브젝트 dressing 렌더 일체(~600줄+, shadow/reflection/scene 패스 통합)를 들어내는 큰 작업이라 빌드 검증 가능한 슬라이스로 진행: **2d-1a(그래스 draw+dressing, 이 커밋)** → 2d-1b(그래스 리소스) → 2d-2(지면) → 2d-3(오브젝트) → 2d-4(청크 메시) → 2d-5(`rebuildDirtyChunks`+`m_world`/생성자 `World&` 제거).
+- 수정: `VulkanContext.h`, `VulkanContext_Chunk.cpp`, `VulkanContext_Frame.cpp`.
+
 ### 2026-06-09 — 죽은 legacy 인스턴스 큐브 서브시스템 제거 (ROADMAP Phase 2a-3c)
 
 - player 큐브/selector/drops가 모두 빠지며 아무것도 안 그리게 된 인스턴스 큐브 렌더 일체를 제거(5개 파일, ~136줄). **빌드·동작 검증 완료(화면 변화 없음).**

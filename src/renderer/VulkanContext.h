@@ -173,7 +173,6 @@ private:
     void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
     void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildGrassDressingBuffer(const glm::ivec2& coord, Chunk& chunk);
     void buildGroundDressingBuffer(const glm::ivec2& coord, Chunk& chunk);
     void rebuildDirtyChunks();
     void createUIPipeline();
@@ -464,8 +463,6 @@ private:
             uint32_t       count  = 0;
         };
         std::vector<ObjGroup> objGroups;
-        GpuBuffer      grassBuffer;
-        uint32_t       grassCount = 0;
         GpuBuffer      groundPatchBuffer;
         uint32_t       groundPatchCount = 0;
         GpuBuffer      pebbleBuffer;
