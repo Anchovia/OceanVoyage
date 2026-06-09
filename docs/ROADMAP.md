@@ -17,7 +17,7 @@
 | Phase | 주제 | 상태 | 주 대응 문서 |
 |---|---|---|---|
 | **0** | 기준점 고정 (현재 빌드 회귀 확인) | 🔶 | `RUN_CHECKLIST.md` |
-| **1** | 기본 선박 상태와 항해 물리 | 🔴 **다음 핵심** | `MIGRATION_PLAN.md` Phase 3 |
+| **1** | 기본 선박 상태와 항해 물리 | 🔶 1차 완료 | `MIGRATION_PLAN.md` Phase 3 |
 | **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔴 | `MIGRATION_PLAN.md` Phase 4 |
 | **3** | VoyageSave + 항구/화물/교역 1차 | 🔴 | `MIGRATION_PLAN.md` Phase 5 |
 | **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔴 | `ENGINE_TODO.md` P1/P2 |
@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: **렌더링 기준점(Phase 0의 화질 부분)은 달성**됐다 — 다중 캐스케이드 FFT 바다, SSR/플래너 반사, CSM, 선박 PBR, wake 시뮬레이션(`ARCHITECTURE.md` §2.5). 다음 본작업은 **Phase 1(항해 물리)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
+현재 위치: 렌더링 기준점(화질)은 달성됐고, **Phase 1 항해 물리 1차도 도입·검증 완료**(2026-06-09) — 배가 관성·선회반경을 가지고 움직인다. 다음 본작업은 **Phase 2(농장 구조 제거 + 렌더 데이터 경계)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다. (Phase 1의 `FrameRenderData` `player*`→`ship*` 이름 정리·`Player` 제거는 Phase 2와 함께 처리.)
 
 ---
 
@@ -55,7 +55,9 @@
 
 ---
 
-## Phase 1 — 기본 선박 상태와 항해 물리 (다음 핵심)
+## Phase 1 — 기본 선박 상태와 항해 물리 (🔶 1차 완료)
+
+> **상태(2026-06-09):** 1a~1c + 1d의 물리/미러링 완료, 빌드·체감 검증됨(`src/game/GameState.{h,cpp}`만 수정). `ShipState`가 `GameState`에 들어갔고, WASD→throttle/rudder, 관성·선회 물리가 동작한다. `Player`는 임시 shim으로 ship을 미러링해 카메라·wake·부력·그림자·세이브가 무수정으로 따라간다. **남은 것**(Phase 2와 함께): `FrameRenderData`의 `player*`→`ship*` 이름 정리, `Player` 제거. 선회 polarity·감속감 등 상수 튜닝은 체감 보며 조정.
 
 **목표:** `Player` 위치로 선박을 흉내 내는 구조를 끝내고, 관성·선회반경을 가진 진짜 `ShipState`로 항해한다. **이 Phase의 성공 = "배가 더 이상 농장 캐릭터처럼 걷지 않고 배처럼 움직인다".**
 

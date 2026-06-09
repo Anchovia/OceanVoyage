@@ -6,6 +6,18 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 기본 선박 상태와 항해 물리 (ROADMAP Phase 1)
+
+- 농장 `Player` 위치로 선박을 흉내 내던 구조를 끝내고, 관성·선회반경을 가진 `ShipState` 기반 항해로 교체. **빌드·체감 검증 완료.**
+- **`ShipState`**(position/velocity/heading/yawRate/throttle/rudder)를 `GameState`가 소유, `ship()` getter 추가.
+- **입력 의미 교체**: WASD를 카메라상대 타일-워크에서 throttle(W/S)·rudder(A/D)로 재해석. `InputManager`/`PlayerInput` 무변경(기존 필드 재사용).
+- **항해 물리 1차**(`updateShipPhysics`): 전진 추진 + 선형 드래그 + 속도 제한(전진 9 / 후진 2, 비대칭) + 속도 의존 선회(정지 시 제자리 회전 불가) + yaw 감쇠 + 미세속도/yaw 스냅. 튜닝 상수는 익명 namespace에 모음.
+- **호환 미러링**: `Player`를 임시 shim으로 두고 매 update 끝에 ship→player(position/facing)를 미러. 덕분에 `main.cpp`·렌더러 무수정으로 카메라·wake(`m_oceanWakeShip*`)·부력(`updateShipTransform`)·그림자 center·청크 스트리밍·세이브가 선박을 따라감.
+- `setPlayerPosition`이 ship도 동기화 → 로드/텔레포트 위치가 미러에 덮어써지지 않음. (heading 저장은 Phase 3 VoyageSave에서.)
+- 농장 카메라상대 이동·타일 충돌(`canOccupy`) 제거. `Player::moveBy/moveSpeed`는 미사용으로 shim에 잔존(Player 제거 시 함께 정리).
+- 수정 범위: `src/game/GameState.h`, `src/game/GameState.cpp` 두 파일만.
+- 다음: Phase 2(`FrameRenderData` `player*`→`ship*` 이름 정리, 농장 HUD→선박 HUD, 렌더-`World` 분리).
+
 ### 2026-06-06 — 그래픽 레퍼런스 문서화 (`docs/RENDERING_REFERENCES.md`)
 
 - AAA 사실적 해양 구현에 쓸 **기법·논문·엔진 문서·오픈소스 라이브러리·참고 게임**을 신규 `docs/RENDERING_REFERENCES.md`로 정리.

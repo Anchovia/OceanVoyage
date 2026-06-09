@@ -186,11 +186,11 @@ cmake --build build --config Debug
 
 아래 항목은 해당 `docs/ROADMAP.md` Phase가 구현되면 활성화한다. 지금은 미구현이므로 점검 대상이 아니다.
 
-**Phase 1 — 항해 물리**
-- [ ] W 가속 → 떼면 관성 후 감속(즉시 정지 아님)
-- [ ] W+A / W+D가 곡선 선회(즉각 90° 꺾임 아님)
-- [ ] 정지 중 A/D만으로 제자리 회전하지 않음
-- [ ] 선회·이동 중에도 선박이 파면에 계속 떠 있고 wake가 heading/velocity를 따라감
+**Phase 1 — 항해 물리** (🔶 2026-06-09 빌드 검증됨)
+- [x] W 가속 → 떼면 관성 후 감속(즉시 정지 아님)
+- [x] W+A / W+D가 곡선 선회(즉각 90° 꺾임 아님)
+- [x] 정지 중 A/D만으로 제자리 회전하지 않음
+- [x] 선회·이동 중에도 선박이 파면에 계속 떠 있고 wake가 heading/velocity를 따라감
 
 **Phase 2 — 농장 제거 / HUD**
 - [ ] 화면에 hotbar/inventory/crafting 농장 UI가 보이지 않음

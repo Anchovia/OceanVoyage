@@ -33,6 +33,19 @@ struct PlayerInput {
     float moveSpeedMultiplier = 1.0f; // dev/test multiplier; 1.0 keeps normal speed
 };
 
+// Sailing state for the hero ship. This is the source of truth for the ship's
+// position/heading: it moves with inertia and a turn radius driven by throttle
+// and rudder, instead of the old camera-relative tile walking. The farm Player
+// is kept as a temporary compatibility shim that mirrors this state.
+struct ShipState {
+    glm::vec2 position{15.0f, 15.0f};
+    glm::vec2 velocity{0.0f, 0.0f};
+    float heading  = -1.5707963f; // radians; matches the initial Player facing {0,-1}
+    float yawRate  = 0.0f;
+    float throttle = 0.0f;        // -1..1 forward/reverse demand
+    float rudder   = 0.0f;        // -1..1 port/starboard demand
+};
+
 class GameState {
 public:
     GameState();
@@ -40,6 +53,7 @@ public:
     void update(float dt, const PlayerInput& input, const Camera& camera, World& world);
 
     const Player& player() const { return m_player; }
+    const ShipState& ship() const { return m_ship; }
     const std::optional<glm::ivec3>& targetTile() const { return m_targetTile; }
 
     int selectedSlot() const { return m_selectedSlot; }
@@ -70,7 +84,11 @@ private:
     bool removeItem(ItemType type, int count);     // remove across stacks; false if not enough
     bool craft(int recipeIndex);                   // consume inputs, add result
 
-    Player m_player;
+    // Integrates the ship's sailing physics from WASD (throttle/rudder) input.
+    void updateShipPhysics(float dt, const PlayerInput& input);
+
+    Player    m_player;
+    ShipState m_ship;
     std::optional<glm::ivec3> m_targetTile;
 
     int m_selectedSlot = 0;
