@@ -160,7 +160,7 @@ position += velocity * dt
 
 ## Phase 4 — 렌더링 후속 (TAA·리드백·반사·상수)
 
-**목표:** 항해/저장/항구 1차가 안정된 뒤, 화질·비용·유지보수성을 올린다. 세부 항목과 현황은 `docs/ENGINE_TODO.md`가 단일 출처이며, 여기서는 **순서**만 정한다.
+**목표:** 항해/저장/항구 1차가 안정된 뒤, 화질·비용·유지보수성을 올린다. 세부 항목과 현황은 `docs/ENGINE_TODO.md`가 단일 출처이며, 여기서는 **순서**만 정한다. 각 기법의 논문·구현 레퍼런스는 `docs/RENDERING_REFERENCES.md`(TAA=§5, SSR/반사=§4, 해양=§2).
 
 1. **기준 성능 측정** — 대표 장면 3개(낮/석양 grazing/밤), 1080p·1440p, AA·반사 토글별 GPU timing 기록
 2. **TAA 도입** — Halton jitter + history reprojection + neighborhood clamp + water reactive 고려. SSR용 `prevViewProj`/`temporalParams` 배선 재사용. (`ENGINE_TODO.md` P1)

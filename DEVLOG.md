@@ -6,6 +6,17 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-06 — 그래픽 레퍼런스 문서화 (`docs/RENDERING_REFERENCES.md`)
+
+- AAA 사실적 해양 구현에 쓸 **기법·논문·엔진 문서·오픈소스 라이브러리·참고 게임**을 신규 `docs/RENDERING_REFERENCES.md`로 정리.
+- 구성(13개 섹션): 참고 게임 → 해양·물(Tessendorf FFT·Horvath 스펙트럼·Bruneton ocean BRDF·GPU Gems·keithlantz 튜토리얼) → PBR(selfshadow 코스·Filament·PBR Book) → 반사(Stochastic SSR) → TAA(Karis 2014·Playdead INSIDE) → 그림자(CSM/PCSS) → 대기/구름(Hosek-Wilkie·Bruneton·Hillaire·Nubis) → 톤매핑(Hable·Narkowicz·AgX) → 식생/바람 → **선박 부력·항해 물리(Kerner)** → **라이브러리·오픈소스** → Vulkan API → 종합 허브.
+- **신규 섹션 2개**(2차 보강):
+  - §10 선박 부력·항해 물리 — Jacques Kerner "Water interaction model for boats"(hydrostatic+동적 힘). 우리 Phase 1 부력/Phase 6~7 선체 hydrodynamics에 직접 연결.
+  - §11 라이브러리·오픈소스 — VMA/volk/SPIRV-Reflect(Vulkan, Phase 9), KTX-Software/meshoptimizer/cgltf(에셋, Phase 8), Crest/GarrettGunnell·Water/gasgiant·FFT-Ocean(해양 학습 코드). 도입은 승인+라이선스 정책 명시.
+- **URL 검증 완료**: WebFetch로 핵심 링크 직접 확인. 수정: Playdead TAA repo는 `playdeadgames/temporal`(과거 표기 temporalAA는 404), GPU Gems Ch.1 정확 딥링크 적용, 죽은 WaveWorks GitHub 링크 제거(상용·비공개로 표기). 일부 논문/GDC 발표는 제목 검색으로 안내.
+- **문서 scope 분리 명시**: `RENDERING_REFERENCES`=무엇을 구현/누구를 보고 배우나(기법·논문·라이브러리·게임), `VULKAN_REFERENCES`=Vulkan으로 어떻게 배선하나(API 패턴). 상호 보완.
+- 각 항목을 ROADMAP Phase에 매핑. 교차 참조 추가: `VULKAN_REFERENCES`(상호 보완), `DESIGN`(Visual North Star), `ROADMAP`(Phase 4).
+
 ### 2026-06-06 — 개발 로드맵 문서화 (`docs/ROADMAP.md`)
 
 - AI 브레인스토밍으로 뽑은 장기 개발 순서(10개 묶음, 약 580개 세부 항목)를 프로젝트 문서 체계에 맞게 정리.

@@ -1,6 +1,7 @@
 # VULKAN_REFERENCES — Vulkan 레퍼런스 운용 노트
 
-> 이 문서는 외부 Vulkan 예제 레포를 OceanVoyage에 어떻게 참고할지 정리한다.
+> 이 문서는 외부 Vulkan 예제 레포를 OceanVoyage에 어떻게 참고할지 정리한다 — 즉 **"이 기능을 Vulkan으로 어떻게 배선하나"**(API 패턴).
+> "**무엇을 구현하나, 누구를 보고 배우나**"(해양 FFT·PBR·TAA·반사·대기 등 그래픽 기법·논문·참고 게임)는 `docs/RENDERING_REFERENCES.md`가 다룬다 — 이 문서와 상호 보완.
 > 엔진 구조 결정은 `ARCHITECTURE.md`, 게임 방향은 `DESIGN.md`, 변경 기록은 `DEVLOG.md`에 둔다.
 >
 > 핵심 원칙: 레퍼런스는 **정답 코드가 아니라 검증된 패턴 사전**이다. 우리 엔진의 `World / GameState / VulkanContext` 책임 분리와 **RTX 3060급 / 1080p~1440p / 60fps / AAA-AA급 사실적 해양 렌더링** 방향을 먼저 유지한다.

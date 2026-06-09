@@ -126,6 +126,8 @@ UWO의 3축 진행 구조를 따른다.
 **아트 디렉션: 사실적(포토리얼에 가까운) 해양 룩.**
 레퍼런스 결: Naval Action / Assassin's Creed Black Flag 류의 실사 바다. (스타일라이즈드 로우폴리 코지 룩은 복제 원본 Pastel-Farm의 방향이며, **여기서 폐기한다.**)
 
+> 구체적 기법·논문·참고 게임 목록은 `docs/RENDERING_REFERENCES.md`(해양 FFT·PBR·TAA·반사·대기·참고 게임). Vulkan API 배선 패턴은 `VULKAN_REFERENCES.md`.
+
 화질은 **물 → 선박 → 그림자** 순으로 투자한다.
 
 - **물 (최우선)** — 현재 기준은 다중 캐스케이드 Tessendorf FFT 파도 변위 + slope/normal, **화면공간 반사(SSR)** + 플래너 반사 + 분석적 하늘 폴백, 굴절, **프레넬**, Jacobian whitecap, wake foam, 수중 흡수/산란 틴트다. UWO 시점 특성상 화질의 대부분이 여기서 나온다.
