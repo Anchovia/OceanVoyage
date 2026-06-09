@@ -50,14 +50,13 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
         if (ImGui::Begin("OceanVoyage Dev", &m_devUiVisible)) {
             ImGui::TextUnformatted("F3 toggles this panel");
             ImGui::Separator();
-            ImGui::Text("Day: %d", frame.day);
             ImGui::Text("Time of day: %.3f", frame.timeOfDay);
             ImGui::Text("Ship: %.2f, %.2f, %.2f",
                 frame.shipPosition.x, frame.shipPosition.y, frame.shipPosition.z);
+            ImGui::Text("Heading: %.1f deg  Thr: %.2f  Rud: %.2f",
+                frame.shipHeading * 57.2957795f, frame.shipThrottle, frame.shipRudder);
             ImGui::Text("Chunks loaded: %d", (int)m_world.chunks().size());
             ImGui::Text("Drops: %d", (int)frame.drops.size());
-            ImGui::Text("Selected slot: %d", frame.hotbarSelected + 1);
-            ImGui::Text("Near workbench: %s", frame.nearWorkbench ? "yes" : "no");
             ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
             if (!m_devTimingSupported) {
@@ -795,17 +794,12 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 //  drawFrame
 // ============================================================
 void VulkanContext::drawFrame(const FrameRenderData& frame) {
-    m_hotbarSelected   = frame.hotbarSelected;
-    m_invHud           = frame.inventory;
-    m_inventoryOpen    = frame.inventoryOpen;
     m_mainMenuHud      = frame.mainMenu;
     m_settingsHud      = frame.settings;
     m_loadingHud       = frame.loading;
     m_pausedHud        = frame.paused;
     m_vsyncHud         = frame.vsyncEnabled;
     m_aaModeHud        = frame.aaMode;
-    m_nearWorkbenchHud = frame.nearWorkbench;
-    m_dayHud           = frame.day;
     m_shipSpeedHud     = glm::length(glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y));
     m_shipHeadingHud   = frame.shipHeading;
     m_shipThrottleHud  = frame.shipThrottle;

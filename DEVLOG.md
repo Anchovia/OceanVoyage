@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 죽은 농장 HUD 필드 제거 (ROADMAP Phase 2a-2)
+
+- 2b로 *write-only*가 된 농장 HUD 데이터 경로를 렌더 데이터에서 제거. **빌드·동작 검증 완료(게임 화면 변화 없음).**
+- `FrameRenderData`에서 `hotbarSelected`/`inventory`/`inventoryOpen`/`day`/`nearWorkbench` 5개 필드 제거. `main.cpp` 인자·`drawFrame` 미러 대입·죽은 멤버(`m_hotbarSelected`/`m_invHud`/`m_inventoryOpen`/`m_dayHud`/`m_nearWorkbenchHud`) 함께 제거.
+- dev UI(`buildDevUi`): 농장 표시(Day/Selected slot/Near workbench) → 선박 상태(Heading/Thr/Rud)로 교체.
+- 인벤토리/드롭은 `GameState` getter·save/load 경로로는 유지(렌더 입력에서만 분리). 남은 selector(`targetTile`)/drops 렌더 plumbing은 2a-3에서.
+- 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
 ### 2026-06-09 — 농장 HUD → 선박 HUD (ROADMAP Phase 2b)
 
 - 게임플레이 농장 HUD(hotbar·인벤토리 격자·제작 패널·day 숫자)를 좌상단 **선박 HUD**로 교체. **빌드·동작 검증 완료.**

@@ -105,14 +105,9 @@ struct FrameRenderData {
     float                                    shipThrottle;   // -1..1 (HUD)
     float                                    shipRudder;     // -1..1 (HUD)
     std::optional<glm::ivec3>                targetTile;
-    int                                      hotbarSelected;
-    const std::array<ItemStack, INV_SLOTS>&  inventory;
     float                                    timeOfDay;
     float                                    gameTime;
-    bool                                     inventoryOpen;
-    int                                      day;
     const std::vector<DroppedItem>&          drops;
-    bool                                     nearWorkbench;
     bool                                     mainMenu;
     bool                                     settings;
     bool                                     loading;
@@ -542,17 +537,12 @@ private:
     static constexpr uint32_t   UI_MAX_VERTS = 2048;
     std::vector<GpuBuffer>      m_uiBuffer;
     uint32_t                 m_uiVertexCount   = 0;
-    int                      m_hotbarSelected  = 0;
-    int                      m_dayHud          = 0;
-    std::array<ItemStack, INV_SLOTS> m_invHud{};
-    bool                     m_inventoryOpen   = false;
     bool                     m_mainMenuHud      = false;
     bool                     m_settingsHud      = false;
     bool                     m_loadingHud       = false;
     bool                     m_pausedHud       = false;
     bool                     m_vsyncHud        = true;
     int                      m_aaModeHud       = 0;
-    bool                     m_nearWorkbenchHud = false;
     float                    m_shipSpeedHud    = 0.0f;
     float                    m_shipHeadingHud  = 0.0f; // radians
     float                    m_shipThrottleHud = 0.0f; // -1..1
