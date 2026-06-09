@@ -349,11 +349,8 @@ int main() {
             const glm::vec3 playerPositionBeforeUpdate = gameState.player().position();
             camera.update(playerPositionBeforeUpdate, orbitAngle, dt);
             if (app.gameplayActive())
-                gameState.update(dt, input, camera, world);
+                gameState.update(dt, input);
             const glm::vec3 playerPosition = gameState.player().position();
-            glm::vec3 playerVelocity{0.0f};
-            if (dt > 0.0001f && app.gameplayActive())
-                playerVelocity = (playerPosition - playerPositionBeforeUpdate) / dt;
 
             // Stream chunks around the player. Generation is capped per frame so a
             // boundary crossing does not create every new edge chunk in one update.
@@ -371,11 +368,15 @@ int main() {
                     CHUNK_STREAM_LOADS_PER_FRAME);
             }
 
-            const glm::vec2 facing = gameState.player().facingDirection();
-            const float playerHeading = std::atan2(facing.y, facing.x);
+            // Feed the renderer from the ship state directly (position/velocity/heading),
+            // not the legacy Player mirror. Camera/chunk streaming/save still read Player
+            // for now; those move off the mirror in later Phase 2 steps.
+            const ShipState& ship = gameState.ship();
+            const glm::vec3 shipPosition{ ship.position.x, ship.position.y, playerPosition.z };
+            const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
 
             ctx.drawFrame(FrameRenderData{
-                camera, playerPosition, playerVelocity, playerHeading, gameState.targetTile(),
+                camera, shipPosition, shipVelocity, ship.heading, gameState.targetTile(),
                 gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
                 gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode

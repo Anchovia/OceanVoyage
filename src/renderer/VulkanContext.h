@@ -99,9 +99,9 @@ struct TextureResource {
 // argument list (by-ref for heavy data, by-value for scalars).
 struct FrameRenderData {
     const Camera&                            camera;
-    glm::vec3                                playerPosition;
-    glm::vec3                                playerVelocity;
-    float                                    playerHeading;  // radians; ship bow orientation
+    glm::vec3                                shipPosition;
+    glm::vec3                                shipVelocity;
+    float                                    shipHeading;    // radians; ship bow orientation
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
     const std::array<ItemStack, INV_SLOTS>&  inventory;

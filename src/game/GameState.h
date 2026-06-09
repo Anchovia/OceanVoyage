@@ -6,9 +6,6 @@
 #include <array>
 #include <vector>
 
-class World;
-class Camera;
-
 static constexpr float DAY_DURATION = 120.0f; // seconds per in-game day
 
 struct PlayerInput {
@@ -50,7 +47,7 @@ class GameState {
 public:
     GameState();
 
-    void update(float dt, const PlayerInput& input, const Camera& camera, World& world);
+    void update(float dt, const PlayerInput& input);
 
     const Player& player() const { return m_player; }
     const ShipState& ship() const { return m_ship; }

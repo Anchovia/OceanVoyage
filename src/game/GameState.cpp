@@ -1,6 +1,4 @@
 #include "game/GameState.h"
-#include "world/World.h"
-#include "game/Camera.h"
 
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
@@ -41,7 +39,7 @@ GameState::GameState() {
     // every slot to NONE/0, so no explicit clearing is needed here.
 }
 
-void GameState::update(float dt, const PlayerInput& input, const Camera& camera, World& world) {
+void GameState::update(float dt, const PlayerInput& input) {
     // Time
     m_time += dt;
     m_day = static_cast<int>(m_time / DAY_DURATION);
@@ -63,8 +61,6 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
         if (m_selectedSlot < 0) m_selectedSlot += HOTBAR_SLOTS;
     }
 
-    const glm::vec3& camPos = camera.position();
-
     // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
     updateShipPhysics(dt, input);
 
@@ -76,77 +72,11 @@ void GameState::update(float dt, const PlayerInput& input, const Camera& camera,
     m_player.setPosition(glm::vec3(m_ship.position.x, m_ship.position.y, kShipDeckZ));
     m_player.setFacingDirection(glm::vec2(std::cos(m_ship.heading), std::sin(m_ship.heading)));
 
-    // Pick up nearby dropped items (horizontal distance, so vertical offset never blocks it)
-    {
-        constexpr float kPickupRadius = 0.9f;
-        const glm::vec3 p = m_player.position();
-        for (auto it = m_drops.begin(); it != m_drops.end();) {
-            const float dx = it->pos.x - p.x;
-            const float dy = it->pos.y - p.y;
-            if (dx * dx + dy * dy <= kPickupRadius * kPickupRadius && addItem(it->type, it->count))
-                it = m_drops.erase(it);
-            else
-                ++it;
-        }
-    }
-
-    // Advanced recipes unlock only near a placed workbench.
-    {
-        glm::ivec3 pTile = world.worldToTile(m_player.position());
-        m_nearWorkbench = world.isObjectTypeNear(pTile.x, pTile.y, ObjectType::WORKBENCH, 2);
-    }
-
-    if (input.windowWidth > 0 && input.windowHeight > 0) {
-        // Crafting removed for OceanVoyage transition (farm recipes disabled).
-
-        // World interaction — suppressed while inventory is open
-        if (!m_inventoryOpen) {
-            float ndcX = (2.0f * (float)input.mouseX) / input.windowWidth - 1.0f;
-            float ndcY = (2.0f * (float)input.mouseY) / input.windowHeight - 1.0f;
-
-            glm::mat4 invViewProj = glm::inverse(camera.viewProj());
-
-            glm::vec4 target = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-            glm::vec3 rayDir = glm::normalize(glm::vec3(target / target.w) - camPos);
-
-            if (std::abs(rayDir.z) > 1e-5f) {
-                float t = -camPos.z / rayDir.z;
-                if (t > 0.0f) {
-                    glm::vec3 hitPoint = camPos + rayDir * t;
-
-                    glm::ivec3 pickedTile = world.worldToTile(hitPoint);
-
-                    // Find topmost non-AIR tile at this XY
-                    for (int z = CHUNK_DEPTH - 1; z >= 0; z--) {
-                        if (world.getTile(pickedTile.x, pickedTile.y, z) != TileType::AIR) {
-                            pickedTile.z = z;
-                            break;
-                        }
-                    }
-
-                    glm::ivec3 playerTile = world.worldToTile(m_player.position());
-
-                    glm::ivec3 delta = pickedTile - playerTile;
-                    delta.x = std::clamp(delta.x, -1, 1);
-                    delta.y = std::clamp(delta.y, -1, 1);
-                    delta.z = std::clamp(delta.z, -1, 1);
-
-                    glm::ivec3 finalTargetTile = playerTile + delta;
-
-                    if (world.inBounds(finalTargetTile.x, finalTargetTile.y, finalTargetTile.z)) {
-                        m_targetTile = finalTargetTile;
-                        // Farm tile interaction (object harvest / crop harvest / hoe / plant /
-                        // water / object placement) removed for OceanVoyage transition. The
-                        // World methods (tryHarvestObject / placeObject / setTileState) are kept
-                        // as reference until the ocean interaction systems replace them.
-                    }
-                    else {
-                        m_targetTile = std::nullopt;
-                    }
-                }
-            }
-        }
-    }
+    // Farm interaction (drop pickup, nearby-workbench detection, mouse-ray tile
+    // picking / targetTile) removed for OceanVoyage: the sailing loop no longer
+    // touches World or Camera. m_targetTile stays empty (tile selector inert) and
+    // m_drops / m_nearWorkbench keep their defaults. Their members, getters,
+    // FrameRenderData fields, and renderer plumbing are removed in a later step.
 }
 
 void GameState::updateShipPhysics(float dt, const PlayerInput& input) {

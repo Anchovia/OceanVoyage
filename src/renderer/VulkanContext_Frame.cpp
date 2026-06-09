@@ -52,8 +52,8 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
             ImGui::Separator();
             ImGui::Text("Day: %d", frame.day);
             ImGui::Text("Time of day: %.3f", frame.timeOfDay);
-            ImGui::Text("Player: %.2f, %.2f, %.2f",
-                frame.playerPosition.x, frame.playerPosition.y, frame.playerPosition.z);
+            ImGui::Text("Ship: %.2f, %.2f, %.2f",
+                frame.shipPosition.x, frame.shipPosition.y, frame.shipPosition.z);
             ImGui::Text("Chunks loaded: %d", (int)m_world.chunks().size());
             ImGui::Text("Drops: %d", (int)frame.drops.size());
             ImGui::Text("Selected slot: %d", frame.hotbarSelected + 1);
@@ -886,7 +886,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         float azimuth   = (frame.timeOfDay - 0.25f) * kTwoPi + kSunAzimuth;
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
         m_dayFactor = glm::clamp(elevation, 0.0f, 1.0f); // 0 at night, 1 at noon
-        m_shadowCenter = frame.playerPosition;
+        m_shadowCenter = frame.shipPosition;
 
         // Practical split scheme (log + uniform blend) over the shadowed view-depth range.
         // Beyond shadowFar the receivers stay lit (imperceptible at the low sailing view).
@@ -957,9 +957,9 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     m_oceanTime = frame.gameTime;
-    m_oceanWakeShipPosition = glm::vec2(frame.playerPosition.x, frame.playerPosition.y);
-    m_oceanWakeShipVelocity = glm::vec2(frame.playerVelocity.x, frame.playerVelocity.y);
-    m_oceanWakeShipHeading  = frame.playerHeading;
+    m_oceanWakeShipPosition = glm::vec2(frame.shipPosition.x, frame.shipPosition.y);
+    m_oceanWakeShipVelocity = glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y);
+    m_oceanWakeShipHeading  = frame.shipHeading;
     m_oceanWakeDeltaTime    = m_oceanWakeHasPrevTime ? frame.gameTime - m_oceanWakePrevTime : 0.0f;
     if (m_oceanWakeDeltaTime < 0.0f || m_oceanWakeDeltaTime > 0.1f)
         m_oceanWakeDeltaTime = 0.0f;
@@ -968,7 +968,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateOceanHistoryDescriptor(m_currentFrame);
-    updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
+    updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
     updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();

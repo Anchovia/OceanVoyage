@@ -6,6 +6,20 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 농장 상호작용 제거 + GameState 디커플링 (ROADMAP Phase 2c)
+
+- `GameState::update`에서 농장 상호작용 3종 제거: 드롭 줍기, 인접 작업대 감지(`nearWorkbench`), 마우스 ray 타일 피킹(`targetTile`).
+- `m_targetTile`을 더 이상 set하지 않아 `nullopt` 유지 → 렌더러의 타일 selector가 자동 inert(수면 위 노란 선택자 박스 사라짐). 렌더 plumbing·`FrameRenderData` 필드는 유지(다음 단위에서 제거).
+- 이제 안 쓰므로 `update` 시그니처에서 `Camera`/`World` 인자 제거 → `update(dt, input)`. `GameState.cpp`의 `world/Camera` include·`GameState.h` 전방선언 제거. **GameState 게임 루프가 World/Camera에 더 이상 의존하지 않음**(Phase 2d 렌더-World 분리의 선행).
+- 수정: `src/game/GameState.{h,cpp}`, `src/main.cpp`.
+
+### 2026-06-09 — 렌더 입력 이름 정리: player* → ship* (ROADMAP Phase 2a-1)
+
+- `FrameRenderData`의 `playerPosition/Velocity/Heading` → `shipPosition/Velocity/Heading`. 렌더 입력이 "player"가 아니라 "ship"을 의미하게. **빌드·동작 검증 완료(행동 불변).**
+- `main.cpp`가 이 값을 `gameState.ship()`에서 **직접** 공급 → 기존의 속도 차분(`(pos-posBefore)/dt`)·`atan2(facing)` heading 추출 hack 제거. 정확한 `ship.velocity`/`ship.heading` 사용(wake 입력의 1프레임 지연 제거).
+- 소비처 갱신: dev UI 라벨(`Player:`→`Ship:`), 그림자 center, wake 입력, 부력(`updateShipTransform`). 의미만 정리.
+- `Player` 미러는 유지(카메라·청크 스트리밍·세이브가 아직 사용). 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
 ### 2026-06-09 — 기본 선박 상태와 항해 물리 (ROADMAP Phase 1)
 
 - 농장 `Player` 위치로 선박을 흉내 내던 구조를 끝내고, 관성·선회반경을 가진 `ShipState` 기반 항해로 교체. **빌드·체감 검증 완료.**
