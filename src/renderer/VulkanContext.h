@@ -163,15 +163,13 @@ private:
         VkRenderPass     renderPass = VK_NULL_HANDLE;
     };
     VkPipeline createPipeline(const PipelineConfig& cfg);
-    void createGraphicsPipeline();
+    void createScenePipelineLayout();
     void createSkyPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createCommandBuffers();
     void createSyncObjects();
     void createDescriptorSetLayout();
-    void createVertexBuffer();
-    void createIndexBuffer();
     void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
     void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
@@ -212,7 +210,6 @@ private:
     void createGrassTexture();
     void createOceanNormalTextures();
     void createTerrainTextureArray();
-    void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
     void createUniformBuffers();
     void createReflectionUniformBuffers();
     void createDescriptorPool();
@@ -233,7 +230,6 @@ private:
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
-    void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
     void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
     void createDepthResources();
     void createShadowResources();
@@ -305,8 +301,7 @@ private:
     std::vector<VkFramebuffer> m_postFramebuffers;   // swapchain (per image)
 
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
-    VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;
-    VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / drops (instancing)
+    VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;  // shared scene layout (sky/chunk/object/grass/ship)
     VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
     VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
@@ -455,8 +450,6 @@ private:
     TextureResource m_smaaAreaTex;
     TextureResource m_smaaSearchTex;
 
-    GpuBuffer                m_vertexBuffer;
-    GpuBuffer                m_indexBuffer;
     GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
     GpuBuffer                m_oceanIndexBuffer;
     uint32_t                 m_oceanIndexCount = 0;
@@ -536,7 +529,6 @@ private:
     float                    m_shipThrottleHud = 0.0f; // -1..1
     float                    m_shipRudderHud   = 0.0f; // -1..1
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
-    std::vector<GpuBuffer>      m_playerInstBuffer;
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
     VkDeviceMemory               m_depthImageMemory     = VK_NULL_HANDLE;

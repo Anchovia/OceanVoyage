@@ -633,34 +633,16 @@ VkPipeline VulkanContext::createPipeline(const PipelineConfig& cfg) {
     return pipeline;
 }
 
-void VulkanContext::createGraphicsPipeline() {
-    // Player / drops pipeline layout: UBO + shadow sampler descriptor
+void VulkanContext::createScenePipelineLayout() {
+    // Shared scene pipeline layout (UBO + shadow sampler descriptor), reused by the
+    // sky / chunk / object / grass / ship draw pipelines. The legacy instanced-cube
+    // pipeline that originally lived here was removed with the farm player cube / drops.
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts    = &m_descriptorSetLayout;
     if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pipeline layout");
-
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/triangle.vert.spv";
-    cfg.fragPath   = "shaders/triangle.frag.spv";
-    cfg.bindings   = {
-        { 0, sizeof(Vertex),       VK_VERTEX_INPUT_RATE_VERTEX   },
-        { 1, sizeof(InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)             },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)          },
-        { 2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)       },
-        { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, topColor)  },
-        { 4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, sideColor) },
-    };
-    cfg.cullMode   = VK_CULL_MODE_BACK_BIT;
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;
-    m_pipeline = createPipeline(cfg);
 }
 
 void VulkanContext::createSkyPipeline() {
@@ -4127,61 +4109,3 @@ void VulkanContext::updateOceanHistoryDescriptor(uint32_t currentFrame) {
     vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
 }
 
-// ============================================================
-//  Static geometry buffers
-// ============================================================
-void VulkanContext::createIndexBuffer() {
-    VkDeviceSize size = sizeof(kIndices[0]) * kIndices.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map index staging buffer");
-    memcpy(data, kIndices.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_indexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_indexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createVertexBuffer() {
-    VkDeviceSize size = sizeof(kVertices[0]) * kVertices.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map vertex staging buffer");
-    memcpy(data, kVertices.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_vertexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_vertexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) {
-    VkDeviceSize size = sizeof(InstanceData);
-    m_playerInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_playerInstBuffer[i] = createBuffer(size,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped),
-            "Failed to map player instance buffer");
-    }
-
-    updatePlayerInstanceBuffer(playerPosition);
-}

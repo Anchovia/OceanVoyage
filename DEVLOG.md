@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 죽은 legacy 인스턴스 큐브 서브시스템 제거 (ROADMAP Phase 2a-3c)
+
+- player 큐브/selector/drops가 모두 빠지며 아무것도 안 그리게 된 인스턴스 큐브 렌더 일체를 제거(5개 파일, ~136줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `m_pipeline`(인스턴스 큐브 파이프라인) · 큐브 메시(`m_vertexBuffer`/`m_indexBuffer` + `createVertexBuffer`/`createIndexBuffer` + `kVertices`/`kIndices`) · player 큐브(`m_playerInstBuffer` + `createPlayerInstanceBuffer`/`updatePlayerInstanceBuffer` + `kPlayerColor`) — 생성·파괴·선언 전부.
+- `createGraphicsPipeline()` → `createScenePipelineLayout()`로 개명하고 **공유 `m_pipelineLayout` 생성만 남김**(sky/chunk/object/grass/ship가 재사용 → 유지). grep로 제거 심볼 참조 0, 공유 레이아웃 12곳 정상 확인.
+- `shaders/triangle.vert`/`.frag`는 미사용이 됐으나 에셋/CMake 정리는 별도(삭제 안 함).
+- 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`/`_Private`.
+
 ### 2026-06-09 — drops 렌더 plumbing 제거 (ROADMAP Phase 2a-3b)
 
 - 2c 이후 항상 비어 inert였던 드롭 아이템 렌더 경로를 **완전 제거**(5개 파일, ~74줄). **빌드·동작 검증 완료(화면 변화 없음).**

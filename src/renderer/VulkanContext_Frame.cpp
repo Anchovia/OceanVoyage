@@ -644,11 +644,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdDrawIndexed(cmd, m_oceanIndexCount, 1, 0, 0, 0);
     }
 
-    // NOTE: the legacy instanced-cube pipeline (m_pipeline / m_vertexBuffer / m_indexBuffer +
-    // the player-cube instance buffer) now draws nothing — the player cube was replaced by the
-    // ship and the selector/drops were removed. The pipeline and its buffers are slated for a
-    // later cleanup unit.
-
     // Ship (placeholder) — replaces the player cube. Drawn with the rotation-capable
     // object pipeline so the bow faces the player heading; the per-frame instance seats
     // it on the sea surface. Drawn last in the scene pass; switches the bound pipeline.
@@ -1075,12 +1070,6 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.prevViewProj = ubo.proj * ubo.view;
     ubo.temporalParams = glm::vec4(0.0f);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
-}
-
-void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) {
-    static const glm::vec3 kPlayerColor = {1.0f, 0.45f, 0.1f};
-    InstanceData inst{playerPosition, kPlayerColor, kPlayerColor};
-    memcpy(m_playerInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
 namespace {

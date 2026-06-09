@@ -33,33 +33,8 @@ struct PostPushConstants {
     glm::vec4 params; // xy = inverse framebuffer size, z = AA mode, w = unused
 };
 
-// ============================================================
-//  Cube vertex data (24 verts, 4 per face — flat-shaded)
-// ============================================================
-#define FACE(ax,ay,az, bx,by,bz, cx,cy,cz, dx,dy,dz, nx,ny,nz) \
-    {{ax,ay,az},{nx,ny,nz}}, \
-    {{bx,by,bz},{nx,ny,nz}}, \
-    {{cx,cy,cz},{nx,ny,nz}}, \
-    {{dx,dy,dz},{nx,ny,nz}}
-
-static const std::vector<Vertex> kVertices = {
-    FACE(-0.5f,-0.5f, 0.5f,  0.5f,-0.5f, 0.5f,  0.5f, 0.5f, 0.5f, -0.5f, 0.5f, 0.5f,  0, 0, 1),  // Top
-    FACE(-0.5f, 0.5f,-0.5f,  0.5f, 0.5f,-0.5f,  0.5f,-0.5f,-0.5f, -0.5f,-0.5f,-0.5f,  0, 0,-1),  // Bottom
-    FACE(-0.5f,-0.5f,-0.5f,  0.5f,-0.5f,-0.5f,  0.5f,-0.5f, 0.5f, -0.5f,-0.5f, 0.5f,  0,-1, 0),  // Front
-    FACE( 0.5f, 0.5f,-0.5f, -0.5f, 0.5f,-0.5f, -0.5f, 0.5f, 0.5f,  0.5f, 0.5f, 0.5f,  0, 1, 0),  // Back
-    FACE( 0.5f,-0.5f,-0.5f,  0.5f, 0.5f,-0.5f,  0.5f, 0.5f, 0.5f,  0.5f,-0.5f, 0.5f,  1, 0, 0),  // Right
-    FACE(-0.5f, 0.5f,-0.5f, -0.5f,-0.5f,-0.5f, -0.5f,-0.5f, 0.5f, -0.5f, 0.5f, 0.5f, -1, 0, 0),  // Left
-};
-#undef FACE
-
-static const std::vector<uint16_t> kIndices = {
-     0, 1, 2,   0, 2, 3,   // Top
-     4, 5, 6,   4, 6, 7,   // Bottom
-     8, 9,10,   8,10,11,   // Front
-    12,13,14,  12,14,15,   // Back
-    16,17,18,  16,18,19,   // Right
-    20,21,22,  20,22,23,   // Left
-};
+// (The flat-shaded unit-cube mesh that lived here — kVertices/kIndices — was removed
+//  along with the legacy player cube / selector / drops that were its only users.)
 
 // ============================================================
 //  Validation / extension lists

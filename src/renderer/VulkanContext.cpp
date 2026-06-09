@@ -35,7 +35,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createSmaaRenderPass();
     createDescriptorSetLayout();
     createOceanDescriptorSetLayout();
-    createGraphicsPipeline();
+    createScenePipelineLayout();
     createSkyPipeline();
     createChunkPipeline();
     createUIPipeline();
@@ -59,8 +59,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
 #ifdef PASTEL_DEV_BUILD
     createDevTools();
 #endif
-    createVertexBuffer();
-    createIndexBuffer();
     createUIBuffer();
     createObjectMeshes();
     createOceanMesh();
@@ -69,7 +67,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createGrassTexture();
     createTerrainTextureArray();
     rebuildDirtyChunks();
-    createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
     createUniformBuffers();
     createReflectionUniformBuffers();
     createShadowSampler();
@@ -104,7 +101,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_oceanDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_reflectionUniformBuffers.clear();
-    m_playerInstBuffer.clear();
     m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
     for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
     destroyOceanFFT();
@@ -119,8 +115,6 @@ VulkanContext::~VulkanContext() {
     m_pebbleMesh.vbuf.destroy();
     m_oceanIndexBuffer.destroy();
     m_oceanVertexBuffer.destroy();
-    m_indexBuffer.destroy();
-    m_vertexBuffer.destroy();
     m_uiBuffer.clear();
     vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
@@ -132,7 +126,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
-    vkDestroyPipeline(m_device, m_pipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline      (m_device, m_shadowGrassPipeline,  nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowGrassPipelineLayout, nullptr);
