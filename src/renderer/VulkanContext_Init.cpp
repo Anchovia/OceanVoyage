@@ -4172,42 +4172,6 @@ void VulkanContext::createVertexBuffer() {
     // staging frees itself at scope exit
 }
 
-void VulkanContext::createItemMesh() {
-    // Small cube: reuse the unit cube scaled down so dropped items read as little pickups.
-    std::vector<Vertex> verts = kVertices;
-    for (auto& v : verts) v.pos *= 0.3f;
-    VkDeviceSize size = sizeof(Vertex) * verts.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map item mesh staging buffer");
-    memcpy(data, verts.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_itemVertexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_itemVertexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createDropInstanceBuffer() {
-    VkDeviceSize size = sizeof(InstanceData) * MAX_DROPS;
-    m_dropInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_dropInstBuffer[i] = createBuffer(size,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped),
-            "Failed to map drop instance buffer");
-    }
-}
-
 void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) {
     VkDeviceSize size = sizeof(InstanceData);
     m_playerInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);

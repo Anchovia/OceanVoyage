@@ -68,8 +68,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createOceanFFT();
     createGrassTexture();
     createTerrainTextureArray();
-    createItemMesh();
-    createDropInstanceBuffer();
     rebuildDirtyChunks();
     createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
     createUniformBuffers();
@@ -119,8 +117,6 @@ VulkanContext::~VulkanContext() {
     m_grassCardMesh.vbuf.destroy();
     m_groundPatchMesh.vbuf.destroy();
     m_pebbleMesh.vbuf.destroy();
-    m_itemVertexBuffer.destroy();
-    m_dropInstBuffer.clear();
     m_oceanIndexBuffer.destroy();
     m_oceanVertexBuffer.destroy();
     m_indexBuffer.destroy();

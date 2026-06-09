@@ -377,7 +377,7 @@ int main() {
 
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
-                gameState.timeOfDay(), gameState.time(), gameState.drops(),
+                gameState.timeOfDay(), gameState.time(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode
             });
 

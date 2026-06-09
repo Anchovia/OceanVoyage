@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — drops 렌더 plumbing 제거 (ROADMAP Phase 2a-3b)
+
+- 2c 이후 항상 비어 inert였던 드롭 아이템 렌더 경로를 **완전 제거**(5개 파일, ~74줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `FrameRenderData.drops`+main 인자+dev UI Drops 줄, `updateDropInstanceBuffer`(호출/정의/선언), `createItemMesh`/`createDropInstanceBuffer`(정의/ctor 호출/cleanup/선언), 멤버 `m_itemVertexBuffer`/`m_dropInstBuffer`/`m_dropCount`/`MAX_DROPS`, drop draw + 그 앞의 고아 `m_pipeline` 바인드.
+- 아이템 큐브 메시는 drops 전용이라 함께 삭제. 그 자리에 NOTE 주석: legacy 인스턴스 큐브 파이프라인(`m_pipeline`/player-cube)은 이제 아무것도 안 그림 → 이후 cleanup.
+- 유지: `GameState`의 `m_drops`/`drops()`/`setDrops` + save/load drops(저장 포맷 묶임 → Phase 3에서 정리).
+- 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`, `main.cpp`.
+
 ### 2026-06-09 — 타일 selector 서브시스템 제거 (ROADMAP Phase 2a-3a)
 
 - 2c 이후 항상 inert였던 타일 selector를 코드까지 **완전 제거**(7개 파일, ~108줄 삭제). **빌드·동작 검증 완료(화면 변화 없음).**

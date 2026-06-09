@@ -56,7 +56,6 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
             ImGui::Text("Heading: %.1f deg  Thr: %.2f  Rud: %.2f",
                 frame.shipHeading * 57.2957795f, frame.shipThrottle, frame.shipRudder);
             ImGui::Text("Chunks loaded: %d", (int)m_world.chunks().size());
-            ImGui::Text("Drops: %d", (int)frame.drops.size());
             ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
             if (!m_devTimingSupported) {
@@ -645,19 +644,10 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdDrawIndexed(cmd, m_oceanIndexCount, 1, 0, 0, 0);
     }
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
-    vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-    // Dropped items (small cubes, instanced cube pipeline)
-    if (worldVisible && m_dropCount > 0) {
-        VkBuffer     dBufs[] = {m_itemVertexBuffer, m_dropInstBuffer[m_currentFrame]};
-        VkDeviceSize dOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, dBufs, dOffs);
-        vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), m_dropCount, 0, 0, 0);
-    }
+    // NOTE: the legacy instanced-cube pipeline (m_pipeline / m_vertexBuffer / m_indexBuffer +
+    // the player-cube instance buffer) now draws nothing — the player cube was replaced by the
+    // ship and the selector/drops were removed. The pipeline and its buffers are slated for a
+    // later cleanup unit.
 
     // Ship (placeholder) — replaces the player cube. Drawn with the rotation-capable
     // object pipeline so the bow faces the player heading; the per-frame instance seats
@@ -959,7 +949,6 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateOceanHistoryDescriptor(m_currentFrame);
     updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
-    updateDropInstanceBuffer(frame.drops);
     updateHotbar();
     rebuildDirtyChunks();
     m_frustum = Frustum::extractFrom(frame.camera.viewProj());
@@ -1190,15 +1179,6 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     m[2] = glm::vec4(up   * SHIP_WORLD_SCALE, 0.0f); // Z column = deck up
     m[3] = glm::vec4(pos,  1.0f); // translation
     m_shipModel = m;
-}
-
-void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& drops) {
-    m_dropCount = std::min((uint32_t)drops.size(), MAX_DROPS);
-    InstanceData* dst = reinterpret_cast<InstanceData*>(m_dropInstBuffer[m_currentFrame].mapped);
-    for (uint32_t i = 0; i < m_dropCount; i++) {
-        const glm::vec3 c = itemColor(drops[i].type);
-        dst[i] = InstanceData{ drops[i].pos, c, c };
-    }
 }
 
 // ============================================================

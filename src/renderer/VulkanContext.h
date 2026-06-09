@@ -106,7 +106,6 @@ struct FrameRenderData {
     float                                    shipRudder;     // -1..1 (HUD)
     float                                    timeOfDay;
     float                                    gameTime;
-    const std::vector<DroppedItem>&          drops;
     bool                                     mainMenu;
     bool                                     settings;
     bool                                     loading;
@@ -213,9 +212,6 @@ private:
     void createGrassTexture();
     void createOceanNormalTextures();
     void createTerrainTextureArray();
-    void createItemMesh();
-    void createDropInstanceBuffer();
-    void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
     void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
     void createUniformBuffers();
     void createReflectionUniformBuffers();
@@ -524,11 +520,6 @@ private:
     // Terrain material texture array (sampler2DArray, one layer per tile material).
     TextureResource m_terrainTex;
 
-    // Dropped items — shared small cube mesh + per-frame instance buffer (reuses m_indexBuffer + m_pipeline)
-    static constexpr uint32_t   MAX_DROPS = 256;
-    GpuBuffer                   m_itemVertexBuffer;
-    std::vector<GpuBuffer>      m_dropInstBuffer;
-    uint32_t                    m_dropCount = 0;
 
     // UI / hotbar — one buffer per frame in flight (avoids overwrite while GPU still reads)
     static constexpr uint32_t   UI_MAX_VERTS = 2048;
