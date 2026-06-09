@@ -102,6 +102,8 @@ struct FrameRenderData {
     glm::vec3                                shipPosition;
     glm::vec3                                shipVelocity;
     float                                    shipHeading;    // radians; ship bow orientation
+    float                                    shipThrottle;   // -1..1 (HUD)
+    float                                    shipRudder;     // -1..1 (HUD)
     std::optional<glm::ivec3>                targetTile;
     int                                      hotbarSelected;
     const std::array<ItemStack, INV_SLOTS>&  inventory;
@@ -551,6 +553,10 @@ private:
     bool                     m_vsyncHud        = true;
     int                      m_aaModeHud       = 0;
     bool                     m_nearWorkbenchHud = false;
+    float                    m_shipSpeedHud    = 0.0f;
+    float                    m_shipHeadingHud  = 0.0f; // radians
+    float                    m_shipThrottleHud = 0.0f; // -1..1
+    float                    m_shipRudderHud   = 0.0f; // -1..1
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
     std::vector<GpuBuffer>      m_playerInstBuffer;
     GpuBuffer                m_selectorVertexBuffer;

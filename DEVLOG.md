@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 농장 HUD → 선박 HUD (ROADMAP Phase 2b)
+
+- 게임플레이 농장 HUD(hotbar·인벤토리 격자·제작 패널·day 숫자)를 좌상단 **선박 HUD**로 교체. **빌드·동작 검증 완료.**
+- 표시: `SPD`(속도) / `HDG`(deg, 0~359) / `THR`(F전진·R후진 %) / `RUD`(S우현·P좌현 %). 글리프에 마이너스가 없어 부호를 방향 문자로 표시.
+- 배선: `FrameRenderData`에 `shipThrottle`/`shipRudder` 추가, `main.cpp` 전달, HUD 미러 멤버(`m_shipSpeed/Heading/Throttle/RudderHud`) 추가·`drawFrame` 대입(속도=`length(shipVelocity)`). 기존 `pushText`/`pushNumber` 벡터 폰트 재사용(새 의존성 없음).
+- 메뉴/설정/로딩/일시정지 UI는 그대로. 농장 HUD 미러(`m_invHud`/`m_hotbarSelected`/`m_dayHud`/`m_nearWorkbenchHud`)는 이제 대입만 되고 안 읽힘 → 다음 단위(2a-2)에서 `FrameRenderData` 필드와 함께 제거.
+- 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
 ### 2026-06-09 — 농장 상호작용 제거 + GameState 디커플링 (ROADMAP Phase 2c)
 
 - `GameState::update`에서 농장 상호작용 3종 제거: 드롭 줍기, 인접 작업대 감지(`nearWorkbench`), 마우스 ray 타일 피킹(`targetTile`).

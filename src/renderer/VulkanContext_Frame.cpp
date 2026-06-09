@@ -806,6 +806,10 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_aaModeHud        = frame.aaMode;
     m_nearWorkbenchHud = frame.nearWorkbench;
     m_dayHud           = frame.day;
+    m_shipSpeedHud     = glm::length(glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y));
+    m_shipHeadingHud   = frame.shipHeading;
+    m_shipThrottleHud  = frame.shipThrottle;
+    m_shipRudderHud    = frame.shipRudder;
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;
@@ -1348,110 +1352,41 @@ void VulkanContext::updateHotbar() {
         return;
     }
 
-    // --- Hotbar ---
-    const float slot = 56.0f, gap = 6.0f, pad = 6.0f;
-    const float barW = HOTBAR_SLOTS * slot + (HOTBAR_SLOTS - 1) * gap;
-    const float startX = (W - barW) * 0.5f;
-    const float startY = H - slot - 20.0f;
+    // --- Ship HUD (speed / heading / throttle / rudder), top-left ---
+    {
+        const glm::vec4 col = {0.95f, 0.96f, 0.92f, 0.95f};
+        const float gpx = 4.0f;                       // glyph scale
+        const float lh  = 5.0f * gpx + 6.0f;          // line height
+        const float lx  = 16.0f;                      // label x
+        const float vx  = 16.0f + 4.0f * gpx * 4.0f;  // value x (after a 3-char label + gap)
+        float hy = 16.0f;
 
-    pushQuad(startX - pad, startY - pad, barW + 2 * pad, slot + 2 * pad, {0.10f, 0.10f, 0.12f, 0.7f});
+        // Speed (rounded world units/s)
+        pushText("SPD", lx, hy, gpx, col);
+        pushNumber((int)(m_shipSpeedHud + 0.5f), vx, hy, gpx, col);
+        hy += lh;
 
-    float selX = startX + m_hotbarSelected * (slot + gap);
-    pushQuad(selX - 3.0f, startY - 3.0f, slot + 6.0f, slot + 6.0f, {1.0f, 0.85f, 0.2f, 1.0f});
+        // Heading (degrees, wrapped to 0..359)
+        int hdg = (int)(m_shipHeadingHud * 57.2957795f + 0.5f); // rad -> deg
+        hdg %= 360; if (hdg < 0) hdg += 360;
+        pushText("HDG", lx, hy, gpx, col);
+        pushNumber(hdg, vx, hy, gpx, col);
+        hy += lh;
 
-    for (int i = 0; i < HOTBAR_SLOTS; i++) {
-        float x = startX + i * (slot + gap);
-        glm::vec4 bg = (i == m_hotbarSelected)
-            ? glm::vec4(0.35f, 0.35f, 0.40f, 1.0f)
-            : glm::vec4(0.20f, 0.20f, 0.24f, 0.9f);
-        pushQuad(x, startY, slot, slot, bg);
+        // Throttle %. The glyph set has no minus, so the sign is shown as a
+        // direction letter: F = forward, R = reverse.
+        int thr = (int)(m_shipThrottleHud * 100.0f + (m_shipThrottleHud >= 0.0f ? 0.5f : -0.5f));
+        pushText("THR", lx, hy, gpx, col);
+        pushText(thr > 0 ? "F" : (thr < 0 ? "R" : ""), vx, hy, gpx, col);
+        pushNumber(thr < 0 ? -thr : thr, vx + 4.0f * gpx, hy, gpx, col);
+        hy += lh;
 
-        const ItemStack& st = m_invHud[i];
-        if (st.type != ItemType::NONE) {
-            float inset = 10.0f;
-            pushQuad(x + inset, startY + inset, slot - 2 * inset, slot - 2 * inset,
-                     glm::vec4(itemColor(st.type), 1.0f));
-            if (st.count > 1)
-                pushNumber(st.count, x + 5.0f, startY + slot - 5 * 3.0f - 5.0f, 3.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-        }
+        // Rudder %. S = starboard (right), P = port (left).
+        int rud = (int)(m_shipRudderHud * 100.0f + (m_shipRudderHud >= 0.0f ? 0.5f : -0.5f));
+        pushText("RUD", lx, hy, gpx, col);
+        pushText(rud > 0 ? "S" : (rud < 0 ? "P" : ""), vx, hy, gpx, col);
+        pushNumber(rud < 0 ? -rud : rud, vx + 4.0f * gpx, hy, gpx, col);
     }
-
-    // --- Inventory overlay ---
-    if (m_inventoryOpen) {
-        const float gridW = INV_COLS * INV_SLOT_SIZE + (INV_COLS - 1) * INV_GAP;
-        const float gridH = INV_ROWS * INV_SLOT_SIZE + (INV_ROWS - 1) * INV_GAP;
-        const float ox = (W - gridW) * 0.5f - INV_PAD;
-        const float oy = (H - gridH) * 0.5f - INV_PAD;
-        const float panelW = gridW + 2 * INV_PAD;
-        const float panelH = gridH + 2 * INV_PAD;
-
-        // Dimmed background over entire screen
-        pushQuad(0.0f, 0.0f, W, H, {0.0f, 0.0f, 0.0f, 0.45f});
-
-        // Panel background
-        pushQuad(ox, oy, panelW, panelH, {0.12f, 0.12f, 0.15f, 0.92f});
-
-        for (int idx = 0; idx < INV_SLOTS; ++idx) {
-            int c = idx % INV_COLS;
-            int r = idx / INV_COLS;
-            float sx = ox + INV_PAD + c * (INV_SLOT_SIZE + INV_GAP);
-            float sy = oy + INV_PAD + r * (INV_SLOT_SIZE + INV_GAP);
-
-            glm::vec4 slotBg = (idx == m_hotbarSelected)
-                ? glm::vec4(0.35f, 0.35f, 0.40f, 1.0f)
-                : glm::vec4(0.22f, 0.22f, 0.27f, 1.0f);
-            pushQuad(sx, sy, INV_SLOT_SIZE, INV_SLOT_SIZE, slotBg);
-
-            const ItemStack& st = m_invHud[idx];
-            if (st.type != ItemType::NONE) {
-                float inset = 10.0f;
-                pushQuad(sx + inset, sy + inset, INV_SLOT_SIZE - 2 * inset, INV_SLOT_SIZE - 2 * inset,
-                         glm::vec4(itemColor(st.type), 1.0f));
-                if (st.count > 1)
-                    pushNumber(st.count, sx + 4.0f, sy + INV_SLOT_SIZE - 5 * 2.0f - 4.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-            }
-        }
-
-        // --- Crafting panel (basic recipes; row = result + inputs, dim if unaffordable) ---
-        auto invCount = [&](ItemType t) {
-            int c = 0;
-            for (const ItemStack& s : m_invHud) if (s.type == t) c += s.count;
-            return c;
-        };
-        int rn = 0;
-        const Recipe* rtable = craftingRecipes(rn);
-        for (int i = 0; i < rn; i++) {
-            if (rtable[i].requiresWorkbench && !m_nearWorkbenchHud) continue;
-            const Recipe& rc = rtable[i];
-
-            bool ok = true;
-            for (const RecipeInput& in : rc.inputs) {
-                if (in.type == ItemType::NONE) continue;
-                if (invCount(in.type) < in.count) { ok = false; break; }
-            }
-            const float a = ok ? 1.0f : 0.4f;
-
-            float rx, ry, rw, rh;
-            craftRowRect(i, W, H, rx, ry, rw, rh);
-            pushQuad(rx, ry, rw, rh, {0.18f, 0.18f, 0.22f, ok ? 0.95f : 0.8f});
-
-            const float sw = rh - 12.0f;
-            pushQuad(rx + 6.0f, ry + 6.0f, sw, sw, glm::vec4(itemColor(rc.result), a));
-            if (rc.resultCount > 1)
-                pushNumber(rc.resultCount, rx + 8.0f, ry + rh - 5 * 2.0f - 6.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-
-            float ix = rx + sw + 20.0f;
-            for (const RecipeInput& in : rc.inputs) {
-                if (in.type == ItemType::NONE) continue;
-                pushQuad(ix, ry + 6.0f, sw, sw, glm::vec4(itemColor(in.type), a));
-                pushNumber(in.count, ix + 2.0f, ry + rh - 5 * 2.0f - 6.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-                ix += sw + 14.0f;
-            }
-        }
-    }
-
-    // Day counter HUD (top-left)
-    pushNumber(m_dayHud, 16.0f, 16.0f, 4.0f, {1.0f, 1.0f, 1.0f, 0.9f});
 
     if (m_pausedHud) {
         pushQuad(0.0f, 0.0f, W, H, {0.0f, 0.0f, 0.0f, 0.42f});
