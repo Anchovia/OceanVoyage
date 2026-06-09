@@ -2,7 +2,6 @@
 #include "game/Player.h"
 #include "renderer/Types.h"
 
-#include <optional>
 #include <array>
 #include <vector>
 
@@ -51,7 +50,6 @@ public:
 
     const Player& player() const { return m_player; }
     const ShipState& ship() const { return m_ship; }
-    const std::optional<glm::ivec3>& targetTile() const { return m_targetTile; }
 
     int selectedSlot() const { return m_selectedSlot; }
     const std::array<ItemStack, INV_SLOTS>& inventory() const { return m_inventory; }
@@ -86,7 +84,6 @@ private:
 
     Player    m_player;
     ShipState m_ship;
-    std::optional<glm::ivec3> m_targetTile;
 
     int m_selectedSlot = 0;
     std::array<ItemStack, INV_SLOTS> m_inventory;

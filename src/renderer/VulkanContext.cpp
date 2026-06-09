@@ -61,7 +61,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
 #endif
     createVertexBuffer();
     createIndexBuffer();
-    createSelectorBuffers();
     createUIBuffer();
     createObjectMeshes();
     createOceanMesh();
@@ -108,9 +107,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_reflectionUniformBuffers.clear();
     m_playerInstBuffer.clear();
-    m_selectorInstBuffer.clear();
-    m_selectorIndexBuffer.destroy();
-    m_selectorVertexBuffer.destroy();
     m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
     for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
     destroyOceanFFT();

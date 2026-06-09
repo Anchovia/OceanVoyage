@@ -104,7 +104,6 @@ struct FrameRenderData {
     float                                    shipHeading;    // radians; ship bow orientation
     float                                    shipThrottle;   // -1..1 (HUD)
     float                                    shipRudder;     // -1..1 (HUD)
-    std::optional<glm::ivec3>                targetTile;
     float                                    timeOfDay;
     float                                    gameTime;
     const std::vector<DroppedItem>&          drops;
@@ -174,7 +173,6 @@ private:
     void createDescriptorSetLayout();
     void createVertexBuffer();
     void createIndexBuffer();
-    void createSelectorBuffers();
     void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
     void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
@@ -241,7 +239,6 @@ private:
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
     void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
-    void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();
     void createShadowPipeline();
@@ -313,7 +310,7 @@ private:
 
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
     VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;
-    VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / selector (instancing)
+    VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / drops (instancing)
     VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
     VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
@@ -549,10 +546,6 @@ private:
     float                    m_shipRudderHud   = 0.0f; // -1..1
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
     std::vector<GpuBuffer>      m_playerInstBuffer;
-    GpuBuffer                m_selectorVertexBuffer;
-    GpuBuffer                m_selectorIndexBuffer;
-    std::vector<GpuBuffer>      m_selectorInstBuffer;
-    bool                     m_showSelector          = false;
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
     VkDeviceMemory               m_depthImageMemory     = VK_NULL_HANDLE;

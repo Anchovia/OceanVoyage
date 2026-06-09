@@ -650,15 +650,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
     vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
-    if (worldVisible && m_showSelector) {
-        VkBuffer     sBufs[] = {m_selectorVertexBuffer, m_selectorInstBuffer[m_currentFrame]};
-        VkDeviceSize sOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
-        vkCmdBindIndexBuffer(cmd, m_selectorIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kSelectorIndices.size(), 1, 0, 0, 0);
-    }
-
-    // Dropped items (small cubes, same instanced pipeline as the selector)
+    // Dropped items (small cubes, instanced cube pipeline)
     if (worldVisible && m_dropCount > 0) {
         VkBuffer     dBufs[] = {m_itemVertexBuffer, m_dropInstBuffer[m_currentFrame]};
         VkDeviceSize dOffs[] = {0, 0};
@@ -968,7 +960,6 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateOceanHistoryDescriptor(m_currentFrame);
     updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
     updateDropInstanceBuffer(frame.drops);
-    updateSelectorInstanceBuffer(frame.targetTile);
     updateHotbar();
     rebuildDirtyChunks();
     m_frustum = Frustum::extractFrom(frame.camera.viewProj());
@@ -1208,16 +1199,6 @@ void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& dro
         const glm::vec3 c = itemColor(drops[i].type);
         dst[i] = InstanceData{ drops[i].pos, c, c };
     }
-}
-
-void VulkanContext::updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile) {
-    m_showSelector = targetTile.has_value();
-    if (!m_showSelector) return;
-
-    static const glm::vec3 kSelectorColor = {1.0f, 0.9f, 0.1f};
-    const glm::ivec3 tile = *targetTile;
-    InstanceData inst{m_world.tileCenter(tile.x, tile.y, tile.z), kSelectorColor, kSelectorColor};
-    memcpy(m_selectorInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
 // ============================================================

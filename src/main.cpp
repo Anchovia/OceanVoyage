@@ -376,7 +376,7 @@ int main() {
             const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
 
             ctx.drawFrame(FrameRenderData{
-                camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder, gameState.targetTile(),
+                camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(), gameState.drops(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode
             });

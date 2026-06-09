@@ -634,7 +634,7 @@ VkPipeline VulkanContext::createPipeline(const PipelineConfig& cfg) {
 }
 
 void VulkanContext::createGraphicsPipeline() {
-    // Player / selector pipeline layout: UBO + shadow sampler descriptor
+    // Player / drops pipeline layout: UBO + shadow sampler descriptor
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount = 1;
@@ -4220,43 +4220,4 @@ void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) 
     }
 
     updatePlayerInstanceBuffer(playerPosition);
-}
-
-void VulkanContext::createSelectorBuffers() {
-    VkDeviceSize vertexSize = sizeof(kSelectorVertices[0]) * kSelectorVertices.size();
-
-    GpuBuffer staging = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data),
-        "Failed to map selector vertex staging buffer");
-    memcpy(data, kSelectorVertices.data(), vertexSize);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_selectorVertexBuffer = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    copyBuffer(staging, m_selectorVertexBuffer, vertexSize);
-
-    VkDeviceSize indexSize = sizeof(kSelectorIndices[0]) * kSelectorIndices.size();
-    staging = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data),
-        "Failed to map selector index staging buffer");
-    memcpy(data, kSelectorIndices.data(), indexSize);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_selectorIndexBuffer = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    copyBuffer(staging, m_selectorIndexBuffer, indexSize);
-    // staging frees itself at scope exit
-
-    VkDeviceSize instanceSize = sizeof(InstanceData);
-    m_selectorInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_selectorInstBuffer[i] = createBuffer(instanceSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped),
-            "Failed to map selector instance buffer");
-    }
 }

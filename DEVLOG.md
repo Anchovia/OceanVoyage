@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 타일 selector 서브시스템 제거 (ROADMAP Phase 2a-3a)
+
+- 2c 이후 항상 inert였던 타일 selector를 코드까지 **완전 제거**(7개 파일, ~108줄 삭제). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `FrameRenderData.targetTile`, `updateSelectorInstanceBuffer`(호출/정의/선언), `createSelectorBuffers`(호출/정의/선언)+cleanup, selector draw, 멤버(`m_selectorVertex/Index/InstBuffer`/`m_showSelector`), 메시 데이터(`kSelectorVertices/Indices`), `GameState`의 `m_targetTile`+`targetTile()`+orphan된 `#include <optional>`.
+- `updateSelectorInstanceBuffer`가 쓰던 `m_world.tileCenter` 의존이 함께 사라짐 → 2d(렌더러-World 분리) 선행.
+- 곁다리: stale가 된 `// Player / selector` 파이프라인 주석 → `// Player / drops`로 정정.
+- 공유 `m_pipeline`·큐브 메시·drops·player 경로는 유지. 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`/`_Private`, `main.cpp`, `GameState.h`.
+
 ### 2026-06-09 — 죽은 농장 HUD 필드 제거 (ROADMAP Phase 2a-2)
 
 - 2b로 *write-only*가 된 농장 HUD 데이터 경로를 렌더 데이터에서 제거. **빌드·동작 검증 완료(게임 화면 변화 없음).**
