@@ -6,6 +6,16 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-10 — 공유 씬 디스크립터에서 죽은 grass/terrain 제거 (ROADMAP Phase 2d-5b)
+
+- 2d-5c에서 미뤘던 항목 완료. 공유 scene/reflection 디스크립터의 죽은 grass/terrain 텍스처 바인딩 제거. **빌드·동작 검증 완료(선박·하늘·그림자·반사·바다 정상, 화면 변화 없음).**
+- 레이아웃: `createDescriptorSetLayout`에서 binding 2/3/4(grass·terrain·grassOpacity) 제거 → `{0,1,5,6,7}` 비연속 레이아웃(`bindings[8]→[5]`). **ship 텍스처는 binding 5/6/7 유지 → 살아있는 셰이더 0줄 수정**(Vulkan은 비연속 binding 허용).
+- write: `createDescriptorSets`/`createReflectionDescriptorSets`의 grass/terrain image info + `writes[2..4]` 제거(`writes[8]→[5]`). 디스크립터 풀 이미지샘플러 `*14→*8`.
+- 제거: `createGrassTexture`/`createTerrainTextureArray` 정의(절차 텍스처 생성 포함) + ctor 호출 + 소멸자 `destroy` + `m_grassTex`/`m_grassOpacityTex`/`m_terrainTex` 멤버·선언.
+- 유지: `createTextureArray` 범용 헬퍼(미사용이 됐지만 향후 섬·항구 terrain 배열에 재사용 여지). 죽은 `m_frustum`/`m_reflectionFrustum`은 별도 슬라이스로 보류.
+- 남은 고아: `TERRAIN_TEX_LAYERS`(`Types.h`) — `tileFaceLayer`/`TileType` 농장 레거시 타입 클러스터에 묶여 Phase 3 일괄 정리에 포함.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`.
+
 ### 2026-06-09 — dead 셰이더·빈 청크 TU CMake 정리 (ROADMAP Phase 2d-5c)
 
 - 2d 제거로 죽은 셰이더를 CMake(컴파일 목록·복사 명령)에서 빼고 파일 삭제, 빈 `VulkanContext_Chunk.cpp`를 소스 목록·파일에서 제거.
