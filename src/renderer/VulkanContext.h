@@ -173,7 +173,6 @@ private:
     void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
     void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildGroundDressingBuffer(const glm::ivec2& coord, Chunk& chunk);
     void rebuildDirtyChunks();
     void createUIPipeline();
     void createUIBuffer();
@@ -459,10 +458,6 @@ private:
             uint32_t       count  = 0;
         };
         std::vector<ObjGroup> objGroups;
-        GpuBuffer      groundPatchBuffer;
-        uint32_t       groundPatchCount = 0;
-        GpuBuffer      pebbleBuffer;
-        uint32_t       pebbleCount = 0;
     };
     std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
     Frustum                  m_frustum;
@@ -490,8 +485,6 @@ private:
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
-    ObjectMesh m_groundPatchMesh;
-    ObjectMesh m_pebbleMesh;
 
     // Grass blade textures (sampled by the grass card pipeline). The opacity mask is
     // split out so foliage material maps can expand without repacking the color image.

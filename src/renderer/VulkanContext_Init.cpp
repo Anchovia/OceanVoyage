@@ -1394,53 +1394,6 @@ void VulkanContext::createObjectMeshes() {
     // ---- SHIP: imported textured hero asset (OBJ + BC1 DDS material maps). ----
     loadImportedShipMesh();
 
-    // ---- GROUND PATCH: thin visual-only dirt/dry-grass breakup decal ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 n = {0.0f, 0.0f, 1.0f};
-    const glm::vec3 center = {0.0f, 0.0f, 0.006f};
-    const glm::vec3 ring[7] = {
-        { 0.46f,  0.02f, 0.006f},
-        { 0.24f,  0.25f, 0.006f},
-        {-0.06f,  0.33f, 0.006f},
-        {-0.40f,  0.12f, 0.006f},
-        {-0.30f, -0.22f, 0.006f},
-        { 0.05f, -0.31f, 0.006f},
-        { 0.35f, -0.17f, 0.006f},
-    };
-    const glm::vec3 dryGrass = {0.42f, 0.46f, 0.24f};
-    const glm::vec3 dirt     = {0.34f, 0.30f, 0.18f};
-    for (int i = 0; i < 7; i++) {
-        const glm::vec3 col = (i % 2 == 0) ? dryGrass : dirt;
-        pushTri(verts, center, ring[i], ring[(i + 1) % 7], n, col, LAYER_NONE);
-    }
-    uploadMesh(m_groundPatchMesh, verts);
-    }
-
-    // ---- PEBBLE: tiny visual-only low-poly stone, not a collidable object ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 pebbleColor = {0.42f, 0.42f, 0.40f};
-    const glm::vec3 center = {0.0f, 0.0f, 0.035f};
-    const glm::vec3 top    = {0.0f, 0.0f, 0.11f};
-    const glm::vec3 ring[5] = {
-        { 0.16f,  0.00f, 0.025f},
-        { 0.04f,  0.12f, 0.030f},
-        {-0.14f,  0.08f, 0.020f},
-        {-0.11f, -0.10f, 0.030f},
-        { 0.08f, -0.13f, 0.022f},
-    };
-    auto tri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        if (glm::dot(n, (a + b + c) / 3.0f - center) < 0.0f) n = -n;
-        pushTri(verts, a, b, c, n, pebbleColor, LAYER_NONE);
-    };
-    for (int i = 0; i < 5; i++) {
-        tri(top, ring[i], ring[(i + 1) % 5]);
-        tri({0.0f, 0.0f, 0.0f}, ring[(i + 1) % 5], ring[i]);
-    }
-    uploadMesh(m_pebbleMesh, verts);
-    }
 }
 
 // ============================================================

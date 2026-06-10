@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 지면 dressing(ground patch/pebble) 렌더 제거 (ROADMAP Phase 2d-2)
+
+- 농장 지면 dressing(ground patch + pebble)은 grass/dirt 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(232줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: ground/pebble draw(reflection 블록은 object draw 유지, scene 블록 전체), `buildGroundDressingBuffer`(호출+정의, 내부 `m_world.getTile`), `grassDirty` dressing 블록(objectsDirty만 유지), `rebuildDirtyChunks` 정리, `ChunkRenderData`의 groundPatch/pebble 필드, `m_groundPatchMesh`/`m_pebbleMesh` + 메시 빌드.
+- renderer가 더 이상 `chunk.grassDirty`를 읽지 않음(world/Chunk.h 필드는 게임측이라 유지).
+- 수정: `VulkanContext.{cpp,h}`/`_Chunk`/`_Frame`/`_Init`.
+
 ### 2026-06-09 — 죽은 그래스 리소스 제거 (ROADMAP Phase 2d-1b)
 
 - 2d-1a로 그래스가 더 이상 그려지지 않게 된 뒤, standalone 그래스 리소스를 제거(257줄). **빌드·동작 검증 완료(화면 변화 없음).**

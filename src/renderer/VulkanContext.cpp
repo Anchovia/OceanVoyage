@@ -107,8 +107,6 @@ VulkanContext::~VulkanContext() {
     m_shipNormalTex.destroy();
     m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
-    m_groundPatchMesh.vbuf.destroy();
-    m_pebbleMesh.vbuf.destroy();
     m_oceanIndexBuffer.destroy();
     m_oceanVertexBuffer.destroy();
     m_uiBuffer.clear();
