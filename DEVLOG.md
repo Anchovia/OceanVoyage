@@ -6,6 +6,16 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — VoyageSave(OVYG) 도입 (ROADMAP Phase 3a)
+
+- 저장 책임을 `World::save/load`(농장 `PFRM`)에서 신규 `src/game/VoyageSave.{h,cpp}`로 이동. **빌드·동작 검증 완료(항해 상태 저장/복원, legacy 거부, 손상 파일 무크래시).**
+- 포맷: magic `"OVYG"` + version 1. 필드: gameTime + ship position/velocity/heading/yawRate/throttle/rudder(float 9개). heading·velocity까지 복원되는 건 처음(기존엔 위치만).
+- 검증·안전: atomic write(`.tmp`→rename, 실패 시 라이브 파일 보존), 전체 읽기 성공 시에만 commit, magic/version/finite-float 검증(NaN 전파 차단), throttle/rudder `[-1,1]` clamp. 구 `PFRM` save.dat은 magic 불일치로 거부 → 새 게임(개발 정책).
+- `GameState::setShipState` 추가 — ship 전체 복원 + legacy Player 미러 즉시 동기화(카메라 스냅·청크 스트리밍이 로드 프레임에 복원 위치를 봄).
+- 저장 안 함: timeOfDay(gameTime에서 계산), inventory/drops/청크(항해 게임에서 무의미), wake field/FFT phase(gameTime으로 재현).
+- 죽은 코드化: `World::save/load`, `GameState::setPlayerPosition/setInventory/setDrops` 호출처 0 → 농장 레거시 정리 슬라이스에서 제거 예정.
+- 수정: `main.cpp`(배선 교체, 고아 include 정리), `GameState.{h,cpp}`, `CMakeLists.txt`. 신규: `VoyageSave.{h,cpp}`.
+
 ### 2026-06-10 — 죽은 frustum 멤버 제거 (Phase 2d 후속 정리)
 
 - 농장 청크/오브젝트 컬링에 쓰이던 `m_frustum`/`m_reflectionFrustum`이 해당 렌더 제거(2d-1~4) 후 write-only(대입만, read 0)로 남음 → 제거. **빌드·동작 검증 완료(시각 변화 없음).**

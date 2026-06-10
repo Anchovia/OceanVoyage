@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **남은 잔불**: 게임측 농장 레거시(`GameState` inventory/drops/craft, `World` 청크 스트리밍)는 Phase 3 VoyageSave에서 정리(죽은 `m_frustum`/`m_reflectionFrustum`은 2026-06-10 제거 완료). 다음 본작업은 **Phase 3(VoyageSave + 항구/화물/교역 1차)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **남은 잔불**: 게임측 농장 레거시(`GameState` inventory/drops/craft, `World` 청크 스트리밍, 죽은 `World::save/load`)는 Phase 3 진행 중 정리. **Phase 3a VoyageSave 완료**(2026-06-11, `"OVYG"` v1 — 항해 상태 저장/복원, 구 PFRM 거부). 다음은 **농장 레거시 정리 슬라이스 → 3b(항구·화물 데이터)** 순이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
 
 ---
 
@@ -141,12 +141,13 @@ position += velocity * dt
 
 **목표:** 농장 `PFRM` save에서 벗어나 선박 상태를 저장하고, 첫 교역 루프(항해 → 항구 → 매매 → 항해 → 이익)를 성립시킨다.
 
-### 3a. VoyageSave 최소 스키마
-- [ ] 저장 책임을 `World::save/load`에서 `GameState`/별도 save helper로 이동(선박 상태 저장은 World 책임이 아님)
-- [ ] 새 magic(예 `"OVYG"`) + version. v1 필드: gameTime, ship position/velocity/heading/yawRate/throttle/rudder
-- [ ] atomic write(`.tmp` → rename), magic/version/finite-float 검증, 전체 성공 시에만 commit(기존 World save의 장점 계승)
-- [ ] 구 `PFRM` save는 legacy로 명시적 거부(개발 단계라 호환 포기 가능)
+### 3a. VoyageSave 최소 스키마 ✅ (2026-06-11)
+- [x] 저장 책임을 `World::save/load`에서 별도 save helper(`src/game/VoyageSave.{h,cpp}`)로 이동
+- [x] 새 magic `"OVYG"` + version 1. v1 필드: gameTime, ship position/velocity/heading/yawRate/throttle/rudder
+- [x] atomic write(`.tmp` → rename), magic/version/finite-float 검증, 전체 성공 시에만 commit(기존 World save의 장점 계승)
+- [x] 구 `PFRM` save는 magic 불일치로 명시적 거부 → 새 게임
 - 저장하지 않을 것: timeOfDay(gameTime에서 계산), wake field, FFT phase(gameTime으로 재현)
+- 후속: 죽은 코드가 된 `World::save/load`·`GameState::setPlayerPosition/setInventory/setDrops`는 농장 레거시 정리 슬라이스에서 제거
 
 ### 3b. 항구·화물 데이터 (렌더링은 보류 가능)
 - [ ] `Port { id; name; glm::vec2 position; }`, 시작 항구 1개

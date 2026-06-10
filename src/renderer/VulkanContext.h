@@ -462,7 +462,9 @@ private:
 
 
     // UI / hotbar — one buffer per frame in flight (avoids overwrite while GPU still reads)
-    static constexpr uint32_t   UI_MAX_VERTS = 2048;
+    // Worst case is the pause screen: ship HUD + backdrop + title + 3 menu rows of
+    // pixel-quad vector glyphs (~3k verts); 2048 truncated it. 8192 leaves ~2.5x headroom.
+    static constexpr uint32_t   UI_MAX_VERTS = 8192;
     std::vector<GpuBuffer>      m_uiBuffer;
     uint32_t                 m_uiVertexCount   = 0;
     bool                     m_mainMenuHud      = false;

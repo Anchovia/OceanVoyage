@@ -1,9 +1,7 @@
 #pragma once
 #include "world/Chunk.h"
 #include <glm/glm.hpp>
-#include <string>
 #include <unordered_map>
-#include <array>
 
 class World {
 public:
@@ -46,13 +44,6 @@ public:
     // Drops all in-memory chunks (loaded + modified-unsaved). Used when ending a
     // world session (e.g. quitting to title) so the next session starts from disk.
     void reset();
-
-    void save(const std::string& path, const glm::vec3& playerPos, float gameTime,
-              const std::array<ItemStack, INV_SLOTS>& inventory,
-              const std::vector<DroppedItem>& drops) const;
-    bool load(const std::string& path, glm::vec3& outPlayerPos, float& outGameTime,
-              std::array<ItemStack, INV_SLOTS>& outInventory,
-              std::vector<DroppedItem>& outDrops);
 
     static glm::ivec2 chunkCoord(int x, int y);
 

@@ -190,16 +190,6 @@ bool GameState::craft(int recipeIndex) {
     return true;
 }
 
-void GameState::setPlayerPosition(const glm::vec3& pos) {
-    m_player.setPosition(pos);
-    // Keep the ship (source of truth) in sync so a loaded/teleported position is
-    // not immediately overwritten by the mirror in update(). Heading is not yet
-    // persisted (arrives with VoyageSave); reset motion on a hard set.
-    m_ship.position = glm::vec2(pos.x, pos.y);
-    m_ship.velocity = glm::vec2(0.0f);
-    m_ship.yawRate  = 0.0f;
-}
-
 void GameState::setShipState(const ShipState& s) {
     m_ship = s;
     // Re-sync the legacy Player mirror immediately (same shim as update()) so
@@ -214,12 +204,4 @@ void GameState::setTime(float t) {
     m_day       = static_cast<int>(m_time / DAY_DURATION);
     m_prevDay   = m_day; // suppress immediate growthTick on load
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
-}
-
-void GameState::setInventory(const std::array<ItemStack, INV_SLOTS>& inv) {
-    m_inventory = inv;
-}
-
-void GameState::setDrops(const std::vector<DroppedItem>& drops) {
-    m_drops = drops;
 }
