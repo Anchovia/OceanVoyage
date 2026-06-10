@@ -40,14 +40,6 @@ void GameState::update(float dt, const PlayerInput& input) {
 
     // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
     updateShipPhysics(dt, input);
-
-    // Mirror the ship into the legacy Player so existing consumers — camera
-    // target, chunk streaming, wake/buoyancy/shadow inputs, and save — follow
-    // the ship with no other changes. Player and the FrameRenderData "player*"
-    // names are a temporary shim to be removed in a later phase.
-    constexpr float kShipDeckZ = 1.0f; // height only feeds shadow/camera; buoyancy recomputes the visual height
-    m_player.setPosition(glm::vec3(m_ship.position.x, m_ship.position.y, kShipDeckZ));
-    m_player.setFacingDirection(glm::vec2(std::cos(m_ship.heading), std::sin(m_ship.heading)));
 }
 
 void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
@@ -96,15 +88,6 @@ void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
 
     m_ship.heading  += m_ship.yawRate * dt;
     m_ship.position += m_ship.velocity * dt;
-}
-
-void GameState::setShipState(const ShipState& s) {
-    m_ship = s;
-    // Re-sync the legacy Player mirror immediately (same shim as update()) so
-    // camera snap and chunk streaming see the restored position this frame.
-    constexpr float kShipDeckZ = 1.0f;
-    m_player.setPosition(glm::vec3(m_ship.position.x, m_ship.position.y, kShipDeckZ));
-    m_player.setFacingDirection(glm::vec2(std::cos(m_ship.heading), std::sin(m_ship.heading)));
 }
 
 void GameState::setTime(float t) {

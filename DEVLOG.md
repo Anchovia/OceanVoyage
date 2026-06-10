@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — World·Chunk·TerrainGen 완전 제거 (Phase 3 잔재 정리)
+
+- 농장 월드 레거시 최종 삭제: `src/world/` 디렉터리(`World.{h,cpp}`/`TerrainGen.{h,cpp}`/`Chunk.h`) + CMake 등록 제거. **빌드·동작 검증 완료(시각 변화 0).**
+- `main.cpp`: `World` 인스턴스·청크 스트리밍·`LOAD_RADIUS`/`UNLOAD_RADIUS` 제거. 세션 시작=VoyageSave 로드, 타이틀 복귀=`gameState` 리셋만.
+- `Types.h`: 농장 타입 클러스터 118줄 제거(`TileType`/`ItemType`/헬퍼/`Vertex`/`InstanceData`/`ChunkVertex`/`TERRAIN_TEX_LAYERS`/`tileFaceLayer`/`ObjectInstance` — 전부 사용처 0 확인). 잔존: 메뉴 rect·`ShipVertex`·`UIVertex`.
+- `ShipVertex` pad 제거(48→44B): pad는 `sizeof(ChunkVertex)` stride 호환용이었고, shadow 파이프라인 stride를 `sizeof(ShipVertex)`로 교체하며 존재 이유 소멸. ship 경로는 전부 `sizeof`/`offsetof` 기반이라 자동 추종 — 선박 렌더·그림자 정상 확인.
+- 남은 레거시: `Player` 미러 shim(카메라가 사용), `GameState::day()`/`m_prevDay`(read 0), CMake `PASTEL_DEV_BUILD` 옵션명.
+
 ### 2026-06-11 — GameState 농장 잔재 제거 (Phase 3 잔재 정리)
 
 - VoyageSave 전환으로 보존 이유가 사라진 GameState 농장 멤버 일괄 제거(-214줄). **빌드·동작 검증 완료.**

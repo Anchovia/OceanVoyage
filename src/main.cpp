@@ -312,17 +312,13 @@ int main() {
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
 
-            const glm::vec3 playerPositionBeforeUpdate = gameState.player().position();
-            camera.update(playerPositionBeforeUpdate, orbitAngle, dt);
+            // Camera chases last frame's ship position; gameplay then advances the ship.
+            camera.update(gameState.shipWorldPosition(), orbitAngle, dt);
             if (app.gameplayActive())
                 gameState.update(dt, input);
-            const glm::vec3 playerPosition = gameState.player().position();
 
-            // Feed the renderer from the ship state directly (position/velocity/heading),
-            // not the legacy Player mirror. The camera still reads Player; it moves off
-            // the mirror when the Player shim is removed.
             const ShipState& ship = gameState.ship();
-            const glm::vec3 shipPosition{ ship.position.x, ship.position.y, playerPosition.z };
+            const glm::vec3 shipPosition = gameState.shipWorldPosition();
             const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
 
             ctx.drawFrame(FrameRenderData{
@@ -333,7 +329,7 @@ int main() {
 
             if (pendingWorldStart && app.loading()) {
                 startWorldSession();
-                camera.snapToTarget(gameState.player().position(), orbitAngle);
+                camera.snapToTarget(gameState.shipWorldPosition(), orbitAngle);
                 app.enterGameplay();
                 pendingWorldStart = false;
             }
