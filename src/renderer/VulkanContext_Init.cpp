@@ -1193,136 +1193,6 @@ void VulkanContext::loadImportedShipMesh() {
 //  object dressing rendering. The hero ship mesh load that lived at its end is now
 //  called directly from the constructor via loadImportedShipMesh().)
 
-// ============================================================
-//  Grass blade textures
-// ============================================================
-void VulkanContext::createGrassTexture() {
-    // Color/albedo uploads as sRGB (hardware linearizes on sample); the opacity mask
-    // uploads as UNORM (raw coverage value, no gamma).
-    auto uploadImage = [&](const LoadedImageRGBA8& image, VkFormat format, bool mip) {
-        const VkDeviceSize imgSize = (VkDeviceSize)image.width * (VkDeviceSize)image.height * 4;
-        return createTexture((uint32_t)image.width, (uint32_t)image.height,
-            format, image.pixels.data(), imgSize, /*withSampler=*/true, mip);
-    };
-    auto makeOpacityFromAlpha = [](const LoadedImageRGBA8& source) {
-        LoadedImageRGBA8 opacity;
-        opacity.width = source.width;
-        opacity.height = source.height;
-        opacity.pixels.resize((size_t)source.width * (size_t)source.height * 4, 255);
-        for (size_t i = 0, count = (size_t)source.width * (size_t)source.height; i < count; i++) {
-            const uint8_t alpha = source.pixels[i * 4 + 3];
-            opacity.pixels[i * 4 + 0] = alpha;
-            opacity.pixels[i * 4 + 1] = alpha;
-            opacity.pixels[i * 4 + 2] = alpha;
-            opacity.pixels[i * 4 + 3] = 255;
-        }
-        return opacity;
-    };
-
-    const std::string grassColorPath = "assets/textures/vegetation/grass_blades/color.png";
-    const std::string grassOpacityPath = "assets/textures/vegetation/grass_blades/opacity.png";
-    const bool hasGrassColor = fileExists(grassColorPath);
-    const bool hasGrassOpacity = fileExists(grassOpacityPath);
-    if (hasGrassColor || hasGrassOpacity) {
-        if (!hasGrassColor || !hasGrassOpacity) {
-            throw std::runtime_error("Grass blade texture set requires both color.png and opacity.png");
-        }
-
-        LoadedImageRGBA8 colorImage = loadImageRGBA8(grassColorPath);
-        LoadedImageRGBA8 opacityImage = loadImageRGBA8(grassOpacityPath);
-        if (colorImage.width != opacityImage.width || colorImage.height != opacityImage.height) {
-            throw std::runtime_error("Grass blade color/opacity texture size mismatch");
-        }
-
-        m_grassTex = uploadImage(colorImage, VK_FORMAT_R8G8B8A8_SRGB, /*mipmapped=*/true);
-        m_grassOpacityTex = uploadImage(opacityImage, VK_FORMAT_R8G8B8A8_UNORM, /*mipmapped=*/false);
-        return;
-    }
-
-    const std::string authoredGrassPath = "assets/textures/grass.png";
-    if (fileExists(authoredGrassPath)) {
-        LoadedImageRGBA8 image = loadImageRGBA8(authoredGrassPath);
-        m_grassTex = uploadImage(image, VK_FORMAT_R8G8B8A8_SRGB, /*mipmapped=*/true);
-        m_grassOpacityTex = uploadImage(makeOpacityFromAlpha(image), VK_FORMAT_R8G8B8A8_UNORM, /*mipmapped=*/false);
-        return;
-    }
-
-    // A slim grass-blade mask: narrow tapering blades drawn into alpha, with a
-    // base-dark / tip-light green. Kept as a fallback when authored foliage textures
-    // are not present.
-    const uint32_t W = 64, H = 64;
-    std::vector<uint8_t> pixels((size_t)W * H * 4, 0); // RGBA8, fully transparent
-
-    auto clamp01 = [](float v) {
-        return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-    };
-    auto smooth = [](float t) {
-        return t * t * (3.0f - 2.0f * t);
-    };
-    auto writePixel = [&](int x, int y, const glm::vec3& c, float alpha) {
-        if (x < 0 || x >= (int)W || y < 0 || y >= (int)H) return;
-        uint8_t* p = &pixels[((size_t)y * W + x) * 4];
-        const float a = clamp01(alpha);
-        const float oldA = (float)p[3] / 255.0f;
-        if (a < oldA * 0.85f) return;
-        p[0] = (uint8_t)(c.r * 255.0f);
-        p[1] = (uint8_t)(c.g * 255.0f);
-        p[2] = (uint8_t)(c.b * 255.0f);
-        p[3] = (uint8_t)(std::max(oldA, a) * 255.0f);
-    };
-
-    struct Blade { float baseX, midX, tipX, height, halfW, shade; };
-    static const Blade blades[] = {
-        {0.50f, 0.50f, 0.54f, 1.00f, 0.075f, 1.08f},
-        {0.40f, 0.34f, 0.24f, 0.84f, 0.052f, 0.94f},
-        {0.60f, 0.66f, 0.78f, 0.80f, 0.052f, 1.02f},
-        {0.46f, 0.41f, 0.32f, 0.62f, 0.040f, 0.88f},
-        {0.55f, 0.62f, 0.72f, 0.58f, 0.040f, 0.96f},
-        {0.32f, 0.25f, 0.16f, 0.54f, 0.034f, 0.82f},
-        {0.68f, 0.76f, 0.88f, 0.52f, 0.034f, 0.86f},
-    };
-    const glm::vec3 baseCol = {0.16f, 0.34f, 0.12f};
-    const glm::vec3 tipCol  = {0.58f, 0.72f, 0.26f};
-
-    for (const Blade& b : blades) {
-        for (uint32_t y = 0; y < H; y++) {
-            const float t = 1.0f - (float)y / (float)(H - 1); // 0 at bottom row, 1 at top row
-            if (t > b.height) continue;
-
-            const float u = t / b.height;
-            const float su = smooth(u);
-            const float cx = glm::mix(glm::mix(b.baseX, b.midX, su), b.tipX, su * su);
-            const float halfW = b.halfW * powf(1.0f - u, 1.45f);
-            const float feather = 1.25f / (float)W;
-            const glm::vec3 col = glm::mix(baseCol, tipCol, smooth(u)) * b.shade;
-
-            const int x0 = (int)((cx - halfW - feather) * W);
-            const int x1 = (int)((cx + halfW + feather) * W);
-            for (int x = x0; x <= x1; x++) {
-                const float px = ((float)x + 0.5f) / (float)W;
-                const float dist = fabsf(px - cx);
-                const float a = clamp01((halfW + feather - dist) / feather);
-                writePixel(x, (int)y, col, a * (0.76f + 0.24f * u));
-            }
-        }
-    }
-
-    std::vector<uint8_t> opacityPixels((size_t)W * H * 4, 255);
-    for (size_t i = 0, count = (size_t)W * H; i < count; i++) {
-        const uint8_t alpha = pixels[i * 4 + 3];
-        opacityPixels[i * 4 + 0] = alpha;
-        opacityPixels[i * 4 + 1] = alpha;
-        opacityPixels[i * 4 + 2] = alpha;
-        opacityPixels[i * 4 + 3] = 255;
-    }
-
-    // Upload the procedural pixels through the shared texture helper. The grass card
-    // pipeline samples these with their own LINEAR/CLAMP samplers (withSampler=true).
-    const VkDeviceSize imgSize = (VkDeviceSize)W * H * 4;
-    m_grassTex = createTexture(W, H, VK_FORMAT_R8G8B8A8_SRGB, pixels.data(), imgSize, /*withSampler=*/true, /*mipmapped=*/true);
-    m_grassOpacityTex = createTexture(W, H, VK_FORMAT_R8G8B8A8_UNORM, opacityPixels.data(), imgSize, /*withSampler=*/true);
-}
-
 TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
     VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped)
 {
@@ -1467,178 +1337,6 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     }
 
     return tex;
-}
-
-void VulkanContext::createTerrainTextureArray() {
-    struct TerrainLayerFile {
-        uint32_t layer;
-        const char* path;
-    };
-    static const TerrainLayerFile terrainLayerFiles[] = {
-        {0, "assets/textures/terrain/grass_top.png"},
-        {1, "assets/textures/terrain/grass_side.png"},
-        {2, "assets/textures/terrain/dirt.png"},
-        {3, "assets/textures/terrain/stone.png"},
-        {4, "assets/textures/terrain/wood.png"},
-        {5, "assets/textures/terrain/leaves.png"},
-        {6, "assets/textures/terrain/farmland.png"},
-        {7, "assets/textures/terrain/wheat.png"},
-        {8, "assets/textures/terrain/water.png"},
-    };
-
-    // Step 4b: authored terrain images override the procedural material masks per layer.
-    uint32_t W = 64, H = 64;
-    for (const TerrainLayerFile& file : terrainLayerFiles) {
-        if (!fileExists(file.path)) continue;
-        LoadedImageRGBA8 image = loadImageRGBA8(file.path);
-        W = (uint32_t)image.width;
-        H = (uint32_t)image.height;
-        break;
-    }
-
-    const uint32_t L = TERRAIN_TEX_LAYERS;
-    std::vector<uint8_t> pixels((size_t)W * H * 4 * L, 255);
-
-    auto smooth = [](float t) { return t * t * (3.0f - 2.0f * t); };
-    auto lerp   = [](float a, float b, float t) { return a + (b - a) * t; };
-    auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
-    auto fract = [](float v) { return v - std::floor(v); };
-    auto hash01 = [](int x, int y, int salt) -> float {
-        uint32_t h = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)salt * 83492791u;
-        h ^= h >> 13; h *= 1274126177u;
-        return (float)(h & 65535u) / 65535.0f;
-    };
-    // Tileable value noise: lattice coords wrap modulo (size/cell) so texture edges match.
-    auto tileNoise = [&](int x, int y, int cell, int salt) -> float {
-        const int cells = (int)W / cell;
-        auto wh = [&](int gx, int gy) { return hash01(((gx % cells) + cells) % cells, ((gy % cells) + cells) % cells, salt); };
-        const int gx = x / cell, gy = y / cell;
-        const float tx = smooth((float)(x - gx * cell) / (float)cell);
-        const float ty = smooth((float)(y - gy * cell) / (float)cell);
-        return lerp(lerp(wh(gx, gy), wh(gx + 1, gy), tx),
-                    lerp(wh(gx, gy + 1), wh(gx + 1, gy + 1), tx), ty);
-    };
-    auto fbm = [&](int x, int y, int salt) {
-        return tileNoise(x, y, 16, salt) * 0.50f +
-               tileNoise(x, y,  8, salt + 1) * 0.32f +
-               tileNoise(x, y,  4, salt + 2) * 0.18f;
-    };
-    auto wave = [](float t, float freq, float phase = 0.0f) {
-        return 0.5f + 0.5f * std::sin((t * freq + phase) * 6.28318530718f);
-    };
-    auto thinLine = [&](float t, float freq, float phase = 0.0f) {
-        float d = std::abs(fract(t * freq + phase) - 0.5f) * 2.0f;
-        return std::pow(1.0f - d, 9.0f);
-    };
-    auto writePixel = [&](uint32_t layer, uint32_t x, uint32_t y, glm::vec3 c) {
-        uint8_t* p = &pixels[(((size_t)layer * H + y) * W + x) * 4];
-        p[0] = (uint8_t)(clamp01(c.r) * 255.0f);
-        p[1] = (uint8_t)(clamp01(c.g) * 255.0f);
-        p[2] = (uint8_t)(clamp01(c.b) * 255.0f);
-        p[3] = 255;
-    };
-
-    for (uint32_t layer = 0; layer < L; layer++) {
-        const int salt = 100 + (int)layer * 37;
-        for (uint32_t y = 0; y < H; y++)
-        for (uint32_t x = 0; x < W; x++) {
-            const float u = ((float)x + 0.5f) / (float)W;
-            const float v = ((float)y + 0.5f) / (float)H;
-            const float n = fbm((int)x, (int)y, salt);
-            const float fine = tileNoise((int)x, (int)y, 2, salt + 7);
-
-            glm::vec3 c(0.9f);
-            switch (layer) {
-                case 0: { // Grass top: soft blades and clumps.
-                    float blades = wave(u + tileNoise((int)x, (int)y, 8, salt + 11) * 0.10f, 18.0f);
-                    float value = 0.78f + n * 0.15f + blades * 0.07f + fine * 0.03f;
-                    c = glm::vec3(value * 0.96f, value * 1.02f, value * 0.93f);
-                    break;
-                }
-                case 1: { // Grass side: dirt strata with a little root breakup.
-                    float strata = wave(v + n * 0.07f, 5.0f);
-                    float value = 0.72f + n * 0.15f + strata * 0.07f;
-                    c = glm::vec3(value * 1.02f, value * 0.93f, value * 0.82f);
-                    break;
-                }
-                case 2: { // Dirt: clods and small darker grains.
-                    float speck = hash01((int)x, (int)y, salt + 19) > 0.78f ? 1.0f : 0.0f;
-                    float value = 0.70f + n * 0.22f + fine * 0.05f - speck * 0.07f;
-                    c = glm::vec3(value * 1.03f, value * 0.92f, value * 0.78f);
-                    break;
-                }
-                case 3: { // Stone: mottled facets and hairline cracks.
-                    float crack = std::max(thinLine(u + n * 0.05f, 4.0f), thinLine(v + n * 0.05f, 4.0f));
-                    float value = 0.72f + n * 0.20f + fine * 0.04f - crack * 0.13f;
-                    c = glm::vec3(value * 0.96f, value * 0.98f, value * 1.02f);
-                    break;
-                }
-                case 4: { // Wood: broad grain lines.
-                    float grain = wave(u + tileNoise((int)x, (int)y, 16, salt + 23) * 0.18f, 9.0f);
-                    float ring = thinLine(u + n * 0.08f, 4.0f);
-                    float value = 0.68f + grain * 0.16f + n * 0.12f - ring * 0.06f;
-                    c = glm::vec3(value * 1.06f, value * 0.91f, value * 0.70f);
-                    break;
-                }
-                case 5: { // Leaves: clustered mottling.
-                    float spot = hash01((int)(x / 2), (int)(y / 2), salt + 31) > 0.70f ? 1.0f : 0.0f;
-                    float value = 0.76f + n * 0.17f + fine * 0.06f - spot * 0.06f;
-                    c = glm::vec3(value * 0.92f, value * 1.03f, value * 0.86f);
-                    break;
-                }
-                case 6: { // Farmland: tilled furrows.
-                    float furrow = wave(v + n * 0.04f, 6.0f);
-                    float darkLine = std::pow(1.0f - furrow, 3.0f);
-                    float value = 0.68f + n * 0.12f + furrow * 0.08f - darkLine * 0.13f;
-                    c = glm::vec3(value * 1.03f, value * 0.88f, value * 0.68f);
-                    break;
-                }
-                case 7: { // Wheat: thin stalk rhythm.
-                    float stalks = std::pow(wave(u + n * 0.07f, 14.0f), 2.5f);
-                    float value = 0.76f + n * 0.12f + stalks * 0.14f;
-                    c = glm::vec3(value * 1.06f, value * 0.98f, value * 0.70f);
-                    break;
-                }
-                case 8: { // Water: subtle placeholder ripples; a dedicated water pass comes later.
-                    float ripple = wave(u + v + n * 0.03f, 2.0f) * 0.55f +
-                                   wave(u - v + n * 0.03f, 3.0f) * 0.45f;
-                    float value = 0.83f + ripple * 0.04f + n * 0.025f;
-                    c = glm::vec3(value * 0.88f, value * 0.98f, value * 1.03f);
-                    break;
-                }
-                default: {
-                    float value = 0.74f + n * 0.24f;
-                    c = glm::vec3(value);
-                    break;
-                }
-            }
-
-            writePixel(layer, x, y, c);
-        }
-    }
-
-    auto copyLayerFromFile = [&](const TerrainLayerFile& file) {
-        if (!fileExists(file.path)) return;
-
-        LoadedImageRGBA8 image = loadImageRGBA8(file.path);
-        if ((uint32_t)image.width != W || (uint32_t)image.height != H) {
-            std::cerr << "Skipping terrain texture with mismatched size: " << file.path
-                      << " (" << image.width << "x" << image.height
-                      << ", expected " << W << "x" << H << ")\n";
-            return;
-        }
-
-        const size_t layerOffset = (size_t)file.layer * W * H * 4;
-        const size_t byteCount = (size_t)W * H * 4;
-        memcpy(pixels.data() + layerOffset, image.pixels.data(), byteCount);
-    };
-
-    for (const TerrainLayerFile& file : terrainLayerFiles) {
-        if (file.layer < L) copyLayerFromFile(file);
-    }
-
-    const VkDeviceSize size = (VkDeviceSize)W * H * 4 * L;
-    m_terrainTex = createTextureArray(W, H, L, VK_FORMAT_R8G8B8A8_SRGB, pixels.data(), size, /*withSampler=*/true, /*mipmapped=*/true);
 }
 
 // ============================================================
@@ -3003,7 +2701,10 @@ void VulkanContext::createShadowSampler() {
 //  Descriptor set layout
 // ============================================================
 void VulkanContext::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[8]{};
+    // Bindings 2-4 (grass/terrain) were removed with the farm world; ship textures keep
+    // their original binding numbers 5-7 so the live ship shaders need no changes. Vulkan
+    // permits the resulting non-contiguous binding set {0,1,5,6,7}.
+    VkDescriptorSetLayoutBinding bindings[5]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3015,39 +2716,24 @@ void VulkanContext::createDescriptorSetLayout() {
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[2].binding         = 2;
+    bindings[2].binding         = 5; // imported ship albedo
     bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[3].binding         = 3; // terrain texture array (sampler2DArray)
+    bindings[3].binding         = 6; // imported ship normal
     bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[4].binding         = 4; // grass opacity mask
+    bindings[4].binding         = 7; // imported ship specular
     bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[5].binding         = 5; // imported ship albedo
-    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    bindings[6].binding         = 6; // imported ship normal
-    bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[6].descriptorCount = 1;
-    bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    bindings[7].binding         = 7; // imported ship specular
-    bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[7].descriptorCount = 1;
-    bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 8;
+    info.bindingCount = 5;
     info.pBindings    = bindings;
 
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
@@ -3091,7 +2777,7 @@ void VulkanContext::createDescriptorPool() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 14; // main + reflection scene descriptors
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // main + reflection scene descriptors (4 samplers each)
 
     VkDescriptorPoolCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3126,21 +2812,6 @@ void VulkanContext::createDescriptorSets() {
         imageInfo.imageView   = m_shadowImageView;
         imageInfo.sampler     = m_shadowSampler;
 
-        VkDescriptorImageInfo grassInfo{};
-        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassInfo.imageView   = m_grassTex.view;
-        grassInfo.sampler     = m_grassTex.sampler;
-
-        VkDescriptorImageInfo grassOpacityInfo{};
-        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
-        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
-
-        VkDescriptorImageInfo terrainInfo{};
-        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        terrainInfo.imageView   = m_terrainTex.view;
-        terrainInfo.sampler     = m_terrainTex.sampler;
-
         VkDescriptorImageInfo shipAlbedoInfo{};
         shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
@@ -3156,7 +2827,7 @@ void VulkanContext::createDescriptorSets() {
         shipSpecularInfo.imageView   = m_shipSpecularTex.view;
         shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_descriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3173,47 +2844,26 @@ void VulkanContext::createDescriptorSets() {
 
         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet          = m_descriptorSets[i];
-        writes[2].dstBinding      = 2;
+        writes[2].dstBinding      = 5;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[2].descriptorCount = 1;
-        writes[2].pImageInfo      = &grassInfo;
+        writes[2].pImageInfo      = &shipAlbedoInfo;
 
         writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[3].dstSet          = m_descriptorSets[i];
-        writes[3].dstBinding      = 3;
+        writes[3].dstBinding      = 6;
         writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[3].descriptorCount = 1;
-        writes[3].pImageInfo      = &terrainInfo;
+        writes[3].pImageInfo      = &shipNormalInfo;
 
         writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[4].dstSet          = m_descriptorSets[i];
-        writes[4].dstBinding      = 4;
+        writes[4].dstBinding      = 7;
         writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
-        writes[4].pImageInfo      = &grassOpacityInfo;
+        writes[4].pImageInfo      = &shipSpecularInfo;
 
-        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet          = m_descriptorSets[i];
-        writes[5].dstBinding      = 5;
-        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &shipAlbedoInfo;
-
-        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet          = m_descriptorSets[i];
-        writes[6].dstBinding      = 6;
-        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &shipNormalInfo;
-
-        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[7].dstSet          = m_descriptorSets[i];
-        writes[7].dstBinding      = 7;
-        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &shipSpecularInfo;
-
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
 }
 
@@ -3240,21 +2890,6 @@ void VulkanContext::createReflectionDescriptorSets() {
         imageInfo.imageView   = m_shadowImageView;
         imageInfo.sampler     = m_shadowSampler;
 
-        VkDescriptorImageInfo grassInfo{};
-        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassInfo.imageView   = m_grassTex.view;
-        grassInfo.sampler     = m_grassTex.sampler;
-
-        VkDescriptorImageInfo grassOpacityInfo{};
-        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
-        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
-
-        VkDescriptorImageInfo terrainInfo{};
-        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        terrainInfo.imageView   = m_terrainTex.view;
-        terrainInfo.sampler     = m_terrainTex.sampler;
-
         VkDescriptorImageInfo shipAlbedoInfo{};
         shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
@@ -3270,7 +2905,7 @@ void VulkanContext::createReflectionDescriptorSets() {
         shipSpecularInfo.imageView   = m_shipSpecularTex.view;
         shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_reflectionDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3287,47 +2922,26 @@ void VulkanContext::createReflectionDescriptorSets() {
 
         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet          = m_reflectionDescriptorSets[i];
-        writes[2].dstBinding      = 2;
+        writes[2].dstBinding      = 5;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[2].descriptorCount = 1;
-        writes[2].pImageInfo      = &grassInfo;
+        writes[2].pImageInfo      = &shipAlbedoInfo;
 
         writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[3].dstSet          = m_reflectionDescriptorSets[i];
-        writes[3].dstBinding      = 3;
+        writes[3].dstBinding      = 6;
         writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[3].descriptorCount = 1;
-        writes[3].pImageInfo      = &terrainInfo;
+        writes[3].pImageInfo      = &shipNormalInfo;
 
         writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[4].dstSet          = m_reflectionDescriptorSets[i];
-        writes[4].dstBinding      = 4;
+        writes[4].dstBinding      = 7;
         writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
-        writes[4].pImageInfo      = &grassOpacityInfo;
+        writes[4].pImageInfo      = &shipSpecularInfo;
 
-        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet          = m_reflectionDescriptorSets[i];
-        writes[5].dstBinding      = 5;
-        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &shipAlbedoInfo;
-
-        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet          = m_reflectionDescriptorSets[i];
-        writes[6].dstBinding      = 6;
-        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &shipNormalInfo;
-
-        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[7].dstSet          = m_reflectionDescriptorSets[i];
-        writes[7].dstBinding      = 7;
-        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &shipSpecularInfo;
-
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
 }
 

@@ -58,8 +58,6 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createOceanMesh();
     createOceanNormalTextures();
     createOceanFFT();
-    createGrassTexture();
-    createTerrainTextureArray();
     createUniformBuffers();
     createReflectionUniformBuffers();
     createShadowSampler();
@@ -140,9 +138,6 @@ VulkanContext::~VulkanContext() {
     m_smaaSearchTex.destroy();
     vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
-    m_grassTex.destroy();
-    m_grassOpacityTex.destroy();
-    m_terrainTex.destroy();
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_sceneLoadRenderPass,     nullptr);

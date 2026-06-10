@@ -197,9 +197,7 @@ private:
     TextureResource createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
     void loadImportedShipMesh();
-    void createGrassTexture();
     void createOceanNormalTextures();
-    void createTerrainTextureArray();
     void createUniformBuffers();
     void createReflectionUniformBuffers();
     void createDescriptorPool();
@@ -461,17 +459,9 @@ private:
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
 
-    // Grass blade textures (sampled by the grass card pipeline). The opacity mask is
-    // split out so foliage material maps can expand without repacking the color image.
-    TextureResource m_grassTex;
-    TextureResource m_grassOpacityTex;
-
     // Multi-scale ocean normal maps (UNORM, mipmapped, anisotropic).
     TextureResource m_oceanNormalA;
     TextureResource m_oceanNormalB;
-
-    // Terrain material texture array (sampler2DArray, one layer per tile material).
-    TextureResource m_terrainTex;
 
 
     // UI / hotbar — one buffer per frame in flight (avoids overwrite while GPU still reads)
