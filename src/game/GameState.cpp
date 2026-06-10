@@ -200,6 +200,15 @@ void GameState::setPlayerPosition(const glm::vec3& pos) {
     m_ship.yawRate  = 0.0f;
 }
 
+void GameState::setShipState(const ShipState& s) {
+    m_ship = s;
+    // Re-sync the legacy Player mirror immediately (same shim as update()) so
+    // camera snap and chunk streaming see the restored position this frame.
+    constexpr float kShipDeckZ = 1.0f;
+    m_player.setPosition(glm::vec3(m_ship.position.x, m_ship.position.y, kShipDeckZ));
+    m_player.setFacingDirection(glm::vec2(std::cos(m_ship.heading), std::sin(m_ship.heading)));
+}
+
 void GameState::setTime(float t) {
     m_time      = t;
     m_day       = static_cast<int>(m_time / DAY_DURATION);

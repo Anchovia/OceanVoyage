@@ -65,6 +65,9 @@ public:
     float time()      const { return m_time; }
 
     void setPlayerPosition(const glm::vec3& pos);
+    // Restores the full sailing state (position/velocity/heading/yawRate/
+    // throttle/rudder) from a save and re-syncs the legacy Player mirror.
+    void setShipState(const ShipState& s);
     void setTime(float t);
     void setInventory(const std::array<ItemStack, INV_SLOTS>& inv);
     void setDrops(const std::vector<DroppedItem>& drops);

@@ -43,6 +43,7 @@ endif()
 add_executable(engine
     src/main.cpp
     src/game/GameState.cpp
+    src/game/VoyageSave.cpp
     src/platform/Window.cpp
     src/renderer/VulkanContext.cpp
     src/renderer/VulkanContext_Init.cpp

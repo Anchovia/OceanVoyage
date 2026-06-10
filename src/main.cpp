@@ -1,12 +1,11 @@
 #include "game/GameState.h"
+#include "game/VoyageSave.h"
 #include "platform/Window.h"
 #include "platform/InputManager.h"
 #include "renderer/VulkanContext.h"
 #include "world/World.h"
 #include "world/Chunk.h"
 #include <iostream>
-#include <array>
-#include <vector>
 #include <cmath>
 #include "game/Camera.h"
 
@@ -243,15 +242,12 @@ int main() {
         glm::ivec2 lastPlayerChunk{0, 0};
 
         auto startWorldSession = [&]() {
-            glm::vec3 savedPos;
-            float     savedTime;
-            std::array<ItemStack, INV_SLOTS> savedInv;
-            std::vector<DroppedItem>         savedDrops;
-            if (world.load("save.dat", savedPos, savedTime, savedInv, savedDrops)) {
-                gameState.setPlayerPosition(savedPos);
-                gameState.setTime(savedTime);
-                gameState.setInventory(savedInv);
-                gameState.setDrops(savedDrops);
+            // VoyageSave ("OVYG") restores the sailing state. A legacy farm
+            // "PFRM" save.dat fails the magic check and starts a new game.
+            VoyageSave::Data saved;
+            if (VoyageSave::load("save.dat", saved)) {
+                gameState.setTime(saved.gameTime);
+                gameState.setShipState(saved.ship);
             }
 
             lastPlayerChunk = World::chunkCoord(
@@ -340,8 +336,7 @@ int main() {
 
             // Ctrl+S save (edge-detect)
             if (worldSessionStarted && app.consumeSavePress(input.saveKey))
-                world.save("save.dat", gameState.player().position(), gameState.time(),
-                           gameState.inventory(), gameState.drops());
+                VoyageSave::save("save.dat", VoyageSave::Data{ gameState.time(), gameState.ship() });
 
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
