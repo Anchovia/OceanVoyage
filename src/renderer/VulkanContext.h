@@ -117,6 +117,9 @@ struct FrameRenderData {
     int                                      cargoUsed;
     int                                      cargoCapacity;
     int                                      money;
+    bool                                     canDock;        // sailing, in range, slow enough to dock
+    bool                                     docked;         // port menu open (anchored)
+    const char*                              portName;       // docked port display name (uppercase); may be null
 };
 
 class VulkanContext {
@@ -490,6 +493,9 @@ private:
     int                      m_cargoUsedHud    = 0;
     int                      m_cargoCapHud     = 0;
     int                      m_moneyHud        = 0;
+    bool                     m_canDockHud      = false;
+    bool                     m_dockedHud       = false;
+    const char*              m_portNameHud     = nullptr; // points at static port name literals
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;

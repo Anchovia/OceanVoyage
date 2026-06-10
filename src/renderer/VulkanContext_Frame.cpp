@@ -564,6 +564,9 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_cargoUsedHud     = frame.cargoUsed;
     m_cargoCapHud      = frame.cargoCapacity;
     m_moneyHud         = frame.money;
+    m_canDockHud       = frame.canDock;
+    m_dockedHud        = frame.docked;
+    m_portNameHud      = frame.portName;
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;
@@ -1137,8 +1140,28 @@ void VulkanContext::updateHotbar() {
         pushNumber(m_moneyHud, vx, hy, gpx, col);
         hy += lh;
 
-        if (m_nearPortHud)
+        // Docking hint: actionable beats informational.
+        if (!m_dockedHud && m_canDockHud)
+            pushText("PRESS ENTER TO DOCK", lx, hy, gpx, {0.95f, 0.85f, 0.45f, 0.95f});
+        else if (!m_dockedHud && m_nearPortHud)
             pushText("NEAR PORT", lx, hy, gpx, {0.95f, 0.85f, 0.45f, 0.95f});
+    }
+
+    // Port menu (docked): port name + actions. Drawn under the pause overlay so
+    // pausing while docked still dims the menu.
+    if (m_dockedHud && !m_pausedHud) {
+        pushCenteredText(m_portNameHud ? m_portNameHud : "PORT",
+                         H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 0.95f});
+        const char* rows[] = { "SET SAIL", "TRADE" };
+        for (int i = 0; i < 2; ++i) {
+            float rx, ry, rw, rh;
+            portMenuRowRect(i, W, H, rx, ry, rw, rh);
+            pushQuad(rx, ry, rw, rh, {0.12f, 0.14f, 0.13f, 0.88f});
+            // TRADE is a placeholder until the market arrives (3c-2): drawn dim.
+            const glm::vec4 rowCol = (i == 1) ? glm::vec4{0.55f, 0.55f, 0.50f, 0.55f}
+                                              : glm::vec4{0.95f, 0.92f, 0.82f, 0.92f};
+            pushCenteredText(rows[i], ry + 9.0f, 5.0f, rowCol);
+        }
     }
 
     if (m_pausedHud) {

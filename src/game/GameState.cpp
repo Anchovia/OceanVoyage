@@ -23,6 +23,7 @@ constexpr float kThrottleRate       = 0.8f;  // throttle change per second while
 constexpr float kThrottleReturn     = 0.5f;  // throttle ease-back per second with no input
 constexpr float kRudderRate         = 2.5f;  // rudder change per second while keyed
 constexpr float kRudderReturn       = 3.0f;  // rudder centering per second with no input
+constexpr float kDockMaxSpeed       = 2.0f;  // ship must be this slow (units/s) to dock
 
 // Move v toward 0 by at most `amount`.
 float approachZero(float v, float amount) {
@@ -38,8 +39,39 @@ void GameState::update(float dt, const PlayerInput& input) {
     m_day = static_cast<int>(m_time / DAY_DURATION);
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
 
+    // Docking (Enter, edge-detected): anchor at the nearby port and open the
+    // port menu. Undocking happens through the menu (setSail).
+    const bool dockPressed = input.dockKey && !m_prevDockKey;
+    m_prevDockKey = input.dockKey;
+    if (m_mode == GameMode::Sailing && dockPressed && canDock()) {
+        for (size_t i = 0; i < m_ports.size(); i++) {
+            if (glm::length(m_ports[i].position - m_ship.position) <= m_ports[i].radius) {
+                m_mode            = GameMode::Docked;
+                m_dockedPortIndex = (int)i;
+                m_ship.velocity   = glm::vec2(0.0f);
+                m_ship.yawRate    = 0.0f;
+                m_ship.throttle   = 0.0f;
+                m_ship.rudder     = 0.0f;
+                break;
+            }
+        }
+    }
+
+    // While docked the ship stays anchored: no physics integration. Buoyancy
+    // still floats the hull visually (renderer-side FFT readback).
+    if (m_mode == GameMode::Docked)
+        return;
+
     // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
     updateShipPhysics(dt, input);
+}
+
+bool GameState::canDock() const {
+    if (m_mode != GameMode::Sailing) return false;
+    if (glm::length(m_ship.velocity) > kDockMaxSpeed) return false;
+    for (const Port& p : m_ports)
+        if (glm::length(p.position - m_ship.position) <= p.radius) return true;
+    return false;
 }
 
 void GameState::updateShipPhysics(float dt, const PlayerInput& input) {

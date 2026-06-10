@@ -31,6 +31,14 @@ inline void settingsRowRect(int i, float screenW, float screenH, float& x, float
     y = screenH * 0.5f - 12.0f + i * (h + SETTINGS_ROW_GAP);
 }
 
+// Screen-space rect of port-menu row `i`: 0=Set Sail, 1=Trade.
+inline void portMenuRowRect(int i, float screenW, float screenH, float& x, float& y, float& w, float& h) {
+    w = SETTINGS_ROW_W;
+    h = SETTINGS_ROW_H;
+    x = (screenW - w) * 0.5f;
+    y = screenH * 0.5f - 12.0f + i * (h + SETTINGS_ROW_GAP);
+}
+
 // Imported hero ship vertex: textured material path with tangent-space normal mapping.
 struct ShipVertex {
     glm::vec3 pos;

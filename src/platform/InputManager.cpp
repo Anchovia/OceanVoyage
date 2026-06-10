@@ -39,6 +39,7 @@ PlayerInput InputManager::pollInput() {
     input.rotateLeft  = glfwGetKey(win, GLFW_KEY_Q)      == GLFW_PRESS;
     input.rotateRight = glfwGetKey(win, GLFW_KEY_E)      == GLFW_PRESS;
     input.saveKey     = ctrlHeld && glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS;
+    input.dockKey     = glfwGetKey(win, GLFW_KEY_ENTER)  == GLFW_PRESS;
     input.toggleDevUi = glfwGetKey(win, GLFW_KEY_F3)     == GLFW_PRESS;
 
     return input;

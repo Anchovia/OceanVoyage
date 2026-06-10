@@ -20,6 +20,7 @@ struct AppFlow {
     bool prevEsc = false;
     bool prevMenuClick = false;
     bool prevPauseClick = false;
+    bool prevPortClick = false;
     bool prevCtrlS = false;
     AppMode settingsReturnMode = AppMode::MainMenu;
 #ifdef PASTEL_DEV_BUILD
@@ -79,6 +80,22 @@ struct AppFlow {
             }
         }
         prevPauseClick = input.leftClick;
+        return action;
+    }
+
+    int consumePortMenuClick(const PlayerInput& input, bool docked) {
+        int action = 0; // 0=none, 1=set sail, 2=trade
+        if (mode == AppMode::Gameplay && docked && input.leftClick && !prevPortClick) {
+            float x, y, w, h;
+            for (int i = 0; i < 2; ++i) {
+                portMenuRowRect(i, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
+                if (input.mouseX >= x && input.mouseX <= x + w &&
+                    input.mouseY >= y && input.mouseY <= y + h) {
+                    action = i + 1;
+                }
+            }
+        }
+        prevPortClick = input.leftClick;
         return action;
     }
 
@@ -186,6 +203,7 @@ static void clearGameplayInput(PlayerInput& input) {
     input.rightClick      = false;
     input.rotateLeft      = false;
     input.rotateRight     = false;
+    input.dockKey         = false;
     input.scrollDelta     = 0;
 }
 
@@ -297,6 +315,13 @@ int main() {
                 clearGameplayInput(input);
             }
 
+            // Port menu (docked): SET SAIL returns to sailing. TRADE opens the
+            // market when it arrives (3c-2); the button is drawn dim until then.
+            const int portClickAction =
+                app.consumePortMenuClick(input, gameState.mode() == GameMode::Docked);
+            if (portClickAction == 1)
+                gameState.setSail();
+
             applyAppModeInputPolicy(input, app.mode);
 
             const float rotSpeed = 90.0f * dt;
@@ -329,13 +354,16 @@ int main() {
             glm::vec2 portDir{0.0f, 0.0f};
             const Port* nearestPort = gameState.nearestPort(portDistance, portDir);
             const bool nearPort = nearestPort && portDistance <= nearestPort->radius;
+            const Port* dockedPort = gameState.dockedPort();
 
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(),
                 app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode,
                 portDistance, portDir, nearPort,
-                gameState.cargo().used(), gameState.cargo().capacity, gameState.money()
+                gameState.cargo().used(), gameState.cargo().capacity, gameState.money(),
+                gameState.canDock(), dockedPort != nullptr,
+                dockedPort ? dockedPort->name : nullptr
             });
 
             if (pendingWorldStart && app.loading()) {

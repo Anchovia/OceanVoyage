@@ -18,6 +18,7 @@ struct PlayerInput {
     bool rotateLeft      = false;  // Q
     bool rotateRight     = false;  // E
     bool saveKey         = false;  // Ctrl+S (raw; main edge-detects)
+    bool dockKey         = false;  // Enter (raw; GameState edge-detects docking)
     bool toggleDevUi     = false;  // F3 (dev builds; main edge-detects)
     int  scrollDelta = 0;   // scroll wheel steps (camera zoom)
     int windowWidth = 1280;
@@ -67,6 +68,11 @@ struct CargoHold {
     }
 };
 
+// Gameplay mode, independent of the app flow (menu/settings/pause).
+// Sailing = free movement on the open sea; Docked = anchored at a port with
+// the port menu open (set sail / trade).
+enum class GameMode { Sailing, Docked };
+
 class GameState {
 public:
     void update(float dt, const PlayerInput& input);
@@ -85,6 +91,16 @@ public:
     // Nearest port to the ship, with distance and a normalized world-space
     // direction toward it. Returns nullptr only if no ports exist.
     const Port* nearestPort(float& outDistance, glm::vec2& outDir) const;
+
+    GameMode mode() const { return m_mode; }
+    // True while sailing inside a port's radius slowly enough to dock.
+    bool canDock() const;
+    // Port the ship is docked at (nullptr while sailing).
+    const Port* dockedPort() const {
+        return (m_mode == GameMode::Docked) ? &m_ports[(size_t)m_dockedPortIndex] : nullptr;
+    }
+    // Leaves the port menu and returns to sailing (ship starts at rest).
+    void setSail() { m_mode = GameMode::Sailing; m_dockedPortIndex = -1; }
 
     const CargoHold& cargo() const { return m_cargo; }
     int money() const { return m_money; }
@@ -105,6 +121,10 @@ private:
     void updateShipPhysics(float dt, const PlayerInput& input);
 
     ShipState m_ship;
+
+    GameMode m_mode            = GameMode::Sailing;
+    int      m_dockedPortIndex = -1;
+    bool     m_prevDockKey     = false; // edge-detect for the dock key
 
     // First port sits ~200 m ahead of the initial ship heading (-Y), so a short
     // straight sail reaches it. Becomes data-driven with OceanWorld (Phase 5).
