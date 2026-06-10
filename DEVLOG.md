@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-10 — 죽은 frustum 멤버 제거 (Phase 2d 후속 정리)
+
+- 농장 청크/오브젝트 컬링에 쓰이던 `m_frustum`/`m_reflectionFrustum`이 해당 렌더 제거(2d-1~4) 후 write-only(대입만, read 0)로 남음 → 제거. **빌드·동작 검증 완료(시각 변화 없음).**
+- 제거: 멤버 2개(`VulkanContext.h`), `#include "renderer/Frustum.h"`, `drawFrame`/`updateUniformBuffer`의 `Frustum::extractFrom` 대입 2개(`_Frame`).
+- 유지: `Frustum.h`(Gribb-Hartmann 평면 추출 + AABB 컬링) — 향후 섬·항구 프러스텀 컬링용 휴면 유틸. `ubo.reflectionViewProj`는 GPU 전송분이라 유지.
+- 수정: `VulkanContext.h`/`_Frame`.
+
 ### 2026-06-10 — 공유 씬 디스크립터에서 죽은 grass/terrain 제거 (ROADMAP Phase 2d-5b)
 
 - 2d-5c에서 미뤘던 항목 완료. 공유 scene/reflection 디스크립터의 죽은 grass/terrain 텍스처 바인딩 제거. **빌드·동작 검증 완료(선박·하늘·그림자·반사·바다 정상, 화면 변화 없음).**
