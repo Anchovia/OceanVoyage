@@ -148,50 +148,6 @@ void VulkanContext::buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk) {
     memcpy(iMapped, indices.data(), iSize);
     vkUnmapMemory(m_device, data.indexBuffer.memory);
 
-    // Object instances change only when blocking objects change.
-    if (chunk.objectsDirty) {
-        buildChunkObjectBuffer(coord, chunk);
-        chunk.objectsDirty = false;
-    }
-}
-
-// ============================================================
-//  Per-chunk object (tree) instance buffer
-// ============================================================
-void VulkanContext::buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk) {
-    auto& data = m_chunkBuffers[coord];
-
-    // Release any previously built groups (GPU may still be reading them)
-    for (auto& g : data.objGroups)
-        deferDestroy(std::move(g.buffer));
-    data.objGroups.clear();
-
-    if (chunk.objects.empty()) return;
-
-    // Group object instances by type — one instance buffer per type present
-    std::array<std::vector<ObjectInstance>, (size_t)ObjectType::COUNT> byType;
-    for (const auto& o : chunk.objects)
-        byType[(size_t)o.type].push_back({ o.pos, o.scale, o.rot });
-
-    for (size_t t = 0; t < byType.size(); t++) {
-        const auto& insts = byType[t];
-        if (insts.empty()) continue;
-
-        ChunkRenderData::ObjGroup group;
-        group.type  = (ObjectType)t;
-        group.count = (uint32_t)insts.size();
-
-        VkDeviceSize oSize = sizeof(ObjectInstance) * insts.size();
-        group.buffer = createBuffer(oSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        void* oMapped;
-        vkCheck(vkMapMemory(m_device, group.buffer.memory, 0, oSize, 0, &oMapped),
-            "Failed to map chunk object instance buffer");
-        memcpy(oMapped, insts.data(), oSize);
-        vkUnmapMemory(m_device, group.buffer.memory);
-
-        data.objGroups.push_back(std::move(group));
-    }
 }
 
 // ============================================================
@@ -204,8 +160,6 @@ void VulkanContext::rebuildDirtyChunks() {
             auto& d = it->second;
             deferDestroy(std::move(d.vertexBuffer));
             deferDestroy(std::move(d.indexBuffer));
-            for (auto& g : d.objGroups)
-                deferDestroy(std::move(g.buffer));
             it = m_chunkBuffers.erase(it);
         } else {
             ++it;

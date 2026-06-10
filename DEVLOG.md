@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 오브젝트 dressing 렌더·빌더 제거 (ROADMAP Phase 2d-3a)
+
+- 농장 오브젝트(나무/바위) dressing은 `placeTrees`/`placeRocks` 미호출(객체 0)인 물 월드에서 항상 빈 렌더 → 제거(117줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: object draw 3블록(shadow/reflection/scene), `buildChunkObjectBuffer`(호출+정의), `objectsDirty` 블록, `rebuildDirtyChunks` objGroups 정리, 선언, `ChunkRenderData::ObjGroup` 구조체 + `objGroups` 필드.
+- renderer가 더 이상 `chunk.objectsDirty`를 읽지 않음(world/Chunk.h 필드는 게임측 유지).
+- 유지: `m_objectMeshes`·object/shadowObject 파이프라인(죽었지만 생성/파괴만) → 2d-3b. `ObjectMesh` 구조체는 ship(`m_shipMesh`)이 사용하므로 유지.
+- 수정: `VulkanContext.h`/`_Chunk`/`_Frame`.
+
 ### 2026-06-09 — 지면 dressing(ground patch/pebble) 렌더 제거 (ROADMAP Phase 2d-2)
 
 - 농장 지면 dressing(ground patch + pebble)은 grass/dirt 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(232줄). **빌드·동작 검증 완료(화면 변화 없음).**

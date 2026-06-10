@@ -172,7 +172,6 @@ private:
     void createDescriptorSetLayout();
     void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
     void rebuildDirtyChunks();
     void createUIPipeline();
     void createUIBuffer();
@@ -451,13 +450,6 @@ private:
         GpuBuffer      vertexBuffer;
         GpuBuffer      indexBuffer;
         uint32_t       indexCount   = 0;
-        // Per-chunk object instances, one buffer group per ObjectType present
-        struct ObjGroup {
-            ObjectType     type   = ObjectType::TREE;
-            GpuBuffer      buffer;
-            uint32_t       count  = 0;
-        };
-        std::vector<ObjGroup> objGroups;
     };
     std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
     Frustum                  m_frustum;

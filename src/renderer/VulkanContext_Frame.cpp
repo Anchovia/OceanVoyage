@@ -314,30 +314,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
             }
 
-            // Objects cast shadows too — per-type mesh, instanced, reuse the light frustum cull
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowObjectPipeline);
-                vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-                for (auto& [coord, data] : m_chunkBuffers) {
-                    if (data.objGroups.empty()) continue;
-
-                    glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                    glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                    if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                    for (auto& g : data.objGroups) {
-                        if (!objectDef(g.type).castShadow) continue;
-                        const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                        if (mesh.count == 0 || g.count == 0) continue;
-                        VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                        VkDeviceSize offs[] = { 0, 0 };
-                        vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                        vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-                    }
-                }
-            }
-
             // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
             // push lightMVP * shipModel so the tilted hull casts a correct shadow.
             if (m_shipMesh.count > 0) {
@@ -397,24 +373,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
         }
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.objGroups.empty()) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            for (auto& g : data.objGroups) {
-                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                if (mesh.count == 0 || g.count == 0) continue;
-                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-            }
-        }
-
         if (m_shipMesh.count > 0) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -469,27 +427,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
         vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-    }
-
-    // Objects — per-type mesh, instanced per chunk
-    {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.objGroups.empty()) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            for (auto& g : data.objGroups) {
-                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                if (mesh.count == 0 || g.count == 0) continue;
-                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-            }
-        }
     }
 
     // Refraction/depth seed for water. The ship is drawn again after the ocean for final
