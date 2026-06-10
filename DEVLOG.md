@@ -6,6 +6,15 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — dead 셰이더·빈 청크 TU CMake 정리 (ROADMAP Phase 2d-5c)
+
+- 2d 제거로 죽은 셰이더를 CMake(컴파일 목록·복사 명령)에서 빼고 파일 삭제, 빈 `VulkanContext_Chunk.cpp`를 소스 목록·파일에서 제거.
+- 삭제(10): `triangle.vert/.frag`(player 큐브), `chunk.vert/.frag`(청크·오브젝트 reuse), `object.vert`, `grass.vert/.frag`, `shadow_object.vert`, `shadow_grass.vert/.frag` + `VulkanContext_Chunk.cpp`.
+- 유지: ui/ship/ocean*/`shadow.vert`/sky/post/smaa.
+- 검증: 코드에서 삭제 셰이더 참조 0. **⚠️ CMake 변경이라 클린 빌드로 검증 권장.**
+- **미완(2d-5b)**: 공유 디스크립터의 grass/terrain 텍스처(`m_terrainTex`/`createTerrainTextureArray`/`m_grassTex`/`m_grassOpacityTex`) 제거는 **디스크립터 레이아웃↔셰이더 바인딩 좌표가 얽혀** 있어 빌드 열고 별도 진행 권장(무해한 dead GPU 메모리). 죽은 `m_frustum`/`m_reflectionFrustum`도 함께 검토.
+- 수정: `CMakeLists.txt`, 셰이더/소스 파일 10+1 삭제.
+
 ### 2026-06-09 — 렌더러-World 분리 완료 (ROADMAP Phase 2d-5a)
 
 - **렌더러가 `World`를 완전히 모르게 됨(Phase 2d 핵심 달성).** 생성자 `VulkanContext(Window&, World&)` → **`VulkanContext(Window&)`**, `m_world` 멤버·world include·`class World;` 전방선언·dev UI 청크수 줄 제거. `main.cpp`는 `VulkanContext ctx(window)`.

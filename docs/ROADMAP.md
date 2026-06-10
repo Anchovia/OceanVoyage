@@ -18,7 +18,7 @@
 |---|---|---|---|
 | **0** | 기준점 고정 (현재 빌드 회귀 확인) | 🔶 | `RUN_CHECKLIST.md` |
 | **1** | 기본 선박 상태와 항해 물리 | 🔶 1차 완료 | `MIGRATION_PLAN.md` Phase 3 |
-| **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔴 | `MIGRATION_PLAN.md` Phase 4 |
+| **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔶 핵심 완료 | `MIGRATION_PLAN.md` Phase 4 |
 | **3** | VoyageSave + 항구/화물/교역 1차 | 🔴 | `MIGRATION_PLAN.md` Phase 5 |
 | **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔴 | `ENGINE_TODO.md` P1/P2 |
 | **5** | 세계 표현: 항구·섬·풍향·항로 | 🔴 | `ARCHITECTURE.md` (OceanWorld) |
@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질)은 달성됐고, **Phase 1 항해 물리 1차도 도입·검증 완료**(2026-06-09) — 배가 관성·선회반경을 가지고 움직인다. 다음 본작업은 **Phase 2(농장 구조 제거 + 렌더 데이터 경계)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다. (Phase 1의 `FrameRenderData` `player*`→`ship*` 이름 정리·`Player` 제거는 Phase 2와 함께 처리.)
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. **남은 잔불**: ① 2d-5b — 공유 디스크립터의 죽은 grass/terrain 텍스처 제거(레이아웃↔셰이더 좌표 얽힘, 빌드 열고), ② 게임측 농장 레거시(`GameState` inventory/drops/craft, `World` 청크 스트리밍)는 Phase 3 VoyageSave에서 정리. 다음 본작업은 **Phase 3(VoyageSave + 항구/화물/교역 1차)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
 
 ---
 
@@ -109,25 +109,29 @@ position += velocity * dt
 
 **목표:** 렌더러가 게임 규칙을 모르게 하고, 화면에서 농장 UI를 걷어낸다. 큰 삭제는 대체 구조가 생긴 뒤 작은 커밋으로.
 
-### 2a. FrameRenderData 정리
-- [ ] 유지: camera, ship position/velocity/heading, time, timeOfDay, menu/settings/loading/paused, vsync, aaMode
-- [ ] 분리/제거: targetTile, hotbarSelected, inventory, inventoryOpen, drops, nearWorkbench
-- [ ] HUD용 데이터는 작은 nested struct(`ShipHudData { speed; heading; throttle; rudder; }`)로 분리 — 렌더러가 `GameState`/inventory를 몰라도 HUD를 그릴 수 있게
+**상태(2026-06-09): 렌더러측 핵심 완료.** `VulkanContext`는 `World&`를 받지 않고(`VulkanContext(Window&)`), `World`/`TileType`/inventory 의존이 0이다. 아래 2a~2d는 ~10개 빌드 검증 슬라이스로 나눠 적용·검증 완료. 남은 것은 2d-5b(죽은 텍스처) + 게임측 농장 레거시(Phase 3).
 
-### 2b. 농장 HUD → 선박 HUD
-- [ ] hotbar / inventory overlay / crafting panel 숨김(1차는 삭제보다 비활성), I키 inventory 토글 비활성
-- [ ] 최소 선박 HUD: `SPD`, `HDG`(deg, 0~360 wrap), `THR`, `RUD`. 기존 UI draw helper 재사용, 새 폰트/의존성 금지
-- [ ] 메뉴/설정/로딩 UI는 유지(앱 흐름은 건드리지 않음)
-- 닿는 파일: `VulkanContext_Frame.cpp` (hotbar ~1351, inventory ~1379, crafting ~1415)
+### 2a. FrameRenderData 정리 ✅
+- [x] 유지: camera, ship position/velocity/heading/throttle/rudder, gameTime, timeOfDay, menu/settings/loading/paused, vsync, aaMode
+- [x] 제거: targetTile, hotbarSelected, inventory, inventoryOpen, drops, nearWorkbench, day
+- [x] HUD용 ship 데이터(speed/heading/throttle/rudder)를 frame.ship*로 전달 — 렌더러가 `GameState`/inventory를 몰라도 HUD를 그림
 
-### 2c. 농장 상호작용 제거
-- [ ] `targetTile`/selector draw, 마우스 ray tile picking, `nearWorkbench`, drops pickup을 gameplay update에서 제거
-- [ ] `GameState::craft`/`craftingRecipes`/`Recipe`/`ItemType`(tool/seed/workbench)는 사용처 확인 후 단계적 제거
+### 2b. 농장 HUD → 선박 HUD ✅
+- [x] hotbar/inventory/crafting/selector/drops 렌더 제거, I키 inventory 토글 비활성
+- [x] 최소 선박 HUD: `SPD`, `HDG`, `THR`, `RUD` (기존 vector-font helper 재사용, 새 의존성 없음)
+- [x] 메뉴/설정/로딩 UI 유지
 
-### 2d. 렌더러-World 분리 1차
-- [ ] 항해 모드에서 청크 스트리밍 필요성 판단(현재 물 타일은 메시에서 스킵 → 섬/항구 전엔 거의 불필요)
-- [ ] `renderLegacyWorld` 같은 bool로 청크 렌더 경로를 분기/격리 → 최종적으로 `VulkanContext` 생성자에서 `World&` 제거 준비
-- [ ] 목표 구조: `GameState → RenderSceneSnapshot 생성 → VulkanContext::drawFrame(snapshot)`. 스냅샷엔 `TileType`/`ItemType`/recipe/inventory 규칙이 들어가지 않음
+### 2c. 농장 상호작용 제거 ✅
+- [x] `targetTile`/selector, 마우스 tile picking, `nearWorkbench`, drops pickup, `canOccupy`를 gameplay update에서 제거
+- [x] `GameState::update` 시그니처를 `update(dt, input)`로 축소(Camera/World 인자 제거), 농장 include 제거
+- 비고: `craft`/`Recipe`/`ItemType`/`m_inventory`/`m_drops`는 아직 `GameState`에 남아 있음(현재 save가 사용) → Phase 3 VoyageSave에서 정리
+
+### 2d. 렌더러-World 분리 ✅ (핵심)
+- [x] 전수 물 타일 월드에선 청크·dressing·오브젝트 메시가 전부 빈 메시 → 시각 변화 0 확인 후 제거
+- [x] 청크/grass/ground/pebble/object 렌더·파이프라인·메시·빌더 제거(2d-1~2d-4)
+- [x] `VulkanContext` 생성자에서 `World&` 제거, `m_world` 멤버·`world/World.h` include 제거(2d-5a)
+- [x] 죽은 셰이더 10종 + 빈 `VulkanContext_Chunk.cpp`를 CMake·디스크에서 제거(2d-5c)
+- [ ] **2d-5b(미완)**: 공유 디스크립터에 남은 죽은 grass/terrain 텍스처(`m_terrainTex`/`createTerrainTextureArray`/`m_grassTex`/`m_grassOpacityTex`)와 그 디스크립터 write 제거. 죽은 `m_frustum`/`m_reflectionFrustum`도 검토. **레이아웃↔셰이더 바인딩 좌표가 얽혀 빌드 열고 진행 권장**(무해한 dead 자원이라 비차단)
 
 **검증:** 화면에서 농장 UI가 사라지고 항해 HUD가 보임. 저장/로드는 기존대로 무크래시 유지. 자세한 제거 순서·조건은 `MIGRATION_PLAN.md` Phase 4, `CODE_CLASSIFICATION.md` 참고.
 
