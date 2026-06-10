@@ -59,11 +59,77 @@ void GameState::update(float dt, const PlayerInput& input) {
 
     // While docked the ship stays anchored: no physics integration. Buoyancy
     // still floats the hull visually (renderer-side FFT readback).
-    if (m_mode == GameMode::Docked)
+    if (m_mode == GameMode::Docked) {
+        updateMarket(input);
         return;
+    }
 
     // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
     updateShipPhysics(dt, input);
+}
+
+void GameState::updateMarket(const PlayerInput& input) {
+    const bool upPressed   = input.menuUp   && !m_prevMenuUp;
+    const bool downPressed = input.menuDown && !m_prevMenuDown;
+    const bool buyPressed  = input.buyKey   && !m_prevBuyKey;
+    const bool sellPressed = input.sellKey  && !m_prevSellKey;
+    m_prevMenuUp   = input.menuUp;
+    m_prevMenuDown = input.menuDown;
+    m_prevBuyKey   = input.buyKey;
+    m_prevSellKey  = input.sellKey;
+
+    if (!m_marketOpen || m_dockedPortIndex < 0)
+        return;
+    Port& port = m_ports[(size_t)m_dockedPortIndex];
+    if (port.market.empty())
+        return;
+
+    const int rowCount = (int)port.market.size();
+    if (upPressed)   m_marketSelected = std::max(0, m_marketSelected - 1);
+    if (downPressed) m_marketSelected = std::min(rowCount - 1, m_marketSelected + 1);
+    m_marketSelected = std::clamp(m_marketSelected, 0, rowCount - 1);
+
+    MarketEntry& entry = port.market[(size_t)m_marketSelected];
+    if (buyPressed && entry.stock > 0 && m_money >= entry.buyPrice
+        && m_cargo.used() < m_cargo.capacity) {
+        m_money -= entry.buyPrice;
+        entry.stock -= 1;
+        cargoAdd(entry.good, 1);
+    }
+    if (sellPressed && cargoRemove(entry.good, 1)) {
+        m_money += entry.sellPrice;
+        entry.stock += 1;
+    }
+}
+
+int GameState::cargoCount(CargoGoodId good) const {
+    int total = 0;
+    for (const CargoStack& s : m_cargo.stacks)
+        if (s.good == good) total += s.count;
+    return total;
+}
+
+void GameState::cargoAdd(CargoGoodId good, int count) {
+    for (CargoStack& s : m_cargo.stacks) {
+        if (s.good == good) {
+            s.count += count;
+            return;
+        }
+    }
+    m_cargo.stacks.push_back({ good, count });
+}
+
+bool GameState::cargoRemove(CargoGoodId good, int count) {
+    // cargoAdd always merges, so each good has at most one stack.
+    for (auto it = m_cargo.stacks.begin(); it != m_cargo.stacks.end(); ++it) {
+        if (it->good != good) continue;
+        if (it->count < count) return false;
+        it->count -= count;
+        if (it->count == 0)
+            m_cargo.stacks.erase(it);
+        return true;
+    }
+    return false;
 }
 
 bool GameState::canDock() const {

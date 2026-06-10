@@ -83,6 +83,14 @@ struct AppFlow {
         return action;
     }
 
+    // Esc closes the market screen (back to the port menu) instead of pausing.
+    bool consumeMarketEscape(bool escPressed, bool marketOpen) {
+        const bool pressed = mode == AppMode::Gameplay && marketOpen && escPressed && !prevEsc;
+        if (pressed)
+            prevEsc = escPressed;
+        return pressed;
+    }
+
     int consumePortMenuClick(const PlayerInput& input, bool docked) {
         int action = 0; // 0=none, 1=set sail, 2=trade
         if (mode == AppMode::Gameplay && docked && input.leftClick && !prevPortClick) {
@@ -204,6 +212,10 @@ static void clearGameplayInput(PlayerInput& input) {
     input.rotateLeft      = false;
     input.rotateRight     = false;
     input.dockKey         = false;
+    input.menuUp          = false;
+    input.menuDown        = false;
+    input.buyKey          = false;
+    input.sellKey         = false;
     input.scrollDelta     = 0;
 }
 
@@ -287,7 +299,10 @@ int main() {
             input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
 #endif
 
-            app.updateEscape(input.quit);
+            if (app.consumeMarketEscape(input.quit, gameState.marketOpen()))
+                gameState.closeMarket();
+            else
+                app.updateEscape(input.quit);
             const bool wasSettings = app.settings();
             const int menuClickAction = app.consumeMainMenuClick(input);
             const int pauseClickAction = app.consumePauseClick(input);
@@ -315,12 +330,14 @@ int main() {
                 clearGameplayInput(input);
             }
 
-            // Port menu (docked): SET SAIL returns to sailing. TRADE opens the
-            // market when it arrives (3c-2); the button is drawn dim until then.
-            const int portClickAction =
-                app.consumePortMenuClick(input, gameState.mode() == GameMode::Docked);
+            // Port menu (docked): SET SAIL returns to sailing, TRADE opens the
+            // market. Clicks are ignored while the market screen covers the menu.
+            const int portClickAction = app.consumePortMenuClick(
+                input, gameState.mode() == GameMode::Docked && !gameState.marketOpen());
             if (portClickAction == 1)
                 gameState.setSail();
+            else if (portClickAction == 2)
+                gameState.openMarket();
 
             applyAppModeInputPolicy(input, app.mode);
 
@@ -356,6 +373,19 @@ int main() {
             const bool nearPort = nearestPort && portDistance <= nearestPort->radius;
             const Port* dockedPort = gameState.dockedPort();
 
+            // Market table display rows (only while the trade screen is open).
+            MarketRowHud marketRows[8];
+            int marketRowCount = 0;
+            const bool marketOpen = gameState.marketOpen() && dockedPort != nullptr;
+            if (marketOpen) {
+                for (const MarketEntry& e : dockedPort->market) {
+                    if (marketRowCount >= 8) break;
+                    marketRows[marketRowCount++] = MarketRowHud{
+                        cargoGoodName(e.good), e.buyPrice, e.sellPrice, e.stock,
+                        gameState.cargoCount(e.good) };
+                }
+            }
+
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(),
@@ -363,7 +393,8 @@ int main() {
                 portDistance, portDir, nearPort,
                 gameState.cargo().used(), gameState.cargo().capacity, gameState.money(),
                 gameState.canDock(), dockedPort != nullptr,
-                dockedPort ? dockedPort->name : nullptr
+                dockedPort ? dockedPort->name : nullptr,
+                marketOpen, gameState.marketSelected(), marketRowCount, marketRows
             });
 
             if (pendingWorldStart && app.loading()) {

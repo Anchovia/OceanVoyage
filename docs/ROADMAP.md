@@ -149,15 +149,15 @@ position += velocity * dt
 - 저장하지 않을 것: timeOfDay(gameTime에서 계산), wake field, FFT phase(gameTime으로 재현)
 - 후속: 죽은 코드가 된 `World::save/load`·`GameState::setPlayerPosition/setInventory/setDrops`는 농장 레거시 정리 슬라이스에서 제거
 
-### 3b. 항구·화물 데이터 (렌더링은 보류 가능)
-- [ ] `Port { id; name; glm::vec2 position; }`, 시작 항구 1개
-- [ ] near port 감지(거리 기반) → HUD에 `NEAR PORT`/거리·방향 표시
-- [ ] `CargoGoodId`(Coal/IronOre/Steel/Machinery/Grain 정도), `CargoStack`, `CargoHold { capacity; stacks; }`, HUD에 `CARGO 0/100`
-- [ ] `int money`(시작 1000), save v2에 money/cargo 추가(version bump)
+### 3b. 항구·화물 데이터 ✅ (2026-06-11)
+- [x] `Port { id; name; glm::vec2 position; radius }`, 시작 항구 1개(BRISTOL)
+- [x] near port 감지(거리 기반) → HUD에 `NEAR PORT`/거리·8방위 표시(`PRT`)
+- [x] `CargoGoodId`(Coal/IronOre/Steel/Machinery/Grain), `CargoStack`, `CargoHold { capacity; stacks; }`, HUD `CRG 0/100`
+- [x] `int money`(시작 1000) + HUD `GLD`, save v2에 money/cargo 추가(version bump, 검증 포함)
 
-### 3c. 항구 모드 + 매매
-- [ ] game mode `Sailing`/`Port` 분리(AppMode title/settings/pause와 섞지 않음). 항구 반경 안 + 저속에서 진입
-- [ ] `MarketEntry { good; buyPrice; sellPrice; stock; }`, 키보드 UI(Up/Down 선택, B 구매, S 판매, Esc 나가기)
+### 3c. 항구 모드 + 매매 (🔶 3c-1 완료 2026-06-11)
+- [x] game mode `Sailing`/`Docked` 분리(AppMode와 섞지 않음). 항구 반경 안 + 저속(≤2m/s)에서 Enter로 입항, 항구 메뉴(`SET SAIL`/`TRADE`)에서 출항
+- [ ] `MarketEntry { good; buyPrice; sellPrice; stock; }`, 시장 UI(Up/Down 선택, B 구매, S 판매, Esc 나가기)
 - [ ] buy/sell validation(money·capacity·stock) + apply, 저장/로드 후 유지
 - [ ] 항구 2개 + 가격 차이 → 첫 교역 루프 검증(A 구매 → B 항해 → B 판매 → 이익), 항해 도중 저장/복원
 

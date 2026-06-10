@@ -5,6 +5,7 @@
 #include "game/Camera.h"
 
 #include <stdexcept>
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <cmath>
@@ -567,6 +568,12 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_canDockHud       = frame.canDock;
     m_dockedHud        = frame.docked;
     m_portNameHud      = frame.portName;
+    m_marketOpenHud    = frame.marketOpen;
+    m_marketSelHud     = frame.marketSelected;
+    m_marketRowsHudCount = frame.marketRows
+        ? std::min(frame.marketRowCount, (int)m_marketRowsHud.size()) : 0;
+    for (int i = 0; i < m_marketRowsHudCount; i++)
+        m_marketRowsHud[(size_t)i] = frame.marketRows[i];
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;
@@ -1148,8 +1155,8 @@ void VulkanContext::updateHotbar() {
     }
 
     // Port menu (docked): port name + actions. Drawn under the pause overlay so
-    // pausing while docked still dims the menu.
-    if (m_dockedHud && !m_pausedHud) {
+    // pausing while docked still dims the menu. Hidden while the market is open.
+    if (m_dockedHud && !m_marketOpenHud && !m_pausedHud) {
         pushCenteredText(m_portNameHud ? m_portNameHud : "PORT",
                          H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 0.95f});
         const char* rows[] = { "SET SAIL", "TRADE" };
@@ -1157,11 +1164,57 @@ void VulkanContext::updateHotbar() {
             float rx, ry, rw, rh;
             portMenuRowRect(i, W, H, rx, ry, rw, rh);
             pushQuad(rx, ry, rw, rh, {0.12f, 0.14f, 0.13f, 0.88f});
-            // TRADE is a placeholder until the market arrives (3c-2): drawn dim.
-            const glm::vec4 rowCol = (i == 1) ? glm::vec4{0.55f, 0.55f, 0.50f, 0.55f}
-                                              : glm::vec4{0.95f, 0.92f, 0.82f, 0.92f};
-            pushCenteredText(rows[i], ry + 9.0f, 5.0f, rowCol);
+            pushCenteredText(rows[i], ry + 9.0f, 5.0f, {0.95f, 0.92f, 0.82f, 0.92f});
         }
+    }
+
+    // Market table (docked trade screen): GOOD | BUY | SELL | STK | HELD rows
+    // with the selected row highlighted. Keys: Up/Down select, B buy, S sell.
+    if (m_dockedHud && m_marketOpenHud && !m_pausedHud) {
+        const float gpx   = 4.0f;
+        const float rowH  = 5.0f * gpx + 12.0f;
+        const float pad   = 18.0f;
+        const float colGood = 0.0f, colBuy = 190.0f, colSell = 290.0f,
+                    colStk = 390.0f, colHeld = 490.0f;
+        const float panelW = colHeld + 90.0f + 2.0f * pad;
+        const float panelH = 56.0f + rowH * (float)(m_marketRowsHudCount + 1) + 44.0f;
+        const float px0 = (W - panelW) * 0.5f;
+        const float py0 = (H - panelH) * 0.5f;
+        const float tx0 = px0 + pad; // table left edge
+
+        pushQuad(px0, py0, panelW, panelH, {0.07f, 0.09f, 0.08f, 0.90f});
+
+        char title[40];
+        std::snprintf(title, sizeof(title), "%s MARKET", m_portNameHud ? m_portNameHud : "PORT");
+        pushCenteredText(title, py0 + 14.0f, 6.0f, {0.95f, 0.92f, 0.82f, 0.95f});
+
+        float ry = py0 + 56.0f;
+        const glm::vec4 headCol = {0.75f, 0.78f, 0.72f, 0.9f};
+        pushText("GOOD", tx0 + colGood, ry, gpx, headCol);
+        pushText("BUY",  tx0 + colBuy,  ry, gpx, headCol);
+        pushText("SELL", tx0 + colSell, ry, gpx, headCol);
+        pushText("STK",  tx0 + colStk,  ry, gpx, headCol);
+        pushText("HELD", tx0 + colHeld, ry, gpx, headCol);
+        ry += rowH;
+
+        for (int i = 0; i < m_marketRowsHudCount; i++) {
+            const MarketRowHud& row = m_marketRowsHud[(size_t)i];
+            const bool selected = (i == m_marketSelHud);
+            if (selected)
+                pushQuad(tx0 - 6.0f, ry - 5.0f, panelW - 2.0f * pad + 12.0f, rowH - 2.0f,
+                         {0.25f, 0.30f, 0.26f, 0.85f});
+            const glm::vec4 rowCol = selected ? glm::vec4{0.98f, 0.96f, 0.85f, 1.0f}
+                                              : glm::vec4{0.88f, 0.88f, 0.82f, 0.85f};
+            pushText(row.name, tx0 + colGood, ry, gpx, rowCol);
+            pushNumber(row.buy,   tx0 + colBuy,  ry, gpx, rowCol);
+            pushNumber(row.sell,  tx0 + colSell, ry, gpx, rowCol);
+            pushNumber(row.stock, tx0 + colStk,  ry, gpx, rowCol);
+            pushNumber(row.held,  tx0 + colHeld, ry, gpx, rowCol);
+            ry += rowH;
+        }
+
+        pushText("B BUY   S SELL   ESC BACK", tx0, py0 + panelH - 30.0f, gpx,
+                 {0.75f, 0.78f, 0.72f, 0.9f});
     }
 
     if (m_pausedHud) {

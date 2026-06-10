@@ -6,6 +6,21 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — 항구 입항·정박·출항 1차 (ROADMAP Phase 3c-1)
+
+- `GameMode { Sailing, Docked }` 도입(AppMode 메뉴/일시정지와 별개). **빌드·동작 검증 완료.**
+- 입항: 항구 반경(30m) 안 + 저속(≤2m/s)에서 `PRESS ENTER TO DOCK` 힌트 → Enter(edge-detect)로 정박(운동량 0, 물리 스킵, 부력은 렌더러 FFT 리드백이라 파도 위 부유 유지).
+- 항구 메뉴: 화면 중앙 항구명 + `SET SAIL`/`TRADE`(3c-2까지 흐림 placeholder). 기존 pause 메뉴 rect+클릭 edge 패턴 재사용(`portMenuRowRect`, `consumePortMenuClick`). 일시정지 오버레이와 겹치지 않게 paused 중엔 숨김.
+- 설계: 별도 정박 "씬" 없이 mode+UI만 — Phase 5 부두/등대 메시가 들어오면 같은 화면이 항구 풍경이 됨(대항해시대식 선착장→마을 트리는 이 메뉴의 항목 확장으로 수용). save에 mode 미저장(로드 시 항구 안 Sailing, Enter 재입항).
+- 수정: `GameState.{h,cpp}`/`InputManager.cpp`(Enter)/`Types.h`/`VulkanContext.{h,_Frame.cpp}`/`main.cpp`.
+
+### 2026-06-11 — 항구·화물 데이터 1차 + save v2 (ROADMAP Phase 3b)
+
+- `Port { id, name, position, radius }`(시작 항구 BRISTOL, 초기 진행방향 200m 앞), `CargoGoodId` 5종/`CargoStack`/`CargoHold{capacity 100}`, money 1000. **빌드·동작 검증 완료.**
+- save v2: money(음수 거부) + cargo stacks(enum 범위·count>0·합≤capacity 검증). v1은 버전 불일치 거부(개발 정책).
+- HUD: `PRT 방위 거리`/`CRG used/cap`/`GLD money` + 반경 내 `NEAR PORT`. 렌더러는 `FrameRenderData` 표시값만 받음(게임 무지 유지). 벡터 폰트에 `/` 글리프 추가.
+- 항구 시각 표현은 의도적으로 없음(Phase 5, 임시 마커 금지 원칙).
+
 ### 2026-06-11 — Player 미러 shim 제거 (Phase 1 잔재 완료)
 
 - 농장 `Player` 클래스 완전 제거(`Player.h` 삭제) — ship을 미러링하던 임시 호환 shim의 소멸. **빌드·동작 검증 완료(시각 변화 0).**

@@ -93,6 +93,15 @@ struct TextureResource {
     }
 };
 
+// One market table row, display values only (names point at static literals).
+struct MarketRowHud {
+    const char* name;
+    int buy;
+    int sell;
+    int stock;
+    int held;
+};
+
 // Per-frame snapshot the renderer consumes. Mirrors the previous drawFrame
 // argument list (by-ref for heavy data, by-value for scalars).
 struct FrameRenderData {
@@ -120,6 +129,10 @@ struct FrameRenderData {
     bool                                     canDock;        // sailing, in range, slow enough to dock
     bool                                     docked;         // port menu open (anchored)
     const char*                              portName;       // docked port display name (uppercase); may be null
+    bool                                     marketOpen;     // trade screen open (sub-state of docked)
+    int                                      marketSelected; // highlighted row index
+    int                                      marketRowCount; // entries in marketRows (≤ 8 used)
+    const MarketRowHud*                      marketRows;     // caller-owned; copied during drawFrame
 };
 
 class VulkanContext {
@@ -472,9 +485,9 @@ private:
 
 
     // UI / hotbar — one buffer per frame in flight (avoids overwrite while GPU still reads)
-    // Worst case is the pause screen: ship HUD + backdrop + title + 3 menu rows of
-    // pixel-quad vector glyphs (~3k verts); 2048 truncated it. 8192 leaves ~2.5x headroom.
-    static constexpr uint32_t   UI_MAX_VERTS = 8192;
+    // Worst case is the docked market table: ship HUD + 5-row price table of pixel-quad
+    // vector glyphs (~12k verts). 32768 (~768 KB/frame) leaves ample headroom.
+    static constexpr uint32_t   UI_MAX_VERTS = 32768;
     std::vector<GpuBuffer>      m_uiBuffer;
     uint32_t                 m_uiVertexCount   = 0;
     bool                     m_mainMenuHud      = false;
@@ -496,6 +509,10 @@ private:
     bool                     m_canDockHud      = false;
     bool                     m_dockedHud       = false;
     const char*              m_portNameHud     = nullptr; // points at static port name literals
+    bool                     m_marketOpenHud   = false;
+    int                      m_marketSelHud    = 0;
+    int                      m_marketRowsHudCount = 0;
+    std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;

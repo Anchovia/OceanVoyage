@@ -19,6 +19,10 @@ struct PlayerInput {
     bool rotateRight     = false;  // E
     bool saveKey         = false;  // Ctrl+S (raw; main edge-detects)
     bool dockKey         = false;  // Enter (raw; GameState edge-detects docking)
+    bool menuUp          = false;  // Up arrow (market row select)
+    bool menuDown        = false;  // Down arrow
+    bool buyKey          = false;  // B (market buy 1)
+    bool sellKey         = false;  // S without Ctrl (market sell 1; harmless while docked)
     bool toggleDevUi     = false;  // F3 (dev builds; main edge-detects)
     int  scrollDelta = 0;   // scroll wheel steps (camera zoom)
     int windowWidth = 1280;
@@ -38,17 +42,38 @@ struct ShipState {
     float rudder   = 0.0f;        // -1..1 port/starboard demand
 };
 
-// A trade port on the open sea. First-pass data (ROADMAP 3b): hardcoded list,
-// no market yet. Grows toward OceanWorld in Phase 5.
+// Tradeable industrial-era goods (first pass, hardcoded set).
+enum class CargoGoodId : uint8_t { Coal = 0, IronOre, Steel, Machinery, Grain, COUNT };
+
+inline const char* cargoGoodName(CargoGoodId g) {
+    switch (g) {
+        case CargoGoodId::Coal:      return "COAL";
+        case CargoGoodId::IronOre:   return "IRON ORE";
+        case CargoGoodId::Steel:     return "STEEL";
+        case CargoGoodId::Machinery: return "MACHINERY";
+        case CargoGoodId::Grain:     return "GRAIN";
+        default:                     return "";
+    }
+}
+
+// One market row at a port. buyPrice is what the player pays, sellPrice what
+// the player receives — the spread makes same-port buy/sell a guaranteed loss.
+struct MarketEntry {
+    CargoGoodId good;
+    int         buyPrice;
+    int         sellPrice;
+    int         stock;     // port-side inventory available to buy
+};
+
+// A trade port on the open sea. First-pass data (ROADMAP 3b/3c): hardcoded
+// list with a static market. Grows toward OceanWorld in Phase 5.
 struct Port {
     int         id;
     const char* name;   // uppercase A-Z (the vector-font HUD has no lowercase)
     glm::vec2   position;
     float       radius = 30.0f; // "near port" / docking range in world metres
+    std::vector<MarketEntry> market;
 };
-
-// Tradeable industrial-era goods (first pass, hardcoded set).
-enum class CargoGoodId : uint8_t { Coal = 0, IronOre, Steel, Machinery, Grain, COUNT };
 
 struct CargoStack {
     CargoGoodId good;
@@ -100,9 +125,18 @@ public:
         return (m_mode == GameMode::Docked) ? &m_ports[(size_t)m_dockedPortIndex] : nullptr;
     }
     // Leaves the port menu and returns to sailing (ship starts at rest).
-    void setSail() { m_mode = GameMode::Sailing; m_dockedPortIndex = -1; }
+    void setSail() { m_mode = GameMode::Sailing; m_dockedPortIndex = -1; m_marketOpen = false; }
+
+    // Market screen (sub-state of Docked, opened from the port menu).
+    bool marketOpen() const { return m_marketOpen; }
+    void openMarket() {
+        if (m_mode == GameMode::Docked) { m_marketOpen = true; m_marketSelected = 0; }
+    }
+    void closeMarket() { m_marketOpen = false; }
+    int  marketSelected() const { return m_marketSelected; }
 
     const CargoHold& cargo() const { return m_cargo; }
+    int cargoCount(CargoGoodId good) const;
     int money() const { return m_money; }
 
     int   day()       const { return m_day; }
@@ -120,15 +154,36 @@ private:
     // Integrates the ship's sailing physics from WASD (throttle/rudder) input.
     void updateShipPhysics(float dt, const PlayerInput& input);
 
+    // Market row selection + buy/sell for the docked port (edge-detected keys).
+    void updateMarket(const PlayerInput& input);
+
+    void cargoAdd(CargoGoodId good, int count);     // merges into an existing stack
+    bool cargoRemove(CargoGoodId good, int count);  // false if not enough held
+
     ShipState m_ship;
 
     GameMode m_mode            = GameMode::Sailing;
     int      m_dockedPortIndex = -1;
     bool     m_prevDockKey     = false; // edge-detect for the dock key
 
+    bool m_marketOpen     = false;
+    int  m_marketSelected = 0;
+    bool m_prevMenuUp     = false;
+    bool m_prevMenuDown   = false;
+    bool m_prevBuyKey     = false;
+    bool m_prevSellKey    = false;
+
     // First port sits ~200 m ahead of the initial ship heading (-Y), so a short
     // straight sail reaches it. Becomes data-driven with OceanWorld (Phase 5).
-    std::vector<Port> m_ports{ { 0, "BRISTOL", {15.0f, -185.0f} } };
+    // Market prices are static for now; demand/supply pricing arrives Phase 6.
+    std::vector<Port> m_ports{ {
+        0, "BRISTOL", {15.0f, -185.0f}, 30.0f,
+        { { CargoGoodId::Coal,       8,  6, 200 },
+          { CargoGoodId::IronOre,   12,  9, 150 },
+          { CargoGoodId::Steel,     30, 24,  60 },
+          { CargoGoodId::Machinery, 60, 48,  25 },
+          { CargoGoodId::Grain,     10,  8, 180 } }
+    } };
 
     CargoHold m_cargo;
     int       m_money = 1000;

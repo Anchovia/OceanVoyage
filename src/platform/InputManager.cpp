@@ -40,6 +40,12 @@ PlayerInput InputManager::pollInput() {
     input.rotateRight = glfwGetKey(win, GLFW_KEY_E)      == GLFW_PRESS;
     input.saveKey     = ctrlHeld && glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS;
     input.dockKey     = glfwGetKey(win, GLFW_KEY_ENTER)  == GLFW_PRESS;
+
+    // Market keys (docked trade screen)
+    input.menuUp   = glfwGetKey(win, GLFW_KEY_UP)   == GLFW_PRESS;
+    input.menuDown = glfwGetKey(win, GLFW_KEY_DOWN) == GLFW_PRESS;
+    input.buyKey   = glfwGetKey(win, GLFW_KEY_B)    == GLFW_PRESS;
+    input.sellKey  = !ctrlHeld && glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS;
     input.toggleDevUi = glfwGetKey(win, GLFW_KEY_F3)     == GLFW_PRESS;
 
     return input;
