@@ -176,7 +176,6 @@ private:
     void createUIPipeline();
     void createUIBuffer();
     void updateHotbar();
-    void createObjectPipeline();
     void createOceanDescriptorSetLayout();
     void createOceanPipeline();
     void createOceanMesh();
@@ -202,7 +201,6 @@ private:
     TextureResource createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
     void loadImportedShipMesh();
-    void createObjectMeshes();
     void createGrassTexture();
     void createOceanNormalTextures();
     void createTerrainTextureArray();
@@ -230,7 +228,6 @@ private:
     void createDepthResources();
     void createShadowResources();
     void createShadowPipeline();
-    void createShadowObjectPipeline();
     void createShadowSampler();
     void createImage(uint32_t width, uint32_t height, VkFormat format,
         VkImageTiling tiling, VkImageUsageFlags usage,
@@ -300,7 +297,6 @@ private:
     VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
-    VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
     VkPipelineLayout         m_oceanPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout    m_oceanDescriptorSetLayout = VK_NULL_HANDLE;
@@ -460,7 +456,6 @@ private:
         GpuBuffer      vbuf;
         uint32_t       count = 0;
     };
-    std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     struct ShipHullProfile {
@@ -525,7 +520,6 @@ private:
     std::array<VkFramebuffer, CSM_CASCADES> m_shadowFramebuffers{}; // one framebuffer per cascade layer
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
-    VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
     VkSampler                    m_shadowSampler        = VK_NULL_HANDLE;
     std::array<glm::mat4, CSM_CASCADES> m_lightMVPCascade{}; // per-cascade light-space transforms
     glm::vec4                    m_cascadeSplits        = glm::vec4(0.0f); // xyz = cascade far view-depths

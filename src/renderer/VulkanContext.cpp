@@ -39,7 +39,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createSkyPipeline();
     createChunkPipeline();
     createUIPipeline();
-    createObjectPipeline();
     createOceanPipeline();
     createShipPipeline();
     createPostPipeline();
@@ -50,7 +49,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createSmaaResources();
     createShadowResources();
     createShadowPipeline();
-    createShadowObjectPipeline();
     createFramebuffers();
     createCommandPool();
     createSmaaLookupTextures();
@@ -58,7 +56,7 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createDevTools();
 #endif
     createUIBuffer();
-    createObjectMeshes();
+    loadImportedShipMesh();
     createOceanMesh();
     createOceanNormalTextures();
     createOceanFFT();
@@ -98,8 +96,7 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_oceanDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_reflectionUniformBuffers.clear();
-    m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
-    for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
+    m_chunkBuffers.clear();          // frees chunk mesh buffers
     destroyOceanFFT();
     m_oceanNormalB.destroy();
     m_oceanNormalA.destroy();
@@ -116,11 +113,9 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline      (m_device, m_shadowObjectPipeline, nullptr);
     vkDestroyPipeline      (m_device, m_shadowPipeline,       nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);
     vkDestroySampler       (m_device, m_shadowSampler,        nullptr);

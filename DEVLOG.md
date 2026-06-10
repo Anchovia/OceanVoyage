@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 죽은 오브젝트 리소스 제거 (ROADMAP Phase 2d-3b)
+
+- 2d-3a로 오브젝트가 더 이상 그려지지 않게 된 뒤, 죽은 오브젝트 리소스 제거(291줄). **빌드·동작 검증 완료(선박 정상 표시, 화면 변화 없음).**
+- 제거: `createObjectMeshes`(나무/바위/울타리 메시 빌드), `createObjectPipeline`, `createShadowObjectPipeline` + ctor/cleanup 배선 + `m_objectPipeline`/`m_objectMeshes`/`m_shadowObjectPipeline` 멤버·선언.
+- **ship 보존**: `createObjectMeshes` 끝의 `loadImportedShipMesh()` 호출을 ctor로 이전. `ObjectMesh` 구조체·`m_shipMesh`·`loadImportedShipMesh`는 유지.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`.
+
 ### 2026-06-09 — 오브젝트 dressing 렌더·빌더 제거 (ROADMAP Phase 2d-3a)
 
 - 농장 오브젝트(나무/바위) dressing은 `placeTrees`/`placeRocks` 미호출(객체 0)인 물 월드에서 항상 빈 렌더 → 제거(117줄). **빌드·동작 검증 완료(화면 변화 없음).**
