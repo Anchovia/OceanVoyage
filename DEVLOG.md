@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — Player 미러 shim 제거 (Phase 1 잔재 완료)
+
+- 농장 `Player` 클래스 완전 제거(`Player.h` 삭제) — ship을 미러링하던 임시 호환 shim의 소멸. **빌드·동작 검증 완료(시각 변화 0).**
+- `GameState`: `m_player`/`player()` 제거 → `shipWorldPosition()` 추가(ship 2D 위치+deck 높이 1.0; 카메라 타깃·그림자 중심용, 부력은 GPU 리드백으로 실제 높이 재계산). `setShipState`는 단순 대입으로 인라인화.
+- `main.cpp`: 카메라 추적·스냅·렌더러 입력 전부 `shipWorldPosition()` 직결. 프레임 순서(직전 프레임 위치 추적 → 물리 → 렌더) 동일.
+- 이로써 농장 레거시 정리 완료. 남은 이름 잔재: `PlayerInput` 구조체명, CMake `PASTEL_DEV_BUILD` 옵션명(기능 무관).
+
 ### 2026-06-11 — World·Chunk·TerrainGen 완전 제거 (Phase 3 잔재 정리)
 
 - 농장 월드 레거시 최종 삭제: `src/world/` 디렉터리(`World.{h,cpp}`/`TerrainGen.{h,cpp}`/`Chunk.h`) + CMake 등록 제거. **빌드·동작 검증 완료(시각 변화 0).**

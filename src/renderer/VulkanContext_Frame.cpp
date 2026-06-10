@@ -5,6 +5,7 @@
 #include "game/Camera.h"
 
 #include <stdexcept>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <cstdint>
@@ -557,6 +558,12 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_shipHeadingHud   = frame.shipHeading;
     m_shipThrottleHud  = frame.shipThrottle;
     m_shipRudderHud    = frame.shipRudder;
+    m_portDistanceHud  = frame.portDistance;
+    m_portDirHud       = frame.portDir;
+    m_nearPortHud      = frame.nearPort;
+    m_cargoUsedHud     = frame.cargoUsed;
+    m_cargoCapHud      = frame.cargoCapacity;
+    m_moneyHud         = frame.money;
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;
@@ -969,8 +976,8 @@ void VulkanContext::updateHotbar() {
         verts.push_back({p3, color});
     };
 
-    // Tiny 3x5 UI glyphs: digits first, then A-Z. Row bits 4=left, 2=mid, 1=right.
-    static const uint8_t GLYPHS[36][5] = {
+    // Tiny 3x5 UI glyphs: digits first, then A-Z, then '/'. Row bits 4=left, 2=mid, 1=right.
+    static const uint8_t GLYPHS[37][5] = {
         {7,5,5,5,7}, {2,2,2,2,2}, {7,1,7,4,7}, {7,1,7,1,7}, {5,5,7,1,1},
         {7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1}, {7,5,7,5,7}, {7,5,7,1,7},
         {7,5,7,5,5}, {6,5,6,5,6}, {7,4,4,4,7}, {6,5,5,5,6}, {7,4,6,4,7},
@@ -979,11 +986,13 @@ void VulkanContext::updateHotbar() {
         {7,5,7,4,4}, {7,5,5,7,1}, {7,5,7,6,5}, {7,4,7,1,7}, {7,2,2,2,2},
         {5,5,5,5,7}, {5,5,5,5,2}, {5,5,7,7,5}, {5,5,2,5,5}, {5,5,2,2,2},
         {7,1,2,4,7},
+        {1,1,2,4,4}, // '/'
     };
     auto glyphIndex = [](char ch) {
         if (ch >= '0' && ch <= '9') return ch - '0';
         if (ch >= 'a' && ch <= 'z') ch = char(ch - 'a' + 'A');
         if (ch >= 'A' && ch <= 'Z') return 10 + (ch - 'A');
+        if (ch == '/') return 36;
         return -1;
     };
     auto pushGlyph = [&](char ch, float ox, float oy, float px, glm::vec4 col) {
@@ -1103,6 +1112,33 @@ void VulkanContext::updateHotbar() {
         pushText("RUD", lx, hy, gpx, col);
         pushText(rud > 0 ? "S" : (rud < 0 ? "P" : ""), vx, hy, gpx, col);
         pushNumber(rud < 0 ? -rud : rud, vx + 4.0f * gpx, hy, gpx, col);
+        hy += lh;
+
+        // Nearest port: 8-way compass letters (+Y = north) + distance in metres.
+        if (m_portDistanceHud >= 0.0f) {
+            static const char* kCompass8[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+            const float bearing = std::atan2(m_portDirHud.x, m_portDirHud.y); // 0 = +Y (N), clockwise
+            int octant = (int)std::floor(bearing * (4.0f / 3.14159265f) + 0.5f);
+            octant = ((octant % 8) + 8) % 8;
+            pushText("PRT", lx, hy, gpx, col);
+            pushText(kCompass8[octant], vx, hy, gpx, col);
+            pushNumber((int)(m_portDistanceHud + 0.5f), vx + 3.0f * 4.0f * gpx, hy, gpx, col);
+            hy += lh;
+        }
+
+        // Cargo hold usage and money.
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "%d/%d", m_cargoUsedHud, m_cargoCapHud);
+        pushText("CRG", lx, hy, gpx, col);
+        pushText(buf, vx, hy, gpx, col);
+        hy += lh;
+
+        pushText("GLD", lx, hy, gpx, col);
+        pushNumber(m_moneyHud, vx, hy, gpx, col);
+        hy += lh;
+
+        if (m_nearPortHud)
+            pushText("NEAR PORT", lx, hy, gpx, {0.95f, 0.85f, 0.45f, 0.95f});
     }
 
     if (m_pausedHud) {

@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **남은 잔불**: 게임측 농장 레거시(`GameState` inventory/drops/craft, `World` 청크 스트리밍, 죽은 `World::save/load`)는 Phase 3 진행 중 정리. **Phase 3a VoyageSave 완료**(2026-06-11, `"OVYG"` v1 — 항해 상태 저장/복원, 구 PFRM 거부). 다음은 **농장 레거시 정리 슬라이스 → 3b(항구·화물 데이터)** 순이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3a VoyageSave 완료**(2026-06-11, `"OVYG"` v1 — 항해 상태 저장/복원, 구 PFRM 거부). **농장 레거시 정리 완료**(2026-06-11): 죽은 세이브 배관 → `GameState` inventory/drops/craft → `World`/`Chunk`/`TerrainGen` 삭제 → `Player` 미러 shim 제거 4개 슬라이스로 종결, `src/world/`와 `Player.h`가 코드베이스에서 소멸. 다음 본작업은 **3b(항구·화물 데이터)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
 
 ---
 

@@ -1,6 +1,8 @@
 #pragma once
 #include <glm/glm.hpp>
 
+#include <vector>
+
 static constexpr float DAY_DURATION = 120.0f; // seconds per in-game day
 
 struct PlayerInput {
@@ -35,6 +37,36 @@ struct ShipState {
     float rudder   = 0.0f;        // -1..1 port/starboard demand
 };
 
+// A trade port on the open sea. First-pass data (ROADMAP 3b): hardcoded list,
+// no market yet. Grows toward OceanWorld in Phase 5.
+struct Port {
+    int         id;
+    const char* name;   // uppercase A-Z (the vector-font HUD has no lowercase)
+    glm::vec2   position;
+    float       radius = 30.0f; // "near port" / docking range in world metres
+};
+
+// Tradeable industrial-era goods (first pass, hardcoded set).
+enum class CargoGoodId : uint8_t { Coal = 0, IronOre, Steel, Machinery, Grain, COUNT };
+
+struct CargoStack {
+    CargoGoodId good;
+    int         count;
+};
+
+// Ship cargo hold: plain unit-count capacity. Weight-based loading arrives
+// with ShipDef in Phase 6.
+struct CargoHold {
+    int capacity = 100;
+    std::vector<CargoStack> stacks;
+
+    int used() const {
+        int total = 0;
+        for (const CargoStack& s : stacks) total += s.count;
+        return total;
+    }
+};
+
 class GameState {
 public:
     void update(float dt, const PlayerInput& input);
@@ -49,6 +81,14 @@ public:
         return { m_ship.position.x, m_ship.position.y, kShipDeckZ };
     }
 
+    const std::vector<Port>& ports() const { return m_ports; }
+    // Nearest port to the ship, with distance and a normalized world-space
+    // direction toward it. Returns nullptr only if no ports exist.
+    const Port* nearestPort(float& outDistance, glm::vec2& outDir) const;
+
+    const CargoHold& cargo() const { return m_cargo; }
+    int money() const { return m_money; }
+
     int   day()       const { return m_day; }
     float timeOfDay() const { return m_timeOfDay; } // 0.0=midnight, 0.5=noon, 1.0=midnight
     float time()      const { return m_time; }
@@ -57,12 +97,21 @@ public:
     // throttle/rudder) from a save.
     void setShipState(const ShipState& s) { m_ship = s; }
     void setTime(float t);
+    void setMoney(int m) { m_money = m; }
+    void setCargo(const CargoHold& c) { m_cargo = c; }
 
 private:
     // Integrates the ship's sailing physics from WASD (throttle/rudder) input.
     void updateShipPhysics(float dt, const PlayerInput& input);
 
     ShipState m_ship;
+
+    // First port sits ~200 m ahead of the initial ship heading (-Y), so a short
+    // straight sail reaches it. Becomes data-driven with OceanWorld (Phase 5).
+    std::vector<Port> m_ports{ { 0, "BRISTOL", {15.0f, -185.0f} } };
+
+    CargoHold m_cargo;
+    int       m_money = 1000;
 
     float m_time      = 0.0f;
     int   m_day       = 0;

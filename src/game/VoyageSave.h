@@ -10,6 +10,8 @@ namespace VoyageSave {
 struct Data {
     float     gameTime = 0.0f;
     ShipState ship;
+    int       money = 1000;
+    CargoHold cargo; // stacks only; capacity is a constant for now (not serialized)
 };
 
 // Atomic write (.tmp then rename): a crash mid-write never damages the live

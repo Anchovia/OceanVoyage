@@ -90,6 +90,23 @@ void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
     m_ship.position += m_ship.velocity * dt;
 }
 
+const Port* GameState::nearestPort(float& outDistance, glm::vec2& outDir) const {
+    const Port* best = nullptr;
+    float bestDist = 0.0f;
+    for (const Port& p : m_ports) {
+        const float d = glm::length(p.position - m_ship.position);
+        if (!best || d < bestDist) {
+            best = &p;
+            bestDist = d;
+        }
+    }
+    if (!best) return nullptr;
+    outDistance = bestDist;
+    outDir = (bestDist > 0.001f) ? (best->position - m_ship.position) / bestDist
+                                 : glm::vec2(0.0f);
+    return best;
+}
+
 void GameState::setTime(float t) {
     m_time      = t;
     m_day       = static_cast<int>(m_time / DAY_DURATION);

@@ -110,6 +110,13 @@ struct FrameRenderData {
     bool                                     paused;
     bool                                     vsyncEnabled;
     int                                      aaMode;
+    // Voyage HUD display values (plain numbers so the renderer stays game-agnostic)
+    float                                    portDistance;   // metres to nearest port; < 0 = no ports
+    glm::vec2                                portDir;        // normalized world-space direction toward it
+    bool                                     nearPort;       // ship is inside the port radius
+    int                                      cargoUsed;
+    int                                      cargoCapacity;
+    int                                      money;
 };
 
 class VulkanContext {
@@ -477,6 +484,12 @@ private:
     float                    m_shipHeadingHud  = 0.0f; // radians
     float                    m_shipThrottleHud = 0.0f; // -1..1
     float                    m_shipRudderHud   = 0.0f; // -1..1
+    float                    m_portDistanceHud = -1.0f; // metres; < 0 = no ports
+    glm::vec2                m_portDirHud      = {0.0f, 0.0f};
+    bool                     m_nearPortHud     = false;
+    int                      m_cargoUsedHud    = 0;
+    int                      m_cargoCapHud     = 0;
+    int                      m_moneyHud        = 0;
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;

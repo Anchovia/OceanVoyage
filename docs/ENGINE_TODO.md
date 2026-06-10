@@ -2,7 +2,7 @@
 
 이 문서는 OceanVoyage 엔진 수준의 작업을 추적한다. 농장 게임 전용 문제가 아니라, Vulkan 기반 자체 엔진의 공통 기반 품질·안정성·성능과 관련된 항목이다.
 
-> 갱신: 2026-06-06. 초기 P0/P1 항목 대부분은 바다 전환 과정에서 완료됐다. 아래는 완료분과 남은 과제, 그리고 현재 코드 리뷰에서 확인한 한계를 분리해 정리한다.
+> 갱신: 2026-06-11. 초기 P0/P1 항목 대부분은 바다 전환 과정에서 완료됐다. 아래는 완료분과 남은 과제, 그리고 현재 코드 리뷰에서 확인한 한계를 분리해 정리한다. 2026-06-11 농장 레거시 완전 제거(`World`/`Chunk`/grass/`Player` 소멸)로 stale해진 항목들을 현행화했다.
 >
 > 이 문서는 엔진/렌더 기술 과제의 단일 출처다. 이 과제들이 전체 개발 순서 어디에 들어가는지는 `docs/ROADMAP.md` Phase 4(렌더링 후속)·Phase 9(기술 부채/구조 안정화)를 본다.
 
@@ -12,7 +12,7 @@
 
 **안정성**
 - ✅ 공통 `vkCheck` 헬퍼 + 주요 경로(커맨드버퍼/큐 submit/fence/memory map/리소스 생성) 반환값 검사
-- ✅ 저장/로드 안정성: 세이브 v3(atomic write + 범위/enum 검증 + 전체 성공 시에만 커밋)
+- ✅ 저장/로드 안정성: atomic write + 검증 + 전체 성공 시에만 커밋 (농장 세이브 v3 → 2026-06-11 `VoyageSave` OVYG v1로 교체, 같은 안전 패턴 계승 + finite-float 검증 추가)
 - ✅ dt 클램프(0.1s)로 stall 후 점프/터널링 방지
 - ✅ 디바이스/스왑체인 적합성 검사, 스왑체인 재생성 시 per-image 세마포어 재생성
 
@@ -46,19 +46,19 @@
 
 - **async compute 검토.** 해양 FFT(스펙트럼 업데이트 + 18 IFFT 패스 + assemble + wake)가 그래픽스 큐에서 배리어로 직렬화된다. 현재 큐 모델은 graphics/present만 관리하므로, 전용 compute 큐 도입은 queue family 선택·command pool·ownership/sync까지 함께 설계해야 한다.
 - **부력 리드백 축소.** 선박 1척을 띄우기 위해 displacement 전체(512²×3 RGBA16F = 6,291,456 bytes, 약 6.0 MiB/프레임)를 host 복사한다. 필요한 작은 영역/소수 텍셀만 복사하거나 GPU 측 샘플링/축약 버퍼를 검토한다.
-- **플래너 반사 + SSR 비용 재검토.** 둘 다 매 프레임이고 플래너는 현재 청크/오브젝트/풀 경로까지 통과할 수 있는 전체 씬 재렌더다. 기본 해상 테스트 월드는 물 타일만 생성해 실제 농장 콘텐츠가 대량 렌더되는 상태는 아니지만, 비용 정책 없이 항상 켜진 구조는 장기적으로 부담이다.
+- **플래너 반사 + SSR 비용 재검토.** 둘 다 매 프레임 항상 켜져 있다(현재 플래너 대상은 ship+sky뿐이라 비용은 낮음). 비용 정책 없이 항상 켜진 구조는 항구/섬 콘텐츠가 늘면 부담 — reflection mode enum + 대상/해상도 제한은 ROADMAP Phase 4-5에서.
 - **바다 메시 재검토.** 고정 약 60만 삼각형 방사형 팬(512 섹터 고정, 통째 draw). projected-grid/clipmap 계열이 더 표준적·확장적이며, ocean vertex/index buffer도 DEVICE_LOCAL + staging 업로드 대상으로 본다.
 
 ### P2: 그림자
 
 - 셰이더에 하드코딩된 shadow map size 제거 (`ship.frag`의 `SHADOW_MAP_TEXEL = 1/2048` 등) → uniform/push constant로 전달
 - 그림자 품질 옵션(Low 1024 / Medium 2048 / High 4096)
-- 비활성화된 grass shadow 파이프라인/리소스 정리(`kGrassCastsShadow=false` 확정 시 제거)
+- ~~비활성화된 grass shadow 파이프라인/리소스 정리~~ ✅ 2d-1b에서 제거 완료(2026-06-09)
 
 ### P2: GPU 리소스 관리
 
-- 정적/반정적 mesh buffer를 DEVICE_LOCAL로 이동 + staging 업로드(현재 ocean/일부 mesh는 HOST_VISIBLE 매핑)
-- object/grass instance data에 staging 또는 ring-buffer 전략
+- 정적/반정적 mesh buffer를 DEVICE_LOCAL로 이동 + staging 업로드(현재 ocean/ship mesh는 HOST_VISIBLE 매핑)
+- ~~object/grass instance data 전략~~ — 해당 경로 제거됨(2d). 향후 port/island 인스턴싱 도입 시 staging/ring-buffer로 설계
 - 작은 per-frame uniform은 HOST_VISIBLE 유지(현 상태 유지)
 - buffer usage policy 문서화
 
@@ -81,9 +81,9 @@
 - **debug utils / RenderDoc.** 커맨드버퍼 region label(Ocean FFT/Shadow/Planar/Opaque/Water/Post/UI) + 주요 image/buffer/pipeline object name(dev 빌드 한정). validation warning 0 목표(known false positive 제외).
 - **dev profiling 확대.** GPU timestamp 구간을 ocean compute/shadow/reflection/opaque/water/post/UI로 세분, CPU timing(update/snapshot/record), draw count, 토글별(SSR/Planar/TAA/SMAA) 비용 비교.
 - **pure logic 테스트.** ship physics step / cargo capacity / market buy-sell / save-load 검증 / wind angle efficiency를 렌더 실행 없이 검증하는 작은 test executable(새 의존성 없이, golden 값). CI는 후순위.
-- **save migration 정책.** version table(v1 ship → v2 cargo/money → v3 ports/market → v4 upgrades/contracts), corruption test(truncated/wrong magic/bad count/NaN/huge). 구 PFRM은 legacy로 명시 거부.
+- **save migration 정책.** version table(v1 ship → v2 cargo/money → v3 ports/market → v4 upgrades/contracts), corruption test(truncated/wrong magic/bad count/NaN/huge). 구 PFRM 명시 거부는 완료(OVYG magic 불일치, 2026-06-11) — version table·corruption test가 남은 과제.
 - **품질 tier.** High(RTX 3060 기본) / Medium(fallback) / Low(디버그·호환용, 최종 지향 아님). 옵션: shadow size, reflection mode, SSR steps, TAA on/off, planar half-res, ocean mesh quality. 품질을 싸게 낮추는 게 아니라 비싼 기능을 명시적으로 tier화. 옵션 변경 시 swapchain recreate 안정성 확인.
-- **legacy farm code 제거.** `ItemType`/`TileType`/`World` 실행 경로 0(`rg`로 확인), farm asset(terrain/grass/object mesh) 정리. legacy는 기록/별도 reference로만.
+- ~~**legacy farm code 제거.**~~ ✅ 완료(2026-06-11): `World`/`Chunk`/`TerrainGen`/`Player`/`ItemType`/`TileType` 소스에서 소멸(4개 슬라이스, DEVLOG 참고). 남은 건 `assets/` 내 미사용 farm asset 확인 정도.
 
 ### P3: 향후 해양/대기 고도화
 

@@ -231,6 +231,8 @@ int main() {
             if (VoyageSave::load("save.dat", saved)) {
                 gameState.setTime(saved.gameTime);
                 gameState.setShipState(saved.ship);
+                gameState.setMoney(saved.money);
+                gameState.setCargo(saved.cargo);
             }
             worldSessionStarted = true;
         };
@@ -307,7 +309,8 @@ int main() {
 
             // Ctrl+S save (edge-detect)
             if (worldSessionStarted && app.consumeSavePress(input.saveKey))
-                VoyageSave::save("save.dat", VoyageSave::Data{ gameState.time(), gameState.ship() });
+                VoyageSave::save("save.dat", VoyageSave::Data{
+                    gameState.time(), gameState.ship(), gameState.money(), gameState.cargo() });
 
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
@@ -321,10 +324,18 @@ int main() {
             const glm::vec3 shipPosition = gameState.shipWorldPosition();
             const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
 
+            // Voyage HUD values: nearest port (distance/direction) + cargo + money.
+            float portDistance = -1.0f;
+            glm::vec2 portDir{0.0f, 0.0f};
+            const Port* nearestPort = gameState.nearestPort(portDistance, portDir);
+            const bool nearPort = nearestPort && portDistance <= nearestPort->radius;
+
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(),
-                app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode
+                app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode,
+                portDistance, portDir, nearPort,
+                gameState.cargo().used(), gameState.cargo().capacity, gameState.money()
             });
 
             if (pendingWorldStart && app.loading()) {
