@@ -170,7 +170,6 @@ private:
     void createCommandBuffers();
     void createSyncObjects();
     void createDescriptorSetLayout();
-    void createChunkPipeline();
     void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
     void rebuildDirtyChunks();
     void createUIPipeline();
@@ -294,7 +293,6 @@ private:
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
     VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;  // shared scene layout (sky/chunk/object/grass/ship)
     VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
-    VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface

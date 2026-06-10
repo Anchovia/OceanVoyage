@@ -658,26 +658,6 @@ void VulkanContext::createSkyPipeline() {
     m_skyPipeline = createPipeline(cfg);
 }
 
-void VulkanContext::createChunkPipeline() {
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/chunk.vert.spv";
-    cfg.fragPath   = "shaders/chunk.frag.spv";
-    cfg.bindings   = {
-        { 0, sizeof(ChunkVertex), VK_VERTEX_INPUT_RATE_VERTEX },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)    },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal) },
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)  },
-        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)     },
-        { 4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)  },
-    };
-    cfg.cullMode   = VK_CULL_MODE_BACK_BIT;
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;
-    m_chunkPipeline = createPipeline(cfg);
-}
 
 void VulkanContext::createUIPipeline() {
     // No descriptor sets — UI vertices are already in NDC

@@ -293,29 +293,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         // shaders gate shadow sampling on dayFactor > 0.01 anyway.
         vkCmdBeginRenderPass(cmd, &shadowRp, VK_SUBPASS_CONTENTS_INLINE);
         if (m_dayFactor > 0.01f) {
-            // Cull chunks outside this cascade's ortho box — they aren't captured anyway
-            Frustum lightFrustum = Frustum::extractFrom(lightMVP);
-
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
-            vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-
-            for (auto& [coord, data] : m_chunkBuffers) {
-                if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-                glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                VkBuffer     vBuf[] = {data.vertexBuffer};
-                VkDeviceSize offs[] = {0};
-                vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-                vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-            }
-
-            // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
-            // push lightMVP * shipModel so the tilted hull casts a correct shadow.
+            // Ship casts a shadow — push lightMVP * shipModel so the tilted hull casts a
+            // correct shadow into this cascade.
             if (m_shipMesh.count > 0) {
                 glm::mat4 shipLightMVP = lightMVP * m_shipModel;
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
@@ -358,21 +337,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_pipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     vBuf[] = { data.vertexBuffer };
-            VkDeviceSize offs[] = { 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-            vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-        }
-
         if (m_shipMesh.count > 0) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -412,22 +376,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
-
-    // Chunk mesh (hidden face culling, dedicated pipeline)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
-    for (auto& [coord, data] : m_chunkBuffers) {
-        if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-        glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-        glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-        if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-        VkBuffer     vBuf[] = { data.vertexBuffer };
-        VkDeviceSize offs[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-        vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-    }
 
     // Refraction/depth seed for water. The ship is drawn again after the ocean for final
     // visibility, but including it in the pre-water buffers gives the water shader real

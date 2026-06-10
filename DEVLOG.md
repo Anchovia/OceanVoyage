@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 청크 voxel 메시 렌더링 제거 (ROADMAP Phase 2d-4a)
+
+- 청크 메시는 물 월드(전부 WATER, 메셔가 스킵)에서 빈 메시 → 렌더링 제거(78줄). **빌드·동작 검증 완료(선박 그림자/반사 정상, 화면 변화 없음).**
+- 제거: 청크 draw 3블록(shadow/reflection/scene), `createChunkPipeline` + `m_chunkPipeline`(생성/파괴/선언).
+- shadow 패스 정리: 청크 제거로 미사용이 된 `lightFrustum` + 고아가 된 `m_shadowPipeline` 바인드(ship이 자체 재바인드) 제거. **ship 그림자 캐스터는 유지.**
+- 유지: `buildChunkBuffer`/`rebuildDirtyChunks`/`m_chunkBuffers`/`ChunkRenderData`(빌드만 하고 미사용) → 2d-4b. reflection/scene의 dead descriptor 바인드는 sky 등 위해 유지.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`/`_Frame`.
+
 ### 2026-06-09 — 죽은 오브젝트 리소스 제거 (ROADMAP Phase 2d-3b)
 
 - 2d-3a로 오브젝트가 더 이상 그려지지 않게 된 뒤, 죽은 오브젝트 리소스 제거(291줄). **빌드·동작 검증 완료(선박 정상 표시, 화면 변화 없음).**

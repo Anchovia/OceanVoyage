@@ -37,7 +37,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createOceanDescriptorSetLayout();
     createScenePipelineLayout();
     createSkyPipeline();
-    createChunkPipeline();
     createUIPipeline();
     createOceanPipeline();
     createShipPipeline();
@@ -113,7 +112,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     vkDestroyPipeline      (m_device, m_shadowPipeline,       nullptr);
