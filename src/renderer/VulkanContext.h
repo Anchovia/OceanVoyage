@@ -183,7 +183,6 @@ private:
     void createOceanPipeline();
     void createOceanMesh();
     void createShipPipeline();
-    void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
     void createPlanarReflectionResources();
@@ -234,9 +233,7 @@ private:
     void createShadowResources();
     void createShadowPipeline();
     void createShadowObjectPipeline();
-    void createShadowGrassPipeline();
     void createShadowSampler();
-    void createShadowGrassDescriptors();
     void createImage(uint32_t width, uint32_t height, VkFormat format,
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
@@ -306,7 +303,6 @@ private:
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
     VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
-    VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
     VkPipelineLayout         m_oceanPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout    m_oceanDescriptorSetLayout = VK_NULL_HANDLE;
@@ -494,7 +490,6 @@ private:
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
-    ObjectMesh m_grassCardMesh;
     ObjectMesh m_groundPatchMesh;
     ObjectMesh m_pebbleMesh;
 
@@ -546,11 +541,6 @@ private:
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
     VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
-    VkPipelineLayout             m_shadowGrassPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline                   m_shadowGrassPipeline       = VK_NULL_HANDLE;  // alpha-tested grass caster
-    VkDescriptorSetLayout        m_shadowGrassDescriptorSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool             m_shadowGrassDescriptorPool      = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_shadowGrassDescriptorSets;
     VkSampler                    m_shadowSampler        = VK_NULL_HANDLE;
     std::array<glm::mat4, CSM_CASCADES> m_lightMVPCascade{}; // per-cascade light-space transforms
     glm::vec4                    m_cascadeSplits        = glm::vec4(0.0f); // xyz = cascade far view-depths

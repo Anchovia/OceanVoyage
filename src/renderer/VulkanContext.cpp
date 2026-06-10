@@ -42,7 +42,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createObjectPipeline();
     createOceanPipeline();
     createShipPipeline();
-    createGrassPipeline();
     createPostPipeline();
     createSmaaPipelines();
     createDepthResources();
@@ -52,7 +51,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createShadowResources();
     createShadowPipeline();
     createShadowObjectPipeline();
-    createShadowGrassPipeline();
     createFramebuffers();
     createCommandPool();
     createSmaaLookupTextures();
@@ -75,7 +73,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createDescriptorSets();
     createReflectionDescriptorSets();
     createOceanDescriptors();
-    createShadowGrassDescriptors();
     createPostDescriptors();
     createSmaaDescriptors();
     createCommandBuffers();
@@ -110,7 +107,6 @@ VulkanContext::~VulkanContext() {
     m_shipNormalTex.destroy();
     m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
-    m_grassCardMesh.vbuf.destroy();
     m_groundPatchMesh.vbuf.destroy();
     m_pebbleMesh.vbuf.destroy();
     m_oceanIndexBuffer.destroy();
@@ -118,7 +114,6 @@ VulkanContext::~VulkanContext() {
     m_uiBuffer.clear();
     vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_grassPipeline, nullptr);
     vkDestroyPipeline(m_device, m_shipPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
@@ -127,10 +122,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline      (m_device, m_shadowGrassPipeline,  nullptr);
-    vkDestroyPipelineLayout(m_device, m_shadowGrassPipelineLayout, nullptr);
-    vkDestroyDescriptorPool(m_device, m_shadowGrassDescriptorPool, nullptr);
-    vkDestroyDescriptorSetLayout(m_device, m_shadowGrassDescriptorSetLayout, nullptr);
     vkDestroyPipeline      (m_device, m_shadowObjectPipeline, nullptr);
     vkDestroyPipeline      (m_device, m_shadowPipeline,       nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);

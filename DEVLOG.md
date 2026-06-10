@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 죽은 그래스 리소스 제거 (ROADMAP Phase 2d-1b)
+
+- 2d-1a로 그래스가 더 이상 그려지지 않게 된 뒤, standalone 그래스 리소스를 제거(257줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `createGrassPipeline`(+`m_grassPipeline`), grass card 메시(`uploadGrassCardMesh` 람다 + GRASS CARD 빌드 + `m_grassCardMesh`), shadow grass(`createShadowGrassPipeline`/`createShadowGrassDescriptors` + `m_shadowGrass*` 5종), `GrassCardVertex`.
+- **유지**: `m_grassTex`/`m_grassOpacityTex` + `createGrassTexture` — 그래스 텍스처가 **공유 scene·reflection 디스크립터에 묶여 있어**(chunk/object가 같은 descriptor 사용) 지금 제거 불가 → chunk/object 렌더 제거(2d-4/5) 시 함께 정리.
+- shaders `grass.*`/`shadow_grass.*`는 미사용이 됨(CMake/에셋 정리는 farm 렌더 제거 끝에 일괄).
+- 수정: `VulkanContext.{cpp,h}`/`_Init`, `Types.h`.
+
 ### 2026-06-09 — 그래스 렌더링 제거 (ROADMAP Phase 2d-1a)
 
 - 렌더러-`World` 분리(Phase 2d)의 첫 슬라이스. 농장 grass dressing은 grass 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(189줄). **빌드·동작 검증 완료(화면 변화 없음).**
