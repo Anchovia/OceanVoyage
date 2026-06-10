@@ -9,7 +9,6 @@
 #include <array>
 #include <stdexcept>
 #include "renderer/Types.h"
-#include "renderer/Frustum.h"
 
 class Window;
 class Camera;
@@ -434,8 +433,6 @@ private:
     GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
     GpuBuffer                m_oceanIndexBuffer;
     uint32_t                 m_oceanIndexCount = 0;
-    Frustum                  m_frustum;
-    Frustum                  m_reflectionFrustum;
 
     // Shared low-poly object meshes, indexed by ObjectType (instanced per Object)
     struct ObjectMesh {

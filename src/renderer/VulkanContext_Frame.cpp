@@ -721,7 +721,6 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateOceanHistoryDescriptor(m_currentFrame);
     updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
     updateHotbar();
-    m_frustum = Frustum::extractFrom(frame.camera.viewProj());
 #ifdef PASTEL_DEV_BUILD
     buildDevUi(frame);
 #endif
@@ -820,7 +819,6 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
     ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
     m_prevViewProj = currentViewProj;
-    m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
