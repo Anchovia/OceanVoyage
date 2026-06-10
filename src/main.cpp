@@ -132,13 +132,6 @@ struct AppFlow {
         prevEsc = escPressed;
     }
 
-    bool consumeInventoryEscape(bool escPressed, bool inventoryOpen) {
-        const bool pressed = mode == AppMode::Gameplay && inventoryOpen && escPressed && !prevEsc;
-        if (pressed)
-            prevEsc = escPressed;
-        return pressed;
-    }
-
     bool consumeSavePress(bool savePressed) {
         const bool pressed = savePressed && !prevCtrlS;
         prevCtrlS = savePressed;
@@ -197,10 +190,8 @@ static void clearGameplayInput(PlayerInput& input) {
     input.moveRight       = false;
     input.leftClick       = false;
     input.rightClick      = false;
-    input.toggleInventory = false;
     input.rotateLeft      = false;
     input.rotateRight     = false;
-    input.selectSlot      = -1;
     input.scrollDelta     = 0;
 }
 
@@ -291,12 +282,7 @@ int main() {
             input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
 #endif
 
-            if (app.consumeInventoryEscape(input.quit, gameState.inventoryOpen())) {
-                gameState.closeInventory();
-                input.quit = false;
-            } else {
-                app.updateEscape(input.quit);
-            }
+            app.updateEscape(input.quit);
             const bool wasSettings = app.settings();
             const int menuClickAction = app.consumeMainMenuClick(input);
             const int pauseClickAction = app.consumePauseClick(input);

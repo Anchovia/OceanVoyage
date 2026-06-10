@@ -76,65 +76,6 @@ inline glm::vec3 itemColor(ItemType t) {
     }
 }
 
-// Inventory item stack (a slot holds one item type + a count)
-struct ItemStack {
-    ItemType type  = ItemType::NONE;
-    int      count = 0;
-};
-
-// An item lying in the world: spawned on harvest, picked up on player proximity
-struct DroppedItem {
-    glm::vec3 pos   = {0.0f, 0.0f, 0.0f};
-    ItemType  type  = ItemType::NONE;
-    int       count = 0;
-};
-
-// Inventory grid layout (shared between GameState and VulkanContext)
-static constexpr int   INV_COLS      = 9;   // first row == hotbar
-static constexpr int   INV_ROWS      = 3;
-static constexpr float INV_SLOT_SIZE = 52.0f;
-static constexpr float INV_GAP       = 8.0f;
-static constexpr float INV_PAD       = 16.0f;
-
-static constexpr int HOTBAR_SLOTS = 9;
-static constexpr int INV_SLOTS    = INV_COLS * INV_ROWS; // 27 (hotbar 0..8 + backpack)
-
-// ---- Crafting ----
-struct RecipeInput { ItemType type = ItemType::NONE; int count = 0; };
-struct Recipe {
-    ItemType    result;
-    int         resultCount;
-    RecipeInput inputs[3];        // type == NONE terminates the list
-    bool        requiresWorkbench; // false = craftable from inventory anywhere
-};
-
-// Stardew-style recipe list: click a recipe to consume materials and produce the result.
-inline const Recipe* craftingRecipes(int& outCount) {
-    static const Recipe table[] = {
-        { ItemType::ITEM_WORKBENCH,   1, {{ItemType::BLOCK_WOOD, 4},  {}, {}}, false },
-        { ItemType::ITEM_FENCE,       1, {{ItemType::BLOCK_WOOD, 2},  {}, {}}, false },
-        { ItemType::ITEM_STONE_FENCE, 1, {{ItemType::BLOCK_STONE, 2}, {}, {}}, true  }, // needs workbench
-    };
-    outCount = (int)(sizeof(table) / sizeof(table[0]));
-    return table;
-}
-
-// Crafting panel layout — shared so click detection (GameState) matches rendering (VulkanContext).
-static constexpr float CRAFT_ROW_W   = 260.0f;
-static constexpr float CRAFT_ROW_H   = 44.0f;
-static constexpr float CRAFT_ROW_GAP = 6.0f;
-
-// Screen-space rect of crafting row `i`; panel sits centered below the inventory grid.
-inline void craftRowRect(int i, float screenW, float screenH, float& x, float& y, float& w, float& h) {
-    const float gridH  = INV_ROWS * INV_SLOT_SIZE + (INV_ROWS - 1) * INV_GAP;
-    const float panelH = gridH + 2 * INV_PAD;
-    const float invTop = (screenH - gridH) * 0.5f - INV_PAD;
-    w = CRAFT_ROW_W;
-    h = CRAFT_ROW_H;
-    x = (screenW - w) * 0.5f;
-    y = invTop + panelH + 12.0f + i * (h + CRAFT_ROW_GAP);
-}
-
 static constexpr float SETTINGS_ROW_W   = 300.0f;
 static constexpr float SETTINGS_ROW_H   = 38.0f;
 static constexpr float SETTINGS_ROW_GAP = 14.0f;

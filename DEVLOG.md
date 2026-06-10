@@ -6,6 +6,18 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — 일시정지 UI 텍스트 잘림 수정 (UI_MAX_VERTS 2048→8192)
+
+- 일시정지 화면에서 SETTINGS가 "SE"에서 끊기고 QUIT이 사라지는 버그 수정. **빌드·동작 검증 완료.**
+- 원인: 벡터 폰트가 글리프 픽셀당 쿼드 1개(6버텍스)라 선박 HUD+PAUSED+메뉴 3행 동시 표시가 ~3k 버텍스 → `UI_MAX_VERTS`(2048) 초과분을 overflow 가드 `resize`가 잘라냄. Phase 2b 선박 HUD 추가 때부터 잠재, HUD 숫자 자릿수에 따라 간헐 재현(항해 중 ESC).
+- 수정: `VulkanContext.h` 상수 1줄(2048→8192, 프레임당 ~192KB로 무시 가능). 버퍼는 `createUIBuffer`가 상수 기준 생성이라 추가 변경 없음.
+
+### 2026-06-11 — 죽은 농장 세이브 배관 제거 (Phase 3 잔재 정리)
+
+- VoyageSave 교체로 호출처 0이 된 농장 세이브 경로 제거. **빌드·동작 검증 완료(순수 삭제, 동작 변화 0).**
+- 제거: `World::save/load` 정의 229줄+선언(`PFRM` 직렬화 전체 — `PFRM` 문자열이 src에서 소멸), `GameState::setPlayerPosition/setInventory/setDrops`, 고아 include(`World.cpp`의 cstring/fstream/filesystem, `World.h`의 string/array).
+- 유지: `m_inventory`/`m_drops`/`craft`/청크 스트리밍 — 아직 살아있는 코드, 다음 슬라이스에서 정리.
+
 ### 2026-06-11 — VoyageSave(OVYG) 도입 (ROADMAP Phase 3a)
 
 - 저장 책임을 `World::save/load`(농장 `PFRM`)에서 신규 `src/game/VoyageSave.{h,cpp}`로 이동. **빌드·동작 검증 완료(항해 상태 저장/복원, legacy 거부, 손상 파일 무크래시).**

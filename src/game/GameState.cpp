@@ -32,34 +32,11 @@ float approachZero(float v, float amount) {
 }
 }
 
-GameState::GameState() {
-    // Inventory starts empty for OceanVoyage. The farm starting tools (hoe, watering
-    // can, seeds, axe, sickle, pickaxe) were removed in the farm-gameplay transition;
-    // a cargo/ship inventory will replace them later. m_inventory default-initializes
-    // every slot to NONE/0, so no explicit clearing is needed here.
-}
-
 void GameState::update(float dt, const PlayerInput& input) {
     // Time
     m_time += dt;
     m_day = static_cast<int>(m_time / DAY_DURATION);
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
-
-    // Crop growth tick removed for OceanVoyage transition (farm gameplay disabled).
-    // World::growthTick is kept as reference until the ocean systems replace it.
-
-    // Inventory toggle (I key — edge-detect to avoid repeated triggers)
-    if (input.toggleInventory && !m_prevToggleInv)
-        m_inventoryOpen = !m_inventoryOpen;
-    m_prevToggleInv = input.toggleInventory;
-
-    // Hotbar selection
-    if (input.selectSlot >= 0 && input.selectSlot < HOTBAR_SLOTS)
-        m_selectedSlot = input.selectSlot;
-    if (input.scrollDelta != 0) {
-        m_selectedSlot = (m_selectedSlot + input.scrollDelta) % HOTBAR_SLOTS;
-        if (m_selectedSlot < 0) m_selectedSlot += HOTBAR_SLOTS;
-    }
 
     // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
     updateShipPhysics(dt, input);
@@ -71,12 +48,6 @@ void GameState::update(float dt, const PlayerInput& input) {
     constexpr float kShipDeckZ = 1.0f; // height only feeds shadow/camera; buoyancy recomputes the visual height
     m_player.setPosition(glm::vec3(m_ship.position.x, m_ship.position.y, kShipDeckZ));
     m_player.setFacingDirection(glm::vec2(std::cos(m_ship.heading), std::sin(m_ship.heading)));
-
-    // Farm interaction (drop pickup, nearby-workbench detection, mouse-ray tile
-    // picking / targetTile) removed for OceanVoyage: the sailing loop no longer
-    // touches World or Camera. m_targetTile stays empty (tile selector inert) and
-    // m_drops / m_nearWorkbench keep their defaults. Their members, getters,
-    // FrameRenderData fields, and renderer plumbing are removed in a later step.
 }
 
 void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
@@ -125,69 +96,6 @@ void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
 
     m_ship.heading  += m_ship.yawRate * dt;
     m_ship.position += m_ship.velocity * dt;
-}
-
-bool GameState::addItem(ItemType type, int count) {
-    // Fill an existing stack of the same type first.
-    for (ItemStack& slot : m_inventory) {
-        if (slot.type == type && slot.count > 0) {
-            slot.count += count;
-            return true;
-        }
-    }
-    // Otherwise use the first empty slot.
-    for (ItemStack& slot : m_inventory) {
-        if (slot.type == ItemType::NONE || slot.count <= 0) {
-            slot = { type, count };
-            return true;
-        }
-    }
-    return false; // inventory full
-}
-
-int GameState::countItem(ItemType type) const {
-    int total = 0;
-    for (const ItemStack& s : m_inventory)
-        if (s.type == type) total += s.count;
-    return total;
-}
-
-bool GameState::removeItem(ItemType type, int count) {
-    if (countItem(type) < count) return false;
-    for (ItemStack& s : m_inventory) {
-        if (s.type != type) continue;
-        int take = std::min(s.count, count);
-        s.count -= take;
-        count   -= take;
-        if (s.count <= 0) s = ItemStack{};
-        if (count == 0) break;
-    }
-    return true;
-}
-
-bool GameState::craft(int recipeIndex) {
-    int n = 0;
-    const Recipe* table = craftingRecipes(n);
-    if (recipeIndex < 0 || recipeIndex >= n) return false;
-    const Recipe& r = table[recipeIndex];
-
-    // Need every input in stock
-    for (const RecipeInput& in : r.inputs) {
-        if (in.type == ItemType::NONE) continue;
-        if (countItem(in.type) < in.count) return false;
-    }
-    // Consume inputs
-    for (const RecipeInput& in : r.inputs) {
-        if (in.type == ItemType::NONE) continue;
-        removeItem(in.type, in.count);
-    }
-    // Produce result; roll back the inputs if there's no room
-    if (!addItem(r.result, r.resultCount)) {
-        for (const RecipeInput& in : r.inputs)
-            if (in.type != ItemType::NONE) addItem(in.type, in.count);
-        return false;
-    }
-    return true;
 }
 
 void GameState::setShipState(const ShipState& s) {

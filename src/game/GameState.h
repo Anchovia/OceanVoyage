@@ -1,9 +1,5 @@
 #pragma once
 #include "game/Player.h"
-#include "renderer/Types.h"
-
-#include <array>
-#include <vector>
 
 static constexpr float DAY_DURATION = 120.0f; // seconds per in-game day
 
@@ -16,14 +12,12 @@ struct PlayerInput {
     double mouseY = 0.0;
     bool leftClick       = false;
     bool rightClick      = false;
-    bool toggleInventory = false;
     bool quit            = false;  // ESC (app-level pause toggle)
     bool rotateLeft      = false;  // Q
     bool rotateRight     = false;  // E
     bool saveKey         = false;  // Ctrl+S (raw; main edge-detects)
     bool toggleDevUi     = false;  // F3 (dev builds; main edge-detects)
-    int  selectSlot  = -1;  // 0..HOTBAR_SLOTS-1 if a number key was pressed, else -1
-    int  scrollDelta = 0;   // slots to move from scroll wheel
+    int  scrollDelta = 0;   // scroll wheel steps (camera zoom)
     int windowWidth = 1280;
     int windowHeight = 720;
     float moveSpeedMultiplier = 1.0f; // dev/test multiplier; 1.0 keeps normal speed
@@ -44,21 +38,10 @@ struct ShipState {
 
 class GameState {
 public:
-    GameState();
-
     void update(float dt, const PlayerInput& input);
 
     const Player& player() const { return m_player; }
     const ShipState& ship() const { return m_ship; }
-
-    int selectedSlot() const { return m_selectedSlot; }
-    const std::array<ItemStack, INV_SLOTS>& inventory() const { return m_inventory; }
-
-    bool inventoryOpen() const { return m_inventoryOpen; }
-    void closeInventory() { m_inventoryOpen = false; }
-    bool nearWorkbench() const { return m_nearWorkbench; }
-
-    const std::vector<DroppedItem>& drops() const { return m_drops; }
 
     int   day()       const { return m_day; }
     float timeOfDay() const { return m_timeOfDay; } // 0.0=midnight, 0.5=noon, 1.0=midnight
@@ -70,30 +53,11 @@ public:
     void setTime(float t);
 
 private:
-    // Adds count items of the given type to the inventory: fills an existing
-    // matching stack first, otherwise the first empty slot. Returns false if
-    // there is no room (item not added).
-    bool addItem(ItemType type, int count);
-
-    int  countItem(ItemType type) const;          // total across all slots
-    bool removeItem(ItemType type, int count);     // remove across stacks; false if not enough
-    bool craft(int recipeIndex);                   // consume inputs, add result
-
     // Integrates the ship's sailing physics from WASD (throttle/rudder) input.
     void updateShipPhysics(float dt, const PlayerInput& input);
 
     Player    m_player;
     ShipState m_ship;
-
-    int m_selectedSlot = 0;
-    std::array<ItemStack, INV_SLOTS> m_inventory;
-
-    bool m_inventoryOpen   = false;
-    bool m_prevToggleInv   = false; // edge-detect for I key
-    bool m_prevCraftClick  = false; // edge-detect for crafting-row clicks
-    bool m_nearWorkbench   = false; // player is adjacent to a placed workbench
-
-    std::vector<DroppedItem> m_drops; // items lying in the world awaiting pickup
 
     float m_time      = 0.0f;
     int   m_day       = 0;
