@@ -1520,6 +1520,98 @@ void VulkanContext::createSmaaRenderPass() {
         throw std::runtime_error("Failed to create SMAA render pass");
 }
 
+void VulkanContext::createTaaRenderPass() {
+    // Same shape as the SMAA pass but on the HDR scene format: fullscreen
+    // overwrite, then sampled by the post pass (and as next frame's history).
+    VkAttachmentDescription color{};
+    color.format         = m_sceneColorFormat;
+    color.samples        = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference colorRef{};
+    colorRef.attachment = 0;
+    colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments    = &colorRef;
+
+    VkSubpassDependency deps[2]{};
+    // Wait on last frame's history read (and this frame's scene write) before overwriting.
+    deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass    = 0;
+    deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    deps[1].srcSubpass    = 0;
+    deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo info{};
+    info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments    = &color;
+    info.subpassCount    = 1;
+    info.pSubpasses      = &subpass;
+    info.dependencyCount = 2;
+    info.pDependencies   = deps;
+    if (vkCreateRenderPass(m_device, &info, nullptr, &m_taaRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA render pass");
+}
+
+void VulkanContext::createTaaResources() {
+    m_taaHistoryFrames = 0;
+    m_taaImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_taaImage[i], m_taaMemory[i]);
+
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image                           = m_taaImage[i];
+        viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format                          = m_sceneColorFormat;
+        viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount     = 1;
+        viewInfo.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_taaView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create TAA image view");
+
+        VkFramebufferCreateInfo fbInfo{};
+        fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass      = m_taaRenderPass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments    = &m_taaView[i];
+        fbInfo.width           = m_swapchainExtent.width;
+        fbInfo.height          = m_swapchainExtent.height;
+        fbInfo.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_taaFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create TAA framebuffer");
+
+        // The other index is bound as history before this image is ever written;
+        // move it out of UNDEFINED so the descriptor binding is always legal.
+        transitionImageLayout(m_taaImage[i],
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
+}
+
 void VulkanContext::createOffscreenResources() {
     m_temporalHistoryFrames = 0;
     m_prevViewProj = glm::mat4(1.0f);
@@ -2108,6 +2200,193 @@ void VulkanContext::createSmaaPipelines() {
         m_smaaNeighborhoodPipelineLayout, m_postRenderPass, m_smaaNeighborhoodPipeline, "SMAA neighborhood");
 }
 
+void VulkanContext::createTaaPipeline() {
+    // Set layout: 0 = current scene color, 1 = history color, 2 = scene depth.
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    for (uint32_t b = 0; b < 3; b++) {
+        bindings[b].binding         = b;
+        bindings[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[b].descriptorCount = 1;
+        bindings[b].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dl{};
+    dl.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dl.bindingCount = 3;
+    dl.pBindings    = bindings;
+    if (vkCreateDescriptorSetLayout(m_device, &dl, nullptr, &m_taaDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA descriptor set layout");
+
+    VkPushConstantRange push{};
+    push.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.offset     = 0;
+    push.size       = sizeof(TaaPushConstants);
+    VkPipelineLayoutCreateInfo pl{};
+    pl.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pl.setLayoutCount         = 1;
+    pl.pSetLayouts            = &m_taaDescriptorSetLayout;
+    pl.pushConstantRangeCount = 1;
+    pl.pPushConstantRanges    = &push;
+    if (vkCreatePipelineLayout(m_device, &pl, nullptr, &m_taaPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA pipeline layout");
+
+    auto vertCode = readFile("shaders/post.vert.spv");
+    auto fragCode = readFile("shaders/taa.frag.spv");
+    VkShaderModule vertMod = createShaderModule(vertCode);
+    VkShaderModule fragMod = createShaderModule(fragCode);
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertMod;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragMod;
+    stages[1].pName  = "main";
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{}; // no vertex buffers (gl_VertexIndex)
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{ 0, 0, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+    VkRect2D   scissor{ {0, 0}, m_swapchainExtent };
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports    = &viewport;
+    viewportState.scissorCount  = 1;
+    viewportState.pScissors     = &scissor;
+
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynamicStates;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode    = VK_CULL_MODE_NONE;
+    raster.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa{};
+    msaa.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAttach{};
+    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments    = &blendAttach;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &raster;
+    pipelineInfo.pMultisampleState   = &msaa;
+    pipelineInfo.pColorBlendState    = &blend;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = m_taaPipelineLayout;
+    pipelineInfo.renderPass          = m_taaRenderPass;
+    pipelineInfo.subpass             = 0;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_taaPipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA pipeline");
+
+    vkDestroyShaderModule(m_device, vertMod, nullptr);
+    vkDestroyShaderModule(m_device, fragMod, nullptr);
+}
+
+void VulkanContext::updateTaaDescriptors() {
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        // Resolve inputs: this frame's scene, the other index as history
+        // (frames in flight alternate, so [1-i] holds last frame's resolve).
+        VkDescriptorImageInfo images[3]{};
+        images[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[0].imageView   = m_offscreenView[i];
+        images[0].sampler     = m_postSampler;
+        images[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[1].imageView   = m_taaView[(i + 1) % MAX_FRAMES_IN_FLIGHT];
+        images[1].sampler     = m_postSampler;
+        images[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[2].imageView   = m_depthImageView;
+        images[2].sampler     = m_sceneDepthSampler;
+
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t b = 0; b < 3; b++) {
+            writes[b].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[b].dstSet          = m_taaDescriptorSets[i];
+            writes[b].dstBinding      = b;
+            writes[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[b].descriptorCount = 1;
+            writes[b].pImageInfo      = &images[b];
+        }
+        vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+
+        // Post pass variant that tone-maps the TAA resolve instead of the raw scene.
+        VkDescriptorImageInfo resolved{};
+        resolved.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        resolved.imageView   = m_taaView[i];
+        resolved.sampler     = m_postSampler;
+        VkWriteDescriptorSet postWrite{};
+        postWrite.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        postWrite.dstSet          = m_postTaaDescriptorSets[i];
+        postWrite.dstBinding      = 0;
+        postWrite.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        postWrite.descriptorCount = 1;
+        postWrite.pImageInfo      = &resolved;
+        vkUpdateDescriptorSets(m_device, 1, &postWrite, 0, nullptr);
+    }
+}
+
+void VulkanContext::createTaaDescriptors() {
+    VkDescriptorPoolSize ps{};
+    ps.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps.descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // 3 resolve inputs + 1 post input
+    VkDescriptorPoolCreateInfo pi{};
+    pi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.poolSizeCount = 1;
+    pi.pPoolSizes    = &ps;
+    pi.maxSets       = MAX_FRAMES_IN_FLIGHT * 2;
+    if (vkCreateDescriptorPool(m_device, &pi, nullptr, &m_taaDescriptorPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA descriptor pool");
+
+    std::vector<VkDescriptorSetLayout> taaLayouts(MAX_FRAMES_IN_FLIGHT, m_taaDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool     = m_taaDescriptorPool;
+    ai.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    ai.pSetLayouts        = taaLayouts.data();
+    m_taaDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &ai, m_taaDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate TAA descriptor sets");
+
+    std::vector<VkDescriptorSetLayout> postLayouts(MAX_FRAMES_IN_FLIGHT, m_postDescriptorSetLayout);
+    ai.pSetLayouts = postLayouts.data();
+    m_postTaaDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &ai, m_postTaaDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate TAA post descriptor sets");
+
+    updateTaaDescriptors();
+}
+
 void VulkanContext::createPostSampler() {
     VkSamplerCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2440,9 +2719,11 @@ void VulkanContext::createSyncObjects() {
 // ============================================================
 void VulkanContext::createDepthResources() {
     VkFormat depthFormat = findDepthFormat();
+    // SAMPLED: the TAA resolve reads the final (post-water) depth for reprojection.
     createImage(m_swapchainExtent.width, m_swapchainExtent.height, depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_depthImage, m_depthImageMemory);
 

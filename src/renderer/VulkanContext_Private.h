@@ -33,6 +33,11 @@ struct PostPushConstants {
     glm::vec4 params; // xy = inverse framebuffer size, z = AA mode, w = unused
 };
 
+struct TaaPushConstants {
+    glm::mat4 reprojection; // prevViewProj * inverse(curViewProj): current NDC -> previous clip
+    glm::vec4 params;       // xy = inverse framebuffer size, z = history valid (0/1), w unused
+};
+
 // (The flat-shaded unit-cube mesh that lived here — kVertices/kIndices — was removed
 //  along with the legacy player cube / selector / drops that were its only users.)
 

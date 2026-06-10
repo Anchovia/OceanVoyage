@@ -6,6 +6,12 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — 두 번째 항구 + 첫 교역 루프 성립 (ROADMAP Phase 3c-3, **Phase 3 완료**)
+
+- `LIVERPOOL` 추가(BRISTOL 정동 600m). 가격 차별화로 양방향 이익 항로 성립: Coal 동행(8→11, +3/개), Machinery 서행(44→48, +4/개). 동일 항구 왕복은 여전히 손해. **빌드·검증 완료 — 첫 교역 루프(매입→항해→매도→이익) 동작.**
+- HUD `PRT` 라인에 최근접 항구 이름 추가(`PRT LIVERPOOL E 620`) — 2항구 항법용, Phase 5 nearest-port HUD의 선행.
+- **Phase 3 종결**: VoyageSave(OVYG v2) + 항구/화물/money + 입항·정박·출항 + 시장 매매 + 2항구 교역 루프. 농장 레거시 0. 다음은 ROADMAP Phase 4(렌더링 후속), 첫 항목은 기준 성능 측정.
+
 ### 2026-06-11 — 교역소 시장 매매 (ROADMAP Phase 3c-2)
 
 - `MarketEntry { good; buyPrice; sellPrice; stock }` + BRISTOL 시장 5종(Coal 8/6, IronOre 12/9, Steel 30/24, Machinery 60/48, Grain 10/8 — buy>sell 스프레드로 동일 항구 왕복 매매는 손해). **빌드·동작 검증 완료.**

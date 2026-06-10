@@ -111,7 +111,9 @@ vec3 applyGrade(vec3 c) {
 }
 
 void main() {
+    // FXAA only in mode 1. Mode 0 = off; mode 2 (SMAA) uses its own pipeline;
+    // mode 3 (TAA) arrives here already resolved, so it samples plain.
     int aaMode = int(pc.params.z + 0.5);
-    vec3 c = (aaMode == 0) ? sampleScene(uv) : applyFxaa(uv);
+    vec3 c = (aaMode == 1) ? applyFxaa(uv) : sampleScene(uv);
     outColor = vec4(applyGrade(c), 1.0);
 }

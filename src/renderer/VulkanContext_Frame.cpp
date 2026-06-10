@@ -442,6 +442,60 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     writeDevTimestamp(cmd, 2);
 #endif
 
+    // TAA resolve (aaMode 3) — blend the HDR scene against the reprojected history
+    // before tone mapping. Output [m_currentFrame] feeds the post pass this frame
+    // and is read back as history by the other frame index next frame.
+    if (m_aaModeHud == 3) {
+        // Final (post-water) depth is needed for reprojection; move it to a
+        // sampleable layout. Next frame's scene pass starts from UNDEFINED, so
+        // no transition back is required.
+        VkImageMemoryBarrier depthToRead{};
+        depthToRead.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depthToRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthToRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthToRead.image               = m_depthImage;
+        depthToRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthToRead.subresourceRange.levelCount = 1;
+        depthToRead.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthToRead);
+
+        TaaPushConstants taaPc{};
+        taaPc.reprojection = m_taaReprojection;
+        taaPc.params = glm::vec4(
+            1.0f / (float)m_swapchainExtent.width,
+            1.0f / (float)m_swapchainExtent.height,
+            (m_taaHistoryFrames > 0) ? 1.0f : 0.0f,
+            0.0f);
+
+        VkRenderPassBeginInfo taaRp{};
+        taaRp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        taaRp.renderPass      = m_taaRenderPass;
+        taaRp.framebuffer     = m_taaFramebuffers[m_currentFrame];
+        taaRp.renderArea      = {{0, 0}, m_swapchainExtent};
+        vkCmdBeginRenderPass(cmd, &taaRp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport tvp{ 0.0f, 0.0f, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+        VkRect2D   tsc{ {0, 0}, m_swapchainExtent };
+        vkCmdSetViewport(cmd, 0, 1, &tvp);
+        vkCmdSetScissor(cmd, 0, 1, &tsc);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_taaPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_taaPipelineLayout, 0, 1, &m_taaDescriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_taaPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(TaaPushConstants), &taaPc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(cmd);
+    }
+
     PostPushConstants postPc{};
     postPc.params = glm::vec4(
         1.0f / (float)m_swapchainExtent.width,
@@ -511,6 +565,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             postPipeline = m_smaaNeighborhoodPipeline;
             postLayout = m_smaaNeighborhoodPipelineLayout;
             postDescriptorSet = m_smaaNeighborhoodDescriptorSets[m_currentFrame];
+        } else if (m_aaModeHud == 3) {
+            postDescriptorSet = m_postTaaDescriptorSets[m_currentFrame]; // tone-map the TAA resolve
         }
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline);
@@ -785,6 +841,13 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 
     if (!swapchainRecreated && m_temporalHistoryFrames < MAX_FRAMES_IN_FLIGHT)
         m_temporalHistoryFrames++;
+    // TAA history is only valid while consecutive frames keep resolving in mode 3;
+    // any break (mode switch, resize) restarts accumulation from the current frame.
+    if (!swapchainRecreated && m_aaModeHud == 3) {
+        if (m_taaHistoryFrames < MAX_FRAMES_IN_FLIGHT) m_taaHistoryFrames++;
+    } else {
+        m_taaHistoryFrames = 0;
+    }
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -836,6 +899,8 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     glm::mat4 currentViewProj = ubo.proj * ubo.view;
     ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
     ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    // TAA reprojection: current NDC -> previous clip, shared with the SSR history matrices.
+    m_taaReprojection = ubo.prevViewProj * ubo.invViewProj;
     m_prevViewProj = currentViewProj;
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
@@ -1063,6 +1128,7 @@ void VulkanContext::updateHotbar() {
         const char* aaText = "AA OFF";
         if (m_aaModeHud == 1) aaText = "AA FXAA";
         else if (m_aaModeHud == 2) aaText = "AA SMAA";
+        else if (m_aaModeHud == 3) aaText = "AA TAA";
 
         pushCenteredText("SETTINGS", H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 1.0f});
         const char* rows[] = { m_vsyncHud ? "VSYNC ON" : "VSYNC OFF", aaText, "BACK" };

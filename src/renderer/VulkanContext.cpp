@@ -32,6 +32,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createRenderPass();
     createPostRenderPass();
     createSmaaRenderPass();
+    createTaaRenderPass();
     createDescriptorSetLayout();
     createOceanDescriptorSetLayout();
     createScenePipelineLayout();
@@ -41,6 +42,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createShipPipeline();
     createPostPipeline();
     createSmaaPipelines();
+    createTaaPipeline();
     createDepthResources();
     createOffscreenResources();
     createPlanarReflectionResources();
@@ -50,6 +52,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createFramebuffers();
     createCommandPool();
     createSmaaLookupTextures();
+    createTaaResources(); // needs the command pool for the initial layout transition
 #ifdef PASTEL_DEV_BUILD
     createDevTools();
 #endif
@@ -68,6 +71,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createOceanDescriptors();
     createPostDescriptors();
     createSmaaDescriptors();
+    createTaaDescriptors();
     createCommandBuffers();
     createSyncObjects();
 }
@@ -124,6 +128,10 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipelineLayout     (m_device, m_postPipelineLayout,      nullptr);
     vkDestroyDescriptorPool     (m_device, m_postDescriptorPool,      nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_postDescriptorSetLayout, nullptr);
+    vkDestroyPipeline           (m_device, m_taaPipeline,            nullptr);
+    vkDestroyPipelineLayout     (m_device, m_taaPipelineLayout,      nullptr);
+    vkDestroyDescriptorPool     (m_device, m_taaDescriptorPool,      nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_taaDescriptorSetLayout, nullptr);
     vkDestroyPipeline           (m_device, m_smaaNeighborhoodPipeline,       nullptr);
     vkDestroyPipelineLayout     (m_device, m_smaaNeighborhoodPipelineLayout, nullptr);
     vkDestroyPipeline           (m_device, m_smaaBlendPipeline,              nullptr);
@@ -138,6 +146,7 @@ VulkanContext::~VulkanContext() {
     m_smaaSearchTex.destroy();
     vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
+    vkDestroyRenderPass         (m_device, m_taaRenderPass,           nullptr);
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_sceneLoadRenderPass,     nullptr);
@@ -301,6 +310,12 @@ void VulkanContext::cleanupSwapchain() {
     for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaBlendFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_taaFramebuffers)      vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (size_t i = 0; i < m_taaImage.size(); i++) {
+        vkDestroyImageView(m_device, m_taaView[i],   nullptr);
+        vkDestroyImage    (m_device, m_taaImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_taaMemory[i], nullptr);
+    }
 
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage    (m_device, m_depthImage,     nullptr);
@@ -354,10 +369,12 @@ void VulkanContext::recreateSwapchain() {
     createOffscreenResources();
     createPlanarReflectionResources();
     createSmaaResources();
+    createTaaResources();
     createFramebuffers();
     updatePostDescriptors();   // offscreen views were recreated
     updateOceanDescriptors();  // planar reflection views were recreated
     updateSmaaDescriptors();   // SMAA intermediate views were recreated
+    updateTaaDescriptors();    // TAA history/depth views were recreated
 
     // Swapchain image count may have changed — recreate per-image present semaphores
     for (auto& sem : m_renderFinished) {
@@ -464,6 +481,14 @@ void VulkanContext::transitionImageLayout(VkImage image, VkImageLayout oldLayout
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        // Fresh attachment bound as sampled history before its first write
+        // (TAA): contents are garbage but the layout must be legal to bind.
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     } else {
         throw std::runtime_error("Unsupported image layout transition");

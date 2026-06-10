@@ -103,6 +103,7 @@ set(SHADERS
     ${SHADER_SRC_DIR}/sky.frag
     ${SHADER_SRC_DIR}/post.vert
     ${SHADER_SRC_DIR}/post.frag
+    ${SHADER_SRC_DIR}/taa.frag
     ${SHADER_SRC_DIR}/smaa_edge.frag
     ${SHADER_SRC_DIR}/smaa_blend.frag
     ${SHADER_SRC_DIR}/smaa_neighborhood.frag
@@ -143,6 +144,7 @@ add_custom_command(TARGET engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/sky.frag.spv ${SHADER_OUT_DIR}/sky.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/post.vert.spv ${SHADER_OUT_DIR}/post.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/post.frag.spv ${SHADER_OUT_DIR}/post.frag.spv
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/taa.frag.spv ${SHADER_OUT_DIR}/taa.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_edge.frag.spv ${SHADER_OUT_DIR}/smaa_edge.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_blend.frag.spv ${SHADER_OUT_DIR}/smaa_blend.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_neighborhood.frag.spv ${SHADER_OUT_DIR}/smaa_neighborhood.frag.spv

@@ -168,7 +168,7 @@ struct AppFlow {
 
 struct AppSettings {
     bool vsync = true;
-    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA
+    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA, 3=TAA
     bool prevClick = false;
 
     void syncClickState(const PlayerInput& input) {
@@ -188,7 +188,7 @@ struct AppSettings {
             settingsRowRect(1, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
             if (input.mouseX >= x && input.mouseX <= x + w &&
                 input.mouseY >= y && input.mouseY <= y + h) {
-                aaMode = (aaMode + 1) % 3;
+                aaMode = (aaMode + 1) % 4;
             }
 
             settingsRowRect(2, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);

@@ -212,6 +212,11 @@ private:
     void createSmaaLookupTextures();
     void createSmaaDescriptors();
     void updateSmaaDescriptors();
+    void createTaaRenderPass();
+    void createTaaResources();
+    void createTaaPipeline();
+    void createTaaDescriptors();
+    void updateTaaDescriptors();
     // Generic uploaded-texture helper: staging upload + image + view (+ optional sampler).
     TextureResource createTexture(uint32_t width, uint32_t height, VkFormat format,
         const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
@@ -453,6 +458,23 @@ private:
     // SMAA precomputed LUTs (sampled through the shared m_postSampler, no own sampler).
     TextureResource m_smaaAreaTex;
     TextureResource m_smaaSearchTex;
+
+    // TAA (aaMode 3): resolve the HDR scene against a reprojected history before
+    // tone mapping. m_taaImage[i] is written on frame-in-flight i and read as
+    // history by the other index (frames alternate, so [1-i] is last frame).
+    VkRenderPass             m_taaRenderPass          = VK_NULL_HANDLE;
+    VkPipeline               m_taaPipeline            = VK_NULL_HANDLE;
+    VkPipelineLayout         m_taaPipelineLayout      = VK_NULL_HANDLE;
+    VkDescriptorSetLayout    m_taaDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool         m_taaDescriptorPool      = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_taaDescriptorSets;     // scene + history + depth, per frame
+    std::vector<VkDescriptorSet> m_postTaaDescriptorSets; // post pass sampling the TAA resolve
+    std::vector<VkImage>         m_taaImage;
+    std::vector<VkDeviceMemory>  m_taaMemory;
+    std::vector<VkImageView>     m_taaView;
+    std::vector<VkFramebuffer>   m_taaFramebuffers;
+    uint32_t                 m_taaHistoryFrames = 0;   // 0 = history invalid (blend skipped)
+    glm::mat4                m_taaReprojection  = glm::mat4(1.0f);
 
     GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
     GpuBuffer                m_oceanIndexBuffer;

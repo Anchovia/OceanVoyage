@@ -19,7 +19,7 @@
 | **0** | 기준점 고정 (현재 빌드 회귀 확인) | 🔶 | `RUN_CHECKLIST.md` |
 | **1** | 기본 선박 상태와 항해 물리 | 🔶 1차 완료 | `MIGRATION_PLAN.md` Phase 3 |
 | **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔶 핵심 완료 | `MIGRATION_PLAN.md` Phase 4 |
-| **3** | VoyageSave + 항구/화물/교역 1차 | 🔴 | `MIGRATION_PLAN.md` Phase 5 |
+| **3** | VoyageSave + 항구/화물/교역 1차 | ✅ | `MIGRATION_PLAN.md` Phase 5 |
 | **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔴 | `ENGINE_TODO.md` P1/P2 |
 | **5** | 세계 표현: 항구·섬·풍향·항로 | 🔴 | `ARCHITECTURE.md` (OceanWorld) |
 | **6** | 경제·선박 성장·회사 진행 | 🔴 | `DESIGN.md` |
@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3a VoyageSave 완료**(2026-06-11, `"OVYG"` v1 — 항해 상태 저장/복원, 구 PFRM 거부). **농장 레거시 정리 완료**(2026-06-11): 죽은 세이브 배관 → `GameState` inventory/drops/craft → `World`/`Chunk`/`TerrainGen` 삭제 → `Player` 미러 shim 제거 4개 슬라이스로 종결, `src/world/`와 `Player.h`가 코드베이스에서 소멸. 다음 본작업은 **3b(항구·화물 데이터)** 이며, TAA/async 같은 렌더 후속(Phase 4)보다 먼저다.
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3 완료**(2026-06-11): VoyageSave(OVYG v2) + 농장 레거시 완전 소멸(`src/world/`·`Player.h` 삭제) + 항구 2개·화물·money·입항/정박/시장 매매 — **첫 교역 루프 성립**. 다음 본작업은 **Phase 4(렌더링 후속)** 이며, 첫 항목은 기준 성능 측정이다.
 
 ---
 
@@ -155,13 +155,13 @@ position += velocity * dt
 - [x] `CargoGoodId`(Coal/IronOre/Steel/Machinery/Grain), `CargoStack`, `CargoHold { capacity; stacks; }`, HUD `CRG 0/100`
 - [x] `int money`(시작 1000) + HUD `GLD`, save v2에 money/cargo 추가(version bump, 검증 포함)
 
-### 3c. 항구 모드 + 매매 (🔶 3c-1 완료 2026-06-11)
+### 3c. 항구 모드 + 매매 ✅ (2026-06-11)
 - [x] game mode `Sailing`/`Docked` 분리(AppMode와 섞지 않음). 항구 반경 안 + 저속(≤2m/s)에서 Enter로 입항, 항구 메뉴(`SET SAIL`/`TRADE`)에서 출항
-- [ ] `MarketEntry { good; buyPrice; sellPrice; stock; }`, 시장 UI(Up/Down 선택, B 구매, S 판매, Esc 나가기)
-- [ ] buy/sell validation(money·capacity·stock) + apply, 저장/로드 후 유지
-- [ ] 항구 2개 + 가격 차이 → 첫 교역 루프 검증(A 구매 → B 항해 → B 판매 → 이익), 항해 도중 저장/복원
+- [x] `MarketEntry { good; buyPrice; sellPrice; stock; }`, 시장 UI(Up/Down 선택, B 구매, S 판매, Esc 나가기)
+- [x] buy/sell validation(money·capacity·stock) + apply, money/cargo는 저장/로드 후 유지(항구 stock 영속화는 save v3로 이연)
+- [x] 항구 2개(BRISTOL/LIVERPOOL) + 가격 차이 → 첫 교역 루프 검증 완료(Coal 동행 +3, Machinery 서행 +4), 항해 도중 저장/복원 확인
 
-**검증:** 재실행 후 선박 위치·방향·money·cargo 복원, 손상 save 무크래시, 구 PFRM 오독 없음. 첫 게임 루프 성립.
+**검증:** ✅ 재실행 후 선박 위치·방향·money·cargo 복원, 손상 save 무크래시, 구 PFRM 오독 없음. **첫 게임 루프 성립(2026-06-11).**
 
 ---
 
