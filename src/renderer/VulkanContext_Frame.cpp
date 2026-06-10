@@ -570,6 +570,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_portNameHud      = frame.portName;
     m_marketOpenHud    = frame.marketOpen;
     m_marketSelHud     = frame.marketSelected;
+    m_nearestPortNameHud = frame.nearestPortName;
     m_marketRowsHudCount = frame.marketRows
         ? std::min(frame.marketRowCount, (int)m_marketRowsHud.size()) : 0;
     for (int i = 0; i < m_marketRowsHudCount; i++)
@@ -1124,15 +1125,18 @@ void VulkanContext::updateHotbar() {
         pushNumber(rud < 0 ? -rud : rud, vx + 4.0f * gpx, hy, gpx, col);
         hy += lh;
 
-        // Nearest port: 8-way compass letters (+Y = north) + distance in metres.
+        // Nearest port: name + 8-way compass letters (+Y = north) + distance (m).
         if (m_portDistanceHud >= 0.0f) {
             static const char* kCompass8[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
             const float bearing = std::atan2(m_portDirHud.x, m_portDirHud.y); // 0 = +Y (N), clockwise
             int octant = (int)std::floor(bearing * (4.0f / 3.14159265f) + 0.5f);
             octant = ((octant % 8) + 8) % 8;
+            char portLine[32];
+            std::snprintf(portLine, sizeof(portLine), "%s %s %d",
+                          m_nearestPortNameHud ? m_nearestPortNameHud : "",
+                          kCompass8[octant], (int)(m_portDistanceHud + 0.5f));
             pushText("PRT", lx, hy, gpx, col);
-            pushText(kCompass8[octant], vx, hy, gpx, col);
-            pushNumber((int)(m_portDistanceHud + 0.5f), vx + 3.0f * 4.0f * gpx, hy, gpx, col);
+            pushText(portLine, vx, hy, gpx, col);
             hy += lh;
         }
 

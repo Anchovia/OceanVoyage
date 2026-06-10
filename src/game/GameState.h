@@ -173,17 +173,25 @@ private:
     bool m_prevBuyKey     = false;
     bool m_prevSellKey    = false;
 
-    // First port sits ~200 m ahead of the initial ship heading (-Y), so a short
-    // straight sail reaches it. Becomes data-driven with OceanWorld (Phase 5).
-    // Market prices are static for now; demand/supply pricing arrives Phase 6.
-    std::vector<Port> m_ports{ {
-        0, "BRISTOL", {15.0f, -185.0f}, 30.0f,
-        { { CargoGoodId::Coal,       8,  6, 200 },
-          { CargoGoodId::IronOre,   12,  9, 150 },
-          { CargoGoodId::Steel,     30, 24,  60 },
-          { CargoGoodId::Machinery, 60, 48,  25 },
-          { CargoGoodId::Grain,     10,  8, 180 } }
-    } };
+    // BRISTOL sits ~200 m ahead of the initial ship heading (-Y); LIVERPOOL is
+    // ~600 m east of it. Becomes data-driven with OceanWorld (Phase 5).
+    // Market prices are static for now (demand/supply pricing arrives Phase 6),
+    // but differentiated so both directions have a profitable lane:
+    // coal east (BRISTOL 8 -> LIVERPOOL 11), machinery west (LIVERPOOL 44 -> BRISTOL 48).
+    std::vector<Port> m_ports{
+        { 0, "BRISTOL", {15.0f, -185.0f}, 30.0f,
+          { { CargoGoodId::Coal,       8,  6, 200 },
+            { CargoGoodId::IronOre,   12,  9, 150 },
+            { CargoGoodId::Steel,     30, 24,  60 },
+            { CargoGoodId::Machinery, 60, 48,  25 },
+            { CargoGoodId::Grain,     10,  8, 180 } } },
+        { 1, "LIVERPOOL", {615.0f, -185.0f}, 30.0f,
+          { { CargoGoodId::Coal,      14, 11,  40 },
+            { CargoGoodId::IronOre,   16, 13,  80 },
+            { CargoGoodId::Steel,     26, 21,  90 },
+            { CargoGoodId::Machinery, 44, 38,  60 },
+            { CargoGoodId::Grain,     13, 11,  70 } } },
+    };
 
     CargoHold m_cargo;
     int       m_money = 1000;

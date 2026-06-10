@@ -133,6 +133,7 @@ struct FrameRenderData {
     int                                      marketSelected; // highlighted row index
     int                                      marketRowCount; // entries in marketRows (≤ 8 used)
     const MarketRowHud*                      marketRows;     // caller-owned; copied during drawFrame
+    const char*                              nearestPortName; // for the PRT HUD line; may be null
 };
 
 class VulkanContext {
@@ -511,6 +512,7 @@ private:
     const char*              m_portNameHud     = nullptr; // points at static port name literals
     bool                     m_marketOpenHud   = false;
     int                      m_marketSelHud    = 0;
+    const char*              m_nearestPortNameHud = nullptr; // points at static port name literals
     int                      m_marketRowsHudCount = 0;
     std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};

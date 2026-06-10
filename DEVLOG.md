@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — 교역소 시장 매매 (ROADMAP Phase 3c-2)
+
+- `MarketEntry { good; buyPrice; sellPrice; stock }` + BRISTOL 시장 5종(Coal 8/6, IronOre 12/9, Steel 30/24, Machinery 60/48, Grain 10/8 — buy>sell 스프레드로 동일 항구 왕복 매매는 손해). **빌드·동작 검증 완료.**
+- 시장은 Docked 하위 상태: TRADE 클릭 → Up/Down 선택, B 구매 1, S 판매 1(Ctrl 제외로 Ctrl+S 저장과 무충돌), Esc로 항구 메뉴 복귀(이후 Esc는 pause). 검증: stock/money/적재공간/보유량.
+- UI: `GOOD|BUY|SELL|STK|HELD` 표 + 선택 행 하이라이트. 렌더러는 `MarketRowHud` 표시값 배열만 복사(게임 무지 유지). `UI_MAX_VERTS` 8192→32768(시장 표 글리프 ~12k 버텍스).
+- 한계(의도): 항구 재고(stock)는 save 미저장 — 로드 시 리셋. 재고 영속화는 save v3(ROADMAP Phase 9 save migration)에서.
+
 ### 2026-06-11 — 항구 입항·정박·출항 1차 (ROADMAP Phase 3c-1)
 
 - `GameMode { Sailing, Docked }` 도입(AppMode 메뉴/일시정지와 별개). **빌드·동작 검증 완료.**

@@ -394,7 +394,8 @@ int main() {
                 gameState.cargo().used(), gameState.cargo().capacity, gameState.money(),
                 gameState.canDock(), dockedPort != nullptr,
                 dockedPort ? dockedPort->name : nullptr,
-                marketOpen, gameState.marketSelected(), marketRowCount, marketRows
+                marketOpen, gameState.marketSelected(), marketRowCount, marketRows,
+                nearestPort ? nearestPort->name : nullptr
             });
 
             if (pendingWorldStart && app.loading()) {
