@@ -2,7 +2,6 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include <stdexcept>
@@ -22,7 +21,7 @@
 // ============================================================
 //  Constructor / Destructor
 // ============================================================
-VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m_world(world) {
+VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createInstance();
     setupDebugMessenger();
     createSurface();

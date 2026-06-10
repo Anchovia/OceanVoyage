@@ -2,7 +2,6 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include "AreaTex.h"

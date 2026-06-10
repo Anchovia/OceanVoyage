@@ -6,6 +6,15 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 렌더러-World 분리 완료 (ROADMAP Phase 2d-5a)
+
+- **렌더러가 `World`를 완전히 모르게 됨(Phase 2d 핵심 달성).** 생성자 `VulkanContext(Window&, World&)` → **`VulkanContext(Window&)`**, `m_world` 멤버·world include·`class World;` 전방선언·dev UI 청크수 줄 제거. `main.cpp`는 `VulkanContext ctx(window)`.
+- `VulkanContext.h`의 `world/Chunk.h` → `renderer/Types.h`(타입 유지, world 의존 제거). cpp/Frame/Init의 `world/World.h` 제거.
+- `main.cpp`의 `world`는 청크 스트리밍·세이브용으로 유지(게임측).
+- 검증: 렌더러에 `m_world`/`World&`/world include **0**. 빌드·동작 검증 완료.
+- 남은 dead code: 공유 농장 텍스처(grass/terrain)+디스크립터 바인딩, dead 셰이더/CMake/빈 `_Chunk.cpp` → 2d-5b/5c.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`/`_Frame`, `main.cpp`.
+
 ### 2026-06-09 — 청크 메시 빌더·데이터 제거 (ROADMAP Phase 2d-4b)
 
 - 2d-4a로 청크가 더 이상 그려지지 않게 된 뒤, 청크 메시 빌드/데이터 제거(191줄). **빌드·동작 검증 완료(화면 변화 없음).**

@@ -8,11 +8,10 @@
 #include <unordered_map>
 #include <array>
 #include <stdexcept>
-#include "world/Chunk.h"
+#include "renderer/Types.h"
 #include "renderer/Frustum.h"
 
 class Window;
-class World;
 class Camera;
 
 inline void vkCheck(VkResult result, const char* message) {
@@ -116,7 +115,7 @@ struct FrameRenderData {
 
 class VulkanContext {
 public:
-    VulkanContext(Window& window, World& world);
+    VulkanContext(Window& window);
     ~VulkanContext();
 
     void drawFrame(const FrameRenderData& frame);
@@ -266,7 +265,6 @@ private:
 
     // ---- Vulkan handles ----
     Window& m_window;
-    World&  m_world;
 
     VkInstance               m_instance        = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger   = VK_NULL_HANDLE;

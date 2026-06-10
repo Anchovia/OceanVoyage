@@ -2,7 +2,6 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include <stdexcept>
@@ -55,7 +54,6 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
                 frame.shipPosition.x, frame.shipPosition.y, frame.shipPosition.z);
             ImGui::Text("Heading: %.1f deg  Thr: %.2f  Rud: %.2f",
                 frame.shipHeading * 57.2957795f, frame.shipThrottle, frame.shipRudder);
-            ImGui::Text("Chunks loaded: %d", (int)m_world.chunks().size());
             ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
             if (!m_devTimingSupported) {
