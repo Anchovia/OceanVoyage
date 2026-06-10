@@ -723,7 +723,6 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateOceanHistoryDescriptor(m_currentFrame);
     updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
     updateHotbar();
-    rebuildDirtyChunks();
     m_frustum = Frustum::extractFrom(frame.camera.viewProj());
 #ifdef PASTEL_DEV_BUILD
     buildDevUi(frame);

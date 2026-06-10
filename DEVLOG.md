@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-09 — 청크 메시 빌더·데이터 제거 (ROADMAP Phase 2d-4b)
+
+- 2d-4a로 청크가 더 이상 그려지지 않게 된 뒤, 청크 메시 빌드/데이터 제거(191줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `buildChunkBuffer`(내부 `m_world.getTile`), `rebuildDirtyChunks`(`m_world.chunks()`) → `VulkanContext_Chunk.cpp` 비워짐(주석만), `ChunkRenderData`/`m_chunkBuffers`, ctor/drawFrame/cleanup 호출, 선언.
+- **결과: `m_world` 사용처가 3곳만 남음** — 생성자 `World&`, `m_world` 멤버, dev UI 청크수. → 2d-5에서 최종 제거.
+- 수정: `VulkanContext.{cpp,h}`/`_Chunk`/`_Frame`.
+
 ### 2026-06-09 — 청크 voxel 메시 렌더링 제거 (ROADMAP Phase 2d-4a)
 
 - 청크 메시는 물 월드(전부 WATER, 메셔가 스킵)에서 빈 메시 → 렌더링 제거(78줄). **빌드·동작 검증 완료(선박 그림자/반사 정상, 화면 변화 없음).**

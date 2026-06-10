@@ -61,7 +61,6 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createOceanFFT();
     createGrassTexture();
     createTerrainTextureArray();
-    rebuildDirtyChunks();
     createUniformBuffers();
     createReflectionUniformBuffers();
     createShadowSampler();
@@ -95,7 +94,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_oceanDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_reflectionUniformBuffers.clear();
-    m_chunkBuffers.clear();          // frees chunk mesh buffers
     destroyOceanFFT();
     m_oceanNormalB.destroy();
     m_oceanNormalA.destroy();

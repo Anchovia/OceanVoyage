@@ -170,8 +170,6 @@ private:
     void createCommandBuffers();
     void createSyncObjects();
     void createDescriptorSetLayout();
-    void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void rebuildDirtyChunks();
     void createUIPipeline();
     void createUIBuffer();
     void updateHotbar();
@@ -440,12 +438,6 @@ private:
     GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
     GpuBuffer                m_oceanIndexBuffer;
     uint32_t                 m_oceanIndexCount = 0;
-    struct ChunkRenderData {
-        GpuBuffer      vertexBuffer;
-        GpuBuffer      indexBuffer;
-        uint32_t       indexCount   = 0;
-    };
-    std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
     Frustum                  m_frustum;
     Frustum                  m_reflectionFrustum;
 
