@@ -110,6 +110,6 @@ void GameState::setShipState(const ShipState& s) {
 void GameState::setTime(float t) {
     m_time      = t;
     m_day       = static_cast<int>(m_time / DAY_DURATION);
-    m_prevDay   = m_day; // suppress immediate growthTick on load
+    m_prevDay   = m_day;
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
 }

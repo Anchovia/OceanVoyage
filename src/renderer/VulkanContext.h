@@ -434,7 +434,7 @@ private:
     GpuBuffer                m_oceanIndexBuffer;
     uint32_t                 m_oceanIndexCount = 0;
 
-    // Shared low-poly object meshes, indexed by ObjectType (instanced per Object)
+    // Simple owned vertex mesh (currently only the hero ship)
     struct ObjectMesh {
         GpuBuffer      vbuf;
         uint32_t       count = 0;

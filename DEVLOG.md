@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — GameState 농장 잔재 제거 (Phase 3 잔재 정리)
+
+- VoyageSave 전환으로 보존 이유가 사라진 GameState 농장 멤버 일괄 제거(-214줄). **빌드·동작 검증 완료.**
+- 제거: `m_inventory`/`m_drops`/핫바/`m_inventoryOpen`/`m_nearWorkbench` + getter, `addItem/countItem/removeItem/craft`, `PlayerInput.toggleInventory/selectSlot`, I키·숫자키 바인딩(`InputManager`), `consumeInventoryEscape`(`main.cpp`), Types.h 농장 클러스터(`ItemStack`/`DroppedItem`/`INV_*`/`HOTBAR_SLOTS`/`Recipe`/`craftingRecipes`/`CRAFT_*`/`craftRowRect`).
+- 의도된 동작 변화: I키·숫자키 무동작, 게임플레이 ESC는 항상 즉시 pause(인벤토리 닫기 단계 소멸). 스크롤 줌·항해·HUD는 무변경.
+- 보류: `ItemType`/`TileType`/`isBlock/isTool/itemToTile/itemColor`는 `World::tryHarvestObject`/`Chunk`가 사용 중 → World 제거 슬라이스에서 일괄 정리.
+
 ### 2026-06-11 — 일시정지 UI 텍스트 잘림 수정 (UI_MAX_VERTS 2048→8192)
 
 - 일시정지 화면에서 SETTINGS가 "SE"에서 끊기고 QUIT이 사라지는 버그 수정. **빌드·동작 검증 완료.**

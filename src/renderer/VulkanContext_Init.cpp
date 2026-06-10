@@ -2588,10 +2588,10 @@ void VulkanContext::createShadowPipeline() {
     vertStage.module = vertMod;
     vertStage.pName  = "main";
 
-    // ChunkVertex binding — shadow shader only reads pos (location 0)
+    // ShipVertex binding — shadow shader only reads pos (location 0)
     VkVertexInputBindingDescription binding{};
     binding.binding   = 0;
-    binding.stride    = sizeof(ChunkVertex);
+    binding.stride    = sizeof(ShipVertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     VkVertexInputAttributeDescription attr{};

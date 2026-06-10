@@ -49,8 +49,6 @@ add_executable(engine
     src/renderer/VulkanContext_Init.cpp
     src/renderer/VulkanContext_Frame.cpp
     src/renderer/VulkanContext_Ocean.cpp
-    src/world/World.cpp
-    src/world/TerrainGen.cpp
  "src/game/Camera.h" "src/platform/InputManager.h" "src/platform/InputManager.cpp")
 
 target_include_directories(engine PRIVATE src third_party/smaa third_party/stb ${Vulkan_INCLUDE_DIRS})

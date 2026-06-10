@@ -3,15 +3,9 @@
 #include "platform/Window.h"
 #include "platform/InputManager.h"
 #include "renderer/VulkanContext.h"
-#include "world/World.h"
-#include "world/Chunk.h"
 #include <iostream>
 #include <cmath>
 #include "game/Camera.h"
-
-static constexpr int LOAD_RADIUS   = 3;
-static constexpr int UNLOAD_RADIUS = 4;
-static constexpr int CHUNK_STREAM_LOADS_PER_FRAME = 2;
 
 enum class AppMode {
     MainMenu,
@@ -220,7 +214,6 @@ static void applyDevUiInputCapture(PlayerInput& input, const VulkanContext& ctx)
 int main() {
     try {
         Window        window(1280, 720, "OceanVoyage");
-        World         world;
         GameState     gameState;
         VulkanContext ctx(window);
         InputManager  inputManager(window);
@@ -230,7 +223,6 @@ int main() {
         AppSettings settings;
         bool worldSessionStarted = false;
         bool pendingWorldStart = false;
-        glm::ivec2 lastPlayerChunk{0, 0};
 
         auto startWorldSession = [&]() {
             // VoyageSave ("OVYG") restores the sailing state. A legacy farm
@@ -240,19 +232,12 @@ int main() {
                 gameState.setTime(saved.gameTime);
                 gameState.setShipState(saved.ship);
             }
-
-            lastPlayerChunk = World::chunkCoord(
-                (int)gameState.player().position().x,
-                (int)gameState.player().position().y
-            );
-            world.loadChunksAround(lastPlayerChunk.x, lastPlayerChunk.y, LOAD_RADIUS);
             worldSessionStarted = true;
         };
 
-        // Tear down the active world session (quit to title). Drops all chunks so the
-        // renderer frees their buffers, and resets gameplay state for a fresh re-start.
+        // Tear down the active session (quit to title): reset gameplay state for a
+        // fresh re-start.
         auto endWorldSession = [&]() {
-            world.reset();
             gameState = GameState{};
             worldSessionStarted = false;
             pendingWorldStart   = false;
@@ -333,25 +318,9 @@ int main() {
                 gameState.update(dt, input);
             const glm::vec3 playerPosition = gameState.player().position();
 
-            // Stream chunks around the player. Generation is capped per frame so a
-            // boundary crossing does not create every new edge chunk in one update.
-            if (worldSessionStarted) {
-                glm::ivec2 playerChunk = World::chunkCoord(
-                    (int)playerPosition.x,
-                    (int)playerPosition.y
-                );
-                if (playerChunk != lastPlayerChunk) {
-                    world.unloadChunksOutside(playerChunk.x, playerChunk.y, UNLOAD_RADIUS);
-                    lastPlayerChunk = playerChunk;
-                }
-                world.loadChunksAroundBudgeted(
-                    playerChunk.x, playerChunk.y, LOAD_RADIUS,
-                    CHUNK_STREAM_LOADS_PER_FRAME);
-            }
-
             // Feed the renderer from the ship state directly (position/velocity/heading),
-            // not the legacy Player mirror. Camera/chunk streaming/save still read Player
-            // for now; those move off the mirror in later Phase 2 steps.
+            // not the legacy Player mirror. The camera still reads Player; it moves off
+            // the mirror when the Player shim is removed.
             const ShipState& ship = gameState.ship();
             const glm::vec3 shipPosition{ ship.position.x, ship.position.y, playerPosition.z };
             const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
