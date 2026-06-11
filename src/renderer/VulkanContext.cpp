@@ -124,6 +124,7 @@ VulkanContext::~VulkanContext() {
     vkDestroyImageView  (m_device, m_shadowImageView,    nullptr);
     vkDestroyImage      (m_device, m_shadowImage,        nullptr);
     vkFreeMemory        (m_device, m_shadowImageMemory,  nullptr);
+    vkDestroyPipeline           (m_device, m_postLdrPipeline,         nullptr);
     vkDestroyPipeline           (m_device, m_postPipeline,            nullptr);
     vkDestroyPipelineLayout     (m_device, m_postPipelineLayout,      nullptr);
     vkDestroyDescriptorPool     (m_device, m_postDescriptorPool,      nullptr);
@@ -146,6 +147,7 @@ VulkanContext::~VulkanContext() {
     m_smaaSearchTex.destroy();
     vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
+    vkDestroyRenderPass         (m_device, m_postLdrRenderPass,       nullptr);
     vkDestroyRenderPass         (m_device, m_taaRenderPass,           nullptr);
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
@@ -349,6 +351,12 @@ void VulkanContext::cleanupSwapchain() {
         vkDestroyImageView(m_device, m_smaaBlendView[i],   nullptr);
         vkDestroyImage    (m_device, m_smaaBlendImage[i],  nullptr);
         vkFreeMemory      (m_device, m_smaaBlendMemory[i], nullptr);
+    }
+    for (auto fb : m_ldrFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (size_t i = 0; i < m_ldrImage.size(); i++) {
+        vkDestroyImageView(m_device, m_ldrView[i],   nullptr);
+        vkDestroyImage    (m_device, m_ldrImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_ldrMemory[i], nullptr);
     }
     for (auto iv : m_swapchainImageViews)  vkDestroyImageView  (m_device, iv, nullptr);
     vkDestroySwapchainKHR(m_device, m_swapchain, nullptr);

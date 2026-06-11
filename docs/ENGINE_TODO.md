@@ -38,7 +38,7 @@
 
 ### P1: 렌더링 품질 후속
 
-- **TAA 도입 검토.** `DESIGN.md`가 "물에는 TAA가 더 적합"이라 명시했고, SSR 히스토리용 `prevViewProj`/`temporalParams` 배선은 이미 존재한다. 다만 현재 배선은 물 SSR history 안정화 전용이며, 전체 화면 TAA resolve/jitter/motion vector/reactive mask는 없다. FFT 스펙큘러 윤슬 shimmer는 SMAA/FXAA만으로 잡기 어렵다.
+- **TAA 후속(보류 중).** 1차 resolve 패스는 구현됨(2026-06-12, aaMode 3 옵션 — 재투영+neighborhood clamp, 윤슬 shimmer 안정화 확인). **남은 것**: Halton 지터, Catmull-Rom 히스토리 샘플링, 모션 적응 블렌드(+샤프닝) — 이동 중 bilinear 재샘플 블러 해결용 표준 3종. 사용자 결정(2026-06-12)으로 보류; 기본 AA는 SMAA, TAA는 opt-in. 재개 기준: "정지 화면이 SMAA보다 선명 + 이동 중 블러 대폭 감소" 달성 여부로 채택 재평가.
 - **SMAA 순서/색공간 정리.** 현재 `smaa_edge.frag`는 HDR scene color를 ACES 톤매핑 + 감마 luma로 변환해 edge를 검출하므로 "HDR-linear edge 검출" 상태는 아니다. 그러나 neighborhood pass는 여전히 HDR scene color를 먼저 섞은 뒤 톤매핑/그레이딩한다. 더 표준적인 구조는 별도 tone-map/grade target을 만든 뒤 그 perceptual LDR 입력에 SMAA를 적용하는 것이다.
 - **셰이더 상수 단일 출처화.** `CASCADE_L`, `N=512`, `LOG2N=9`, `WAKE_N`/`WAKE_WORLD_SIZE`, `SEA_LEVEL`이 CPU 헤더 + 4개 이상 셰이더에 "must match" 주석과 함께 리터럴로 중복된다. specialization constant 또는 생성 헤더로 통합.
 

@@ -1428,6 +1428,22 @@ void VulkanContext::createFramebuffers() {
         if (vkCreateFramebuffer(m_device, &info, nullptr, &m_smaaBlendFramebuffers[i]) != VK_SUCCESS)
             throw std::runtime_error("Failed to create SMAA blend framebuffer");
     }
+
+    // LDR tone-map target framebuffers (SMAA input; sRGB pass).
+    m_ldrFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        VkImageView attachments[] = { m_ldrView[i] };
+        VkFramebufferCreateInfo info{};
+        info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        info.renderPass      = m_postLdrRenderPass;
+        info.attachmentCount = 1;
+        info.pAttachments    = attachments;
+        info.width           = m_swapchainExtent.width;
+        info.height          = m_swapchainExtent.height;
+        info.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &info, nullptr, &m_ldrFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create post LDR framebuffer");
+    }
 }
 
 // ============================================================
@@ -1518,6 +1534,14 @@ void VulkanContext::createSmaaRenderPass() {
     info.pDependencies   = deps;
     if (vkCreateRenderPass(m_device, &info, nullptr, &m_smaaRenderPass) != VK_SUCCESS)
         throw std::runtime_error("Failed to create SMAA render pass");
+
+    // LDR tone-map target pass (SMAA input). Same shape, but sRGB like the
+    // swapchain so the graded output keeps identical encoding, and DONT_CARE
+    // load since the fullscreen post pass overwrites every pixel.
+    color.format = VK_FORMAT_R8G8B8A8_SRGB;
+    color.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    if (vkCreateRenderPass(m_device, &info, nullptr, &m_postLdrRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create post LDR render pass");
 }
 
 void VulkanContext::createTaaRenderPass() {
@@ -1680,13 +1704,14 @@ void VulkanContext::createSmaaResources() {
     auto createTarget = [&](std::vector<VkImage>& images,
                             std::vector<VkDeviceMemory>& memories,
                             std::vector<VkImageView>& views,
+                            VkFormat format,
                             const char* label)
     {
         images.resize(MAX_FRAMES_IN_FLIGHT);
         memories.resize(MAX_FRAMES_IN_FLIGHT);
         views.resize(MAX_FRAMES_IN_FLIGHT);
         for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            createImage(m_swapchainExtent.width, m_swapchainExtent.height, VK_FORMAT_R8G8B8A8_UNORM,
+            createImage(m_swapchainExtent.width, m_swapchainExtent.height, format,
                 VK_IMAGE_TILING_OPTIMAL,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1696,7 +1721,7 @@ void VulkanContext::createSmaaResources() {
             v.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             v.image                           = images[i];
             v.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-            v.format                          = VK_FORMAT_R8G8B8A8_UNORM;
+            v.format                          = format;
             v.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
             v.subresourceRange.levelCount     = 1;
             v.subresourceRange.layerCount     = 1;
@@ -1705,8 +1730,9 @@ void VulkanContext::createSmaaResources() {
         }
     };
 
-    createTarget(m_smaaEdgeImage, m_smaaEdgeMemory, m_smaaEdgeView, "SMAA edge");
-    createTarget(m_smaaBlendImage, m_smaaBlendMemory, m_smaaBlendView, "SMAA blend");
+    createTarget(m_smaaEdgeImage, m_smaaEdgeMemory, m_smaaEdgeView, VK_FORMAT_R8G8B8A8_UNORM, "SMAA edge");
+    createTarget(m_smaaBlendImage, m_smaaBlendMemory, m_smaaBlendView, VK_FORMAT_R8G8B8A8_UNORM, "SMAA blend");
+    createTarget(m_ldrImage, m_ldrMemory, m_ldrView, VK_FORMAT_R8G8B8A8_SRGB, "post LDR");
 }
 
 TextureResource VulkanContext::createTexture(uint32_t width, uint32_t height, VkFormat format,
@@ -2035,6 +2061,12 @@ void VulkanContext::createPostPipeline() {
 
     if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_postPipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create post pipeline");
+
+    // Same post shader targeting the LDR intermediate (SMAA input) instead of
+    // the swapchain — only the render pass differs.
+    pipelineInfo.renderPass = m_postLdrRenderPass;
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_postLdrPipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create post LDR pipeline");
 
     vkDestroyShaderModule(m_device, vertMod, nullptr);
     vkDestroyShaderModule(m_device, fragMod, nullptr);
@@ -2451,9 +2483,10 @@ void VulkanContext::createPostDescriptors() {
 
 void VulkanContext::updateSmaaDescriptors() {
     for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        // SMAA reads the tone-mapped/graded LDR target, not the HDR scene.
         VkDescriptorImageInfo edgeScene{};
         edgeScene.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        edgeScene.imageView   = m_offscreenView[i];
+        edgeScene.imageView   = m_ldrView[i];
         edgeScene.sampler     = m_postSampler;
 
         VkWriteDescriptorSet edgeWrite{};
@@ -2487,7 +2520,7 @@ void VulkanContext::updateSmaaDescriptors() {
 
         VkDescriptorImageInfo neighborhoodImages[2]{};
         neighborhoodImages[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        neighborhoodImages[0].imageView   = m_offscreenView[i];
+        neighborhoodImages[0].imageView   = m_ldrView[i];
         neighborhoodImages[0].sampler     = m_postSampler;
         neighborhoodImages[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         neighborhoodImages[1].imageView   = m_smaaBlendView[i];

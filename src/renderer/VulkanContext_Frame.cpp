@@ -537,6 +537,31 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             vkCmdEndRenderPass(cmd);
         };
 
+        // Tone map + grade the HDR scene into the LDR target first; SMAA then
+        // operates on perceptual LDR (standard order) instead of raw HDR.
+        {
+            VkRenderPassBeginInfo ldrRp{};
+            ldrRp.sType       = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+            ldrRp.renderPass  = m_postLdrRenderPass;
+            ldrRp.framebuffer = m_ldrFramebuffers[m_currentFrame];
+            ldrRp.renderArea  = {{0, 0}, m_swapchainExtent};
+            vkCmdBeginRenderPass(cmd, &ldrRp, VK_SUBPASS_CONTENTS_INLINE);
+
+            VkViewport vp{ 0.0f, 0.0f, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+            VkRect2D sc{ {0, 0}, m_swapchainExtent };
+            vkCmdSetViewport(cmd, 0, 1, &vp);
+            vkCmdSetScissor(cmd, 0, 1, &sc);
+
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_postLdrPipeline);
+            vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                m_postPipelineLayout, 0, 1, &m_postDescriptorSets[m_currentFrame], 0, nullptr);
+            vkCmdPushConstants(cmd, m_postPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+                0, sizeof(PostPushConstants), &postPc);
+            vkCmdDraw(cmd, 3, 1, 0, 0);
+
+            vkCmdEndRenderPass(cmd);
+        }
+
         recordSmaaPass(m_smaaEdgeFramebuffers[m_currentFrame],
             m_smaaEdgePipeline, m_smaaEdgePipelineLayout, m_smaaEdgeDescriptorSets[m_currentFrame]);
         recordSmaaPass(m_smaaBlendFramebuffers[m_currentFrame],

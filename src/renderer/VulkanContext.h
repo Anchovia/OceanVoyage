@@ -458,6 +458,14 @@ private:
     // SMAA precomputed LUTs (sampled through the shared m_postSampler, no own sampler).
     TextureResource m_smaaAreaTex;
     TextureResource m_smaaSearchTex;
+    // Tone-mapped/graded LDR target: in SMAA mode the post pass renders here
+    // first, then SMAA runs on perceptual LDR and resolves to the swapchain.
+    VkRenderPass                m_postLdrRenderPass = VK_NULL_HANDLE;
+    VkPipeline                  m_postLdrPipeline   = VK_NULL_HANDLE; // post.frag against the LDR pass
+    std::vector<VkImage>        m_ldrImage;
+    std::vector<VkDeviceMemory> m_ldrMemory;
+    std::vector<VkImageView>    m_ldrView;
+    std::vector<VkFramebuffer>  m_ldrFramebuffers;
 
     // TAA (aaMode 3): resolve the HDR scene against a reprojected history before
     // tone mapping. m_taaImage[i] is written on frame-in-flight i and read as

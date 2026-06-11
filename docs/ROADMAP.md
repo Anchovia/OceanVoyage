@@ -170,7 +170,7 @@ position += velocity * dt
 **목표:** 항해/저장/항구 1차가 안정된 뒤, 화질·비용·유지보수성을 올린다. 세부 항목과 현황은 `docs/ENGINE_TODO.md`가 단일 출처이며, 여기서는 **순서**만 정한다. 각 기법의 논문·구현 레퍼런스는 `docs/RENDERING_REFERENCES.md`(TAA=§5, SSR/반사=§4, 해양=§2).
 
 1. **기준 성능 측정** — 대표 장면 3개(낮/석양 grazing/밤), 1080p·1440p, AA·반사 토글별 GPU timing 기록
-2. **TAA 도입** — Halton jitter + history reprojection + neighborhood clamp + water reactive 고려. SSR용 `prevViewProj`/`temporalParams` 배선 재사용. (`ENGINE_TODO.md` P1)
+2. **TAA 도입** 🔶 — 1차(resolve 패스: reprojection+clamp) 완료(2026-06-12), aaMode 3 옵션·기본은 SMAA. 후속(Halton jitter/Catmull-Rom/적응 블렌드)은 보류 — 이동 중 블러 해소 후 채택 재평가. (`ENGINE_TODO.md` P1)
 3. **SMAA 순서/색공간 정리** — tone-map/grade target 후 perceptual LDR에 AA 적용
 4. **부력 리드백 축소** — 전체 512²×3 이미지 복사 제거 → sample point만 GPU compute로 추출하는 작은 버퍼 (`ENGINE_TODO.md` P2)
 5. **반사 비용 정책** — reflection mode(SkyOnly/SSR/Planar/SSR+Planar) + 플래너 해상도/대상 제한 + SSR step 옵션

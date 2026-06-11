@@ -1,6 +1,8 @@
 #version 450
 
-// SMAA 1x pass 3: neighborhood blending plus HDR tone mapping/color grade.
+// SMAA 1x pass 3: neighborhood blending on the tone-mapped/graded LDR target.
+// Tone mapping and grading already ran in the post pass that produced the LDR
+// input, so this is a pure SMAA resolve straight to the swapchain.
 layout(binding = 0) uniform sampler2D sceneColor;
 layout(binding = 1) uniform sampler2D blendTex;
 
@@ -11,40 +13,12 @@ layout(push_constant) uniform PostPushConstants {
 layout(location = 0) in vec2 uv;
 layout(location = 0) out vec4 outColor;
 
-const float EXPOSURE   = 1.03;
-const float CONTRAST   = 1.05;
-const float SATURATION = 1.10;
-const vec3  SHADOW_TINT = vec3(1.00, 0.99, 0.98);
-const vec3  HIGH_TINT   = vec3(1.07, 1.02, 0.92);
-const float VIGNETTE    = 0.22;
-
 vec3 sampleScene(vec2 p) {
     return textureLod(sceneColor, clamp(p, vec2(0.0), vec2(1.0)), 0.0).rgb;
 }
 
 vec4 sampleBlend(vec2 p) {
     return texture(blendTex, clamp(p, vec2(0.0), vec2(1.0)));
-}
-
-vec3 toneMapACES(vec3 c) {
-    c *= EXPOSURE;
-    return clamp((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14), 0.0, 1.0);
-}
-
-vec3 applyGrade(vec3 c) {
-    c = toneMapACES(c);
-    c = (c - 0.5) * CONTRAST + 0.5;
-
-    float luma = dot(c, vec3(0.299, 0.587, 0.114));
-    c = mix(vec3(luma), c, SATURATION);
-
-    float t = clamp(dot(c, vec3(0.299, 0.587, 0.114)), 0.0, 1.0);
-    c *= mix(SHADOW_TINT, HIGH_TINT, t);
-
-    float vig = smoothstep(0.85, 0.25, length(uv - 0.5));
-    c *= mix(1.0 - VIGNETTE, 1.0, vig);
-
-    return clamp(c, 0.0, 1.0);
 }
 
 void main() {
@@ -74,5 +48,5 @@ void main() {
         c += blendingWeight.y * sampleScene(blendingCoord.zw);
     }
 
-    outColor = vec4(applyGrade(c), 1.0);
+    outColor = vec4(c, 1.0);
 }

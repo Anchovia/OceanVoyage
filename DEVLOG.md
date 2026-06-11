@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — TAA 1차 (HDR resolve 패스) — 옵션으로 동결 (ROADMAP Phase 4-2a)
+
+- aaMode 3 = TAA 추가(기본값은 SMAA 유지). scene(HDR) → TAA resolve → post(톤매핑) 구조. **빌드·동작 검증 완료(윤슬 shimmer 안정화 확인, validation 무경고).**
+- 구현: `taa.frag` 신규 — 깊이 기반 재투영(SSR `prevViewProj` 재사용), 3×3 neighborhood clamp, 히스토리 0.9 블렌드. HDR 이미지 2장 핑퐁(frame-in-flight 인덱스 교대), 첫 프레임/모드 전환/리사이즈 시 히스토리 무효화. depth에 `SAMPLED` usage 추가 + 패스 전 배리어. `post.frag` FXAA 게이트 `!=0`→`==1` 수정(TAA 위 FXAA 중첩 방지).
+- **알려진 한계(의도): 이동 중 흐림.** 체이스 카메라가 항상 미세 이동 → bilinear 히스토리 재샘플 블러 누적. 표준 해법 3종(Halton 지터 / Catmull-Rom 히스토리 샘플링 / 모션 적응 블렌드+샤프닝)은 **2차 슬라이스로 보류**(사용자 결정 2026-06-12). 보류 해제 시 이 3종 구현 후 "정지 화면이 SMAA보다 선명한가"로 재평가.
+- 기본 AA는 SMAA 유지 — TAA는 opt-in 옵션으로만 노출.
+
 ### 2026-06-11 — 두 번째 항구 + 첫 교역 루프 성립 (ROADMAP Phase 3c-3, **Phase 3 완료**)
 
 - `LIVERPOOL` 추가(BRISTOL 정동 600m). 가격 차별화로 양방향 이익 항로 성립: Coal 동행(8→11, +3/개), Machinery 서행(44→48, +4/개). 동일 항구 왕복은 여전히 손해. **빌드·검증 완료 — 첫 교역 루프(매입→항해→매도→이익) 동작.**
