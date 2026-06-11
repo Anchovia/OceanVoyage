@@ -6,6 +6,12 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 반사 비용 정책: REFL 모드 4종 (ROADMAP Phase 4-5)
+
+- 설정에 `REFL` 행 추가: SKY(0)/SSR(1)/PLANAR(2)/FULL(3, 기본 — 기존과 동일). **빌드·검증 완료(기본 모드 화면 동일, 모드 전환 즉시 반영).**
+- `ocean.frag`가 `temporalParams.y`로 모드 수신 — SSR 28스텝 레이마치는 1/3에서만(uniform branch), 플래너 기여는 2/3에서만. 플래너 패스는 모드 0/1에서 미러 지오메트리 draw 스킵(패스/클리어는 유지 — 클리어 색=하늘이라 정확하고 레이아웃 사이클 보존, 향후 항구/섬 draw가 실질 절감 대상).
+- 의도적 보류: 플래너 반해상도 — 시각 트레이드오프라 묵시 적용 안 함(사용자 결정 대기, 상용 관행이긴 함).
+
 ### 2026-06-12 — 셰이더 상수 단일 출처화: shared_constants.h (ROADMAP Phase 4-6)
 
 - C++/GLSL 겸용 순수 `#define` 헤더 `shaders/shared_constants.h` 신설 — `OCEAN_FFT_N`(512)/`CASCADE_L`(셰이더 6종 중복이던 최다)/`SEA_LEVEL`/`WAKE_N·WORLD_SIZE`/`SHADOW_MAP_SIZE`의 단일 출처. **빌드·검증 완료(화면 동일).**

@@ -20,7 +20,7 @@
 | **1** | 기본 선박 상태와 항해 물리 | 🔶 1차 완료 | `MIGRATION_PLAN.md` Phase 3 |
 | **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔶 핵심 완료 | `MIGRATION_PLAN.md` Phase 4 |
 | **3** | VoyageSave + 항구/화물/교역 1차 | ✅ | `MIGRATION_PLAN.md` Phase 5 |
-| **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔴 | `ENGINE_TODO.md` P1/P2 |
+| **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔶 | `ENGINE_TODO.md` P1/P2 |
 | **5** | 세계 표현: 항구·섬·풍향·항로 | 🔴 | `ARCHITECTURE.md` (OceanWorld) |
 | **6** | 경제·선박 성장·회사 진행 | 🔴 | `DESIGN.md` |
 | **7** | 항해 심화: 풍향·돛·날씨·해상 위험 | 🔴 | `DESIGN.md` |
@@ -28,7 +28,7 @@
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3 완료**(2026-06-11): VoyageSave(OVYG v2) + 농장 레거시 완전 소멸(`src/world/`·`Player.h` 삭제) + 항구 2개·화물·money·입항/정박/시장 매매 — **첫 교역 루프 성립**. 다음 본작업은 **Phase 4(렌더링 후속)** 이며, 첫 항목은 기준 성능 측정이다.
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3 완료**(2026-06-11): VoyageSave(OVYG v2) + 농장 레거시 완전 소멸 + 항구 2개·화물·money·입항/정박/시장 매매 — **첫 교역 루프 성립**. **Phase 4 핵심 완료**(2026-06-12): TAA 1차(옵션 동결)·SMAA 색공간 정리·부력 리드백 축소·반사 모드·상수 단일화. 잔여: 기준 성능 측정(4-1, 사용자 측정 대기)·ocean mesh 정리(4-7)·TAA 2차(보류). 다음 본작업 갈림길은 **Phase 5(세계 표현: 항구 시각·섬·풍향)**.
 
 ---
 
@@ -172,9 +172,9 @@ position += velocity * dt
 1. **기준 성능 측정** — 대표 장면 3개(낮/석양 grazing/밤), 1080p·1440p, AA·반사 토글별 GPU timing 기록
 2. **TAA 도입** 🔶 — 1차(resolve 패스: reprojection+clamp) 완료(2026-06-12), aaMode 3 옵션·기본은 SMAA. 후속(Halton jitter/Catmull-Rom/적응 블렌드)은 보류 — 이동 중 블러 해소 후 채택 재평가. (`ENGINE_TODO.md` P1)
 3. **SMAA 순서/색공간 정리** ✅ — tone-map/grade LDR 타겟 후 SMAA 적용(2026-06-12), 그레이드 상수 post.frag 단일화
-4. **부력 리드백 축소** — 전체 512²×3 이미지 복사 제거 → sample point만 GPU compute로 추출하는 작은 버퍼 (`ENGINE_TODO.md` P2)
-5. **반사 비용 정책** — reflection mode(SkyOnly/SSR/Planar/SSR+Planar) + 플래너 해상도/대상 제한 + SSR step 옵션
-6. **셰이더 상수 단일 출처화** — `OCEAN_FFT_N`/`CASCADE_L`/`WAKE_*`/`SEA_LEVEL`/`SHADOW_MAP_SIZE` specialization constant or generated include
+4. **부력 리드백 축소** ✅ — GPU 5점 샘플 컴퓨트 + 20B 리드백으로 교체(2026-06-12)
+5. **반사 비용 정책** ✅ — REFL 모드 4종(SKY/SSR/PLANAR/FULL) 설정 + 셰이더·패스 게이트(2026-06-12). 플래너 반해상도·SSR step 옵션은 보류(품질 트레이드오프 결정 대기)
+6. **셰이더 상수 단일 출처화** ✅ — `shaders/shared_constants.h`(C++/GLSL 겸용 #define 헤더)로 통합(2026-06-12)
 7. **ocean mesh/buffer 정리** — ocean vertex/index를 DEVICE_LOCAL+staging, projected-grid/clipmap은 별도 조사
 8. **async compute** — 마지막. queue family/command pool/ownership/semaphore 설계 후, GPU capture로 실제 이득 확인하고 도입 (`ENGINE_TODO.md` P2)
 
