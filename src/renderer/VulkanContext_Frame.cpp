@@ -2,10 +2,11 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include <stdexcept>
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 #include <cstdint>
@@ -50,14 +51,11 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
         if (ImGui::Begin("OceanVoyage Dev", &m_devUiVisible)) {
             ImGui::TextUnformatted("F3 toggles this panel");
             ImGui::Separator();
-            ImGui::Text("Day: %d", frame.day);
             ImGui::Text("Time of day: %.3f", frame.timeOfDay);
-            ImGui::Text("Player: %.2f, %.2f, %.2f",
-                frame.playerPosition.x, frame.playerPosition.y, frame.playerPosition.z);
-            ImGui::Text("Chunks loaded: %d", (int)m_world.chunks().size());
-            ImGui::Text("Drops: %d", (int)frame.drops.size());
-            ImGui::Text("Selected slot: %d", frame.hotbarSelected + 1);
-            ImGui::Text("Near workbench: %s", frame.nearWorkbench ? "yes" : "no");
+            ImGui::Text("Ship: %.2f, %.2f, %.2f",
+                frame.shipPosition.x, frame.shipPosition.y, frame.shipPosition.z);
+            ImGui::Text("Heading: %.1f deg  Thr: %.2f  Rud: %.2f",
+                frame.shipHeading * 57.2957795f, frame.shipThrottle, frame.shipRudder);
             ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
             if (!m_devTimingSupported) {
@@ -295,89 +293,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         // shaders gate shadow sampling on dayFactor > 0.01 anyway.
         vkCmdBeginRenderPass(cmd, &shadowRp, VK_SUBPASS_CONTENTS_INLINE);
         if (m_dayFactor > 0.01f) {
-            // Cull chunks outside this cascade's ortho box — they aren't captured anyway
-            Frustum lightFrustum = Frustum::extractFrom(lightMVP);
-
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
-            vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-
-            for (auto& [coord, data] : m_chunkBuffers) {
-                if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-                glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                VkBuffer     vBuf[] = {data.vertexBuffer};
-                VkDeviceSize offs[] = {0};
-                vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-                vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-                vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-            }
-
-            // Objects cast shadows too — per-type mesh, instanced, reuse the light frustum cull
-            {
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowObjectPipeline);
-                vkCmdPushConstants(cmd, m_shadowPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-                for (auto& [coord, data] : m_chunkBuffers) {
-                    if (data.objGroups.empty()) continue;
-
-                    glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                    glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                    if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                    for (auto& g : data.objGroups) {
-                        if (!objectDef(g.type).castShadow) continue;
-                        const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                        if (mesh.count == 0 || g.count == 0) continue;
-                        VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                        VkDeviceSize offs[] = { 0, 0 };
-                        vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                        vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-                    }
-                }
-            }
-
-            // Grass shadow casting disabled: thin alpha-card blades are ~1 texel wide in
-            // the shadow map, so they alias/flicker badly as the sun sweeps (DEVLOG
-            // 2026-06-03, confirmed via capture). Grass still receives shadow + uses root
-            // darkening for grounding; only the noisy casting is removed. Flip to re-enable.
-            constexpr bool kGrassCastsShadow = false;
-            if (kGrassCastsShadow && !m_shadowGrassDescriptorSets.empty()) {
-                static constexpr float GRASS_SHADOW_RADIUS = 56.0f;
-                static constexpr float GRASS_SHADOW_RADIUS_SQ = GRASS_SHADOW_RADIUS * GRASS_SHADOW_RADIUS;
-
-                vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowGrassPipeline);
-                vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                    m_shadowGrassPipelineLayout, 0, 1, &m_shadowGrassDescriptorSets[m_currentFrame], 0, nullptr);
-                vkCmdPushConstants(cmd, m_shadowGrassPipelineLayout,
-                    VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &lightMVP);
-
-                for (auto& [coord, data] : m_chunkBuffers) {
-                    if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-                    glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-                    glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-                    if (!lightFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-                    const glm::vec2 chunkCenter = {
-                        (coord.x + 0.5f) * (float)CHUNK_SIZE,
-                        (coord.y + 0.5f) * (float)CHUNK_SIZE
-                    };
-                    const glm::vec2 d = chunkCenter - glm::vec2(m_shadowCenter);
-                    if (glm::dot(d, d) > GRASS_SHADOW_RADIUS_SQ) continue;
-
-                    VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-                    VkDeviceSize offs[] = { 0, 0 };
-                    vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                    vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
-                }
-            }
-
-            // Ship casts a shadow too — reuse the (non-instanced) chunk shadow pipeline and
-            // push lightMVP * shipModel so the tilted hull casts a correct shadow.
+            // Ship casts a shadow — push lightMVP * shipModel so the tilted hull casts a
+            // correct shadow into this cascade.
             if (m_shipMesh.count > 0) {
                 glm::mat4 shipLightMVP = lightMVP * m_shipModel;
                 vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shadowPipeline);
@@ -420,67 +337,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_pipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
 
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     vBuf[] = { data.vertexBuffer };
-            VkDeviceSize offs[] = { 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-            vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-        }
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.groundPatchCount == 0 && data.pebbleCount == 0 && data.objGroups.empty()) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            if (m_groundPatchMesh.count > 0 && data.groundPatchCount > 0) {
-                VkBuffer     bufs[] = { m_groundPatchMesh.vbuf, data.groundPatchBuffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, m_groundPatchMesh.count, data.groundPatchCount, 0, 0);
-            }
-
-            if (m_pebbleMesh.count > 0 && data.pebbleCount > 0) {
-                VkBuffer     bufs[] = { m_pebbleMesh.vbuf, data.pebbleBuffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, m_pebbleMesh.count, data.pebbleCount, 0, 0);
-            }
-
-            for (auto& g : data.objGroups) {
-                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                if (mesh.count == 0 || g.count == 0) continue;
-                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-            }
-        }
-
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_reflectionFrustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-            VkDeviceSize offs[] = { 0, 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
-        }
-
         if (m_shipMesh.count > 0) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -520,86 +376,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
-
-    // Chunk mesh (hidden face culling, dedicated pipeline)
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_chunkPipeline);
-    for (auto& [coord, data] : m_chunkBuffers) {
-        if (data.vertexBuffer == VK_NULL_HANDLE || data.indexCount == 0) continue;
-
-        glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-        glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-        if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-        VkBuffer     vBuf[] = { data.vertexBuffer };
-        VkDeviceSize offs[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, vBuf, offs);
-        vkCmdBindIndexBuffer(cmd, data.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, data.indexCount, 1, 0, 0, 0);
-    }
-
-    // Ground dressing - visual-only flat patches and tiny pebbles, not shadow casters
-    {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.groundPatchCount == 0 && data.pebbleCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            if (m_groundPatchMesh.count > 0 && data.groundPatchCount > 0) {
-                VkBuffer     bufs[] = { m_groundPatchMesh.vbuf, data.groundPatchBuffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, m_groundPatchMesh.count, data.groundPatchCount, 0, 0);
-            }
-
-            if (m_pebbleMesh.count > 0 && data.pebbleCount > 0) {
-                VkBuffer     bufs[] = { m_pebbleMesh.vbuf, data.pebbleBuffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, m_pebbleMesh.count, data.pebbleCount, 0, 0);
-            }
-        }
-    }
-
-    // Grass alpha cards — visual-only dressing, not a shadow caster
-    {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_grassPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (m_grassCardMesh.count == 0 || data.grassCount == 0) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            VkBuffer     bufs[] = { m_grassCardMesh.vbuf, data.grassBuffer };
-            VkDeviceSize offs[] = { 0, 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-            vkCmdDraw(cmd, m_grassCardMesh.count, data.grassCount, 0, 0);
-        }
-    }
-
-    // Objects — per-type mesh, instanced per chunk
-    {
-        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_objectPipeline);
-        for (auto& [coord, data] : m_chunkBuffers) {
-            if (data.objGroups.empty()) continue;
-
-            glm::vec3 chunkMin = { coord.x * CHUNK_SIZE,       coord.y * CHUNK_SIZE,       0.0f };
-            glm::vec3 chunkMax = { (coord.x + 1) * CHUNK_SIZE, (coord.y + 1) * CHUNK_SIZE, (float)CHUNK_DEPTH };
-            if (!m_frustum.containsAABB(chunkMin, chunkMax)) continue;
-
-            for (auto& g : data.objGroups) {
-                const ObjectMesh& mesh = m_objectMeshes[(size_t)g.type];
-                if (mesh.count == 0 || g.count == 0) continue;
-                VkBuffer     bufs[] = { mesh.vbuf, g.buffer };
-                VkDeviceSize offs[] = { 0, 0 };
-                vkCmdBindVertexBuffers(cmd, 0, 2, bufs, offs);
-                vkCmdDraw(cmd, mesh.count, g.count, 0, 0);
-            }
-        }
-    }
 
     // Refraction/depth seed for water. The ship is drawn again after the ocean for final
     // visibility, but including it in the pre-water buffers gives the water shader real
@@ -646,28 +422,6 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdDrawIndexed(cmd, m_oceanIndexCount, 1, 0, 0, 0);
     }
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
-    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
-        m_pipelineLayout, 0, 1, &m_descriptorSets[m_currentFrame], 0, nullptr);
-    vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-
-    if (worldVisible && m_showSelector) {
-        VkBuffer     sBufs[] = {m_selectorVertexBuffer, m_selectorInstBuffer[m_currentFrame]};
-        VkDeviceSize sOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, sBufs, sOffs);
-        vkCmdBindIndexBuffer(cmd, m_selectorIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kSelectorIndices.size(), 1, 0, 0, 0);
-    }
-
-    // Dropped items (small cubes, same instanced pipeline as the selector)
-    if (worldVisible && m_dropCount > 0) {
-        VkBuffer     dBufs[] = {m_itemVertexBuffer, m_dropInstBuffer[m_currentFrame]};
-        VkDeviceSize dOffs[] = {0, 0};
-        vkCmdBindVertexBuffers(cmd, 0, 2, dBufs, dOffs);
-        vkCmdBindIndexBuffer(cmd, m_indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-        vkCmdDrawIndexed(cmd, (uint32_t)kIndices.size(), m_dropCount, 0, 0, 0);
-    }
-
     // Ship (placeholder) — replaces the player cube. Drawn with the rotation-capable
     // object pipeline so the bow faces the player heading; the per-frame instance seats
     // it on the sea surface. Drawn last in the scene pass; switches the bound pipeline.
@@ -687,6 +441,60 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 #ifdef PASTEL_DEV_BUILD
     writeDevTimestamp(cmd, 2);
 #endif
+
+    // TAA resolve (aaMode 3) — blend the HDR scene against the reprojected history
+    // before tone mapping. Output [m_currentFrame] feeds the post pass this frame
+    // and is read back as history by the other frame index next frame.
+    if (m_aaModeHud == 3) {
+        // Final (post-water) depth is needed for reprojection; move it to a
+        // sampleable layout. Next frame's scene pass starts from UNDEFINED, so
+        // no transition back is required.
+        VkImageMemoryBarrier depthToRead{};
+        depthToRead.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+        depthToRead.srcAccessMask       = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthToRead.dstAccessMask       = VK_ACCESS_SHADER_READ_BIT;
+        depthToRead.oldLayout           = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthToRead.newLayout           = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depthToRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthToRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthToRead.image               = m_depthImage;
+        depthToRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        depthToRead.subresourceRange.levelCount = 1;
+        depthToRead.subresourceRange.layerCount = 1;
+        vkCmdPipelineBarrier(cmd,
+            VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+            0, 0, nullptr, 0, nullptr, 1, &depthToRead);
+
+        TaaPushConstants taaPc{};
+        taaPc.reprojection = m_taaReprojection;
+        taaPc.params = glm::vec4(
+            1.0f / (float)m_swapchainExtent.width,
+            1.0f / (float)m_swapchainExtent.height,
+            (m_taaHistoryFrames > 0) ? 1.0f : 0.0f,
+            0.0f);
+
+        VkRenderPassBeginInfo taaRp{};
+        taaRp.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        taaRp.renderPass      = m_taaRenderPass;
+        taaRp.framebuffer     = m_taaFramebuffers[m_currentFrame];
+        taaRp.renderArea      = {{0, 0}, m_swapchainExtent};
+        vkCmdBeginRenderPass(cmd, &taaRp, VK_SUBPASS_CONTENTS_INLINE);
+
+        VkViewport tvp{ 0.0f, 0.0f, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+        VkRect2D   tsc{ {0, 0}, m_swapchainExtent };
+        vkCmdSetViewport(cmd, 0, 1, &tvp);
+        vkCmdSetScissor(cmd, 0, 1, &tsc);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_taaPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_taaPipelineLayout, 0, 1, &m_taaDescriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_taaPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(TaaPushConstants), &taaPc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(cmd);
+    }
 
     PostPushConstants postPc{};
     postPc.params = glm::vec4(
@@ -757,6 +565,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             postPipeline = m_smaaNeighborhoodPipeline;
             postLayout = m_smaaNeighborhoodPipelineLayout;
             postDescriptorSet = m_smaaNeighborhoodDescriptorSets[m_currentFrame];
+        } else if (m_aaModeHud == 3) {
+            postDescriptorSet = m_postTaaDescriptorSets[m_currentFrame]; // tone-map the TAA resolve
         }
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, postPipeline);
@@ -795,17 +605,32 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 //  drawFrame
 // ============================================================
 void VulkanContext::drawFrame(const FrameRenderData& frame) {
-    m_hotbarSelected   = frame.hotbarSelected;
-    m_invHud           = frame.inventory;
-    m_inventoryOpen    = frame.inventoryOpen;
     m_mainMenuHud      = frame.mainMenu;
     m_settingsHud      = frame.settings;
     m_loadingHud       = frame.loading;
     m_pausedHud        = frame.paused;
     m_vsyncHud         = frame.vsyncEnabled;
     m_aaModeHud        = frame.aaMode;
-    m_nearWorkbenchHud = frame.nearWorkbench;
-    m_dayHud           = frame.day;
+    m_shipSpeedHud     = glm::length(glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y));
+    m_shipHeadingHud   = frame.shipHeading;
+    m_shipThrottleHud  = frame.shipThrottle;
+    m_shipRudderHud    = frame.shipRudder;
+    m_portDistanceHud  = frame.portDistance;
+    m_portDirHud       = frame.portDir;
+    m_nearPortHud      = frame.nearPort;
+    m_cargoUsedHud     = frame.cargoUsed;
+    m_cargoCapHud      = frame.cargoCapacity;
+    m_moneyHud         = frame.money;
+    m_canDockHud       = frame.canDock;
+    m_dockedHud        = frame.docked;
+    m_portNameHud      = frame.portName;
+    m_marketOpenHud    = frame.marketOpen;
+    m_marketSelHud     = frame.marketSelected;
+    m_nearestPortNameHud = frame.nearestPortName;
+    m_marketRowsHudCount = frame.marketRows
+        ? std::min(frame.marketRowCount, (int)m_marketRowsHud.size()) : 0;
+    for (int i = 0; i < m_marketRowsHudCount; i++)
+        m_marketRowsHud[(size_t)i] = frame.marketRows[i];
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;
@@ -886,7 +711,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         float azimuth   = (frame.timeOfDay - 0.25f) * kTwoPi + kSunAzimuth;
         m_sunDir    = glm::normalize(glm::vec3(cosf(azimuth), sinf(azimuth), elevation));
         m_dayFactor = glm::clamp(elevation, 0.0f, 1.0f); // 0 at night, 1 at noon
-        m_shadowCenter = frame.playerPosition;
+        m_shadowCenter = frame.shipPosition;
 
         // Practical split scheme (log + uniform blend) over the shadowed view-depth range.
         // Beyond shadowFar the receivers stay lit (imperceptible at the low sailing view).
@@ -957,9 +782,9 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     }
 
     m_oceanTime = frame.gameTime;
-    m_oceanWakeShipPosition = glm::vec2(frame.playerPosition.x, frame.playerPosition.y);
-    m_oceanWakeShipVelocity = glm::vec2(frame.playerVelocity.x, frame.playerVelocity.y);
-    m_oceanWakeShipHeading  = frame.playerHeading;
+    m_oceanWakeShipPosition = glm::vec2(frame.shipPosition.x, frame.shipPosition.y);
+    m_oceanWakeShipVelocity = glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y);
+    m_oceanWakeShipHeading  = frame.shipHeading;
     m_oceanWakeDeltaTime    = m_oceanWakeHasPrevTime ? frame.gameTime - m_oceanWakePrevTime : 0.0f;
     if (m_oceanWakeDeltaTime < 0.0f || m_oceanWakeDeltaTime > 0.1f)
         m_oceanWakeDeltaTime = 0.0f;
@@ -968,12 +793,8 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     updateUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateReflectionUniformBuffer(m_currentFrame, frame.camera, frame.gameTime);
     updateOceanHistoryDescriptor(m_currentFrame);
-    updateShipTransform(frame.playerPosition, frame.playerHeading, frame.gameTime);
-    updateDropInstanceBuffer(frame.drops);
-    updateSelectorInstanceBuffer(frame.targetTile);
+    updateShipTransform(frame.shipPosition, frame.shipHeading, frame.gameTime);
     updateHotbar();
-    rebuildDirtyChunks();
-    m_frustum = Frustum::extractFrom(frame.camera.viewProj());
 #ifdef PASTEL_DEV_BUILD
     buildDevUi(frame);
 #endif
@@ -1020,6 +841,13 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 
     if (!swapchainRecreated && m_temporalHistoryFrames < MAX_FRAMES_IN_FLIGHT)
         m_temporalHistoryFrames++;
+    // TAA history is only valid while consecutive frames keep resolving in mode 3;
+    // any break (mode switch, resize) restarts accumulation from the current frame.
+    if (!swapchainRecreated && m_aaModeHud == 3) {
+        if (m_taaHistoryFrames < MAX_FRAMES_IN_FLIGHT) m_taaHistoryFrames++;
+    } else {
+        m_taaHistoryFrames = 0;
+    }
     m_currentFrame = (m_currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
 
@@ -1071,8 +899,9 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     glm::mat4 currentViewProj = ubo.proj * ubo.view;
     ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
     ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    // TAA reprojection: current NDC -> previous clip, shared with the SSR history matrices.
+    m_taaReprojection = ubo.prevViewProj * ubo.invViewProj;
     m_prevViewProj = currentViewProj;
-    m_reflectionFrustum = Frustum::extractFrom(ubo.reflectionViewProj);
     memcpy(m_uniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
@@ -1097,12 +926,6 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.prevViewProj = ubo.proj * ubo.view;
     ubo.temporalParams = glm::vec4(0.0f);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
-}
-
-void VulkanContext::updatePlayerInstanceBuffer(const glm::vec3& playerPosition) {
-    static const glm::vec3 kPlayerColor = {1.0f, 0.45f, 0.1f};
-    InstanceData inst{playerPosition, kPlayerColor, kPlayerColor};
-    memcpy(m_playerInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
 }
 
 namespace {
@@ -1203,25 +1026,6 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     m_shipModel = m;
 }
 
-void VulkanContext::updateDropInstanceBuffer(const std::vector<DroppedItem>& drops) {
-    m_dropCount = std::min((uint32_t)drops.size(), MAX_DROPS);
-    InstanceData* dst = reinterpret_cast<InstanceData*>(m_dropInstBuffer[m_currentFrame].mapped);
-    for (uint32_t i = 0; i < m_dropCount; i++) {
-        const glm::vec3 c = itemColor(drops[i].type);
-        dst[i] = InstanceData{ drops[i].pos, c, c };
-    }
-}
-
-void VulkanContext::updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile) {
-    m_showSelector = targetTile.has_value();
-    if (!m_showSelector) return;
-
-    static const glm::vec3 kSelectorColor = {1.0f, 0.9f, 0.1f};
-    const glm::ivec3 tile = *targetTile;
-    InstanceData inst{m_world.tileCenter(tile.x, tile.y, tile.z), kSelectorColor, kSelectorColor};
-    memcpy(m_selectorInstBuffer[m_currentFrame].mapped, &inst, sizeof(inst));
-}
-
 // ============================================================
 //  Hotbar / inventory UI geometry (rebuilt each frame)
 // ============================================================
@@ -1248,8 +1052,8 @@ void VulkanContext::updateHotbar() {
         verts.push_back({p3, color});
     };
 
-    // Tiny 3x5 UI glyphs: digits first, then A-Z. Row bits 4=left, 2=mid, 1=right.
-    static const uint8_t GLYPHS[36][5] = {
+    // Tiny 3x5 UI glyphs: digits first, then A-Z, then '/'. Row bits 4=left, 2=mid, 1=right.
+    static const uint8_t GLYPHS[37][5] = {
         {7,5,5,5,7}, {2,2,2,2,2}, {7,1,7,4,7}, {7,1,7,1,7}, {5,5,7,1,1},
         {7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1}, {7,5,7,5,7}, {7,5,7,1,7},
         {7,5,7,5,5}, {6,5,6,5,6}, {7,4,4,4,7}, {6,5,5,5,6}, {7,4,6,4,7},
@@ -1258,11 +1062,13 @@ void VulkanContext::updateHotbar() {
         {7,5,7,4,4}, {7,5,5,7,1}, {7,5,7,6,5}, {7,4,7,1,7}, {7,2,2,2,2},
         {5,5,5,5,7}, {5,5,5,5,2}, {5,5,7,7,5}, {5,5,2,5,5}, {5,5,2,2,2},
         {7,1,2,4,7},
+        {1,1,2,4,4}, // '/'
     };
     auto glyphIndex = [](char ch) {
         if (ch >= '0' && ch <= '9') return ch - '0';
         if (ch >= 'a' && ch <= 'z') ch = char(ch - 'a' + 'A');
         if (ch >= 'A' && ch <= 'Z') return 10 + (ch - 'A');
+        if (ch == '/') return 36;
         return -1;
     };
     auto pushGlyph = [&](char ch, float ox, float oy, float px, glm::vec4 col) {
@@ -1322,6 +1128,7 @@ void VulkanContext::updateHotbar() {
         const char* aaText = "AA OFF";
         if (m_aaModeHud == 1) aaText = "AA FXAA";
         else if (m_aaModeHud == 2) aaText = "AA SMAA";
+        else if (m_aaModeHud == 3) aaText = "AA TAA";
 
         pushCenteredText("SETTINGS", H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 1.0f});
         const char* rows[] = { m_vsyncHud ? "VSYNC ON" : "VSYNC OFF", aaText, "BACK" };
@@ -1348,110 +1155,137 @@ void VulkanContext::updateHotbar() {
         return;
     }
 
-    // --- Hotbar ---
-    const float slot = 56.0f, gap = 6.0f, pad = 6.0f;
-    const float barW = HOTBAR_SLOTS * slot + (HOTBAR_SLOTS - 1) * gap;
-    const float startX = (W - barW) * 0.5f;
-    const float startY = H - slot - 20.0f;
+    // --- Ship HUD (speed / heading / throttle / rudder), top-left ---
+    {
+        const glm::vec4 col = {0.95f, 0.96f, 0.92f, 0.95f};
+        const float gpx = 4.0f;                       // glyph scale
+        const float lh  = 5.0f * gpx + 6.0f;          // line height
+        const float lx  = 16.0f;                      // label x
+        const float vx  = 16.0f + 4.0f * gpx * 4.0f;  // value x (after a 3-char label + gap)
+        float hy = 16.0f;
 
-    pushQuad(startX - pad, startY - pad, barW + 2 * pad, slot + 2 * pad, {0.10f, 0.10f, 0.12f, 0.7f});
+        // Speed (rounded world units/s)
+        pushText("SPD", lx, hy, gpx, col);
+        pushNumber((int)(m_shipSpeedHud + 0.5f), vx, hy, gpx, col);
+        hy += lh;
 
-    float selX = startX + m_hotbarSelected * (slot + gap);
-    pushQuad(selX - 3.0f, startY - 3.0f, slot + 6.0f, slot + 6.0f, {1.0f, 0.85f, 0.2f, 1.0f});
+        // Heading (degrees, wrapped to 0..359)
+        int hdg = (int)(m_shipHeadingHud * 57.2957795f + 0.5f); // rad -> deg
+        hdg %= 360; if (hdg < 0) hdg += 360;
+        pushText("HDG", lx, hy, gpx, col);
+        pushNumber(hdg, vx, hy, gpx, col);
+        hy += lh;
 
-    for (int i = 0; i < HOTBAR_SLOTS; i++) {
-        float x = startX + i * (slot + gap);
-        glm::vec4 bg = (i == m_hotbarSelected)
-            ? glm::vec4(0.35f, 0.35f, 0.40f, 1.0f)
-            : glm::vec4(0.20f, 0.20f, 0.24f, 0.9f);
-        pushQuad(x, startY, slot, slot, bg);
+        // Throttle %. The glyph set has no minus, so the sign is shown as a
+        // direction letter: F = forward, R = reverse.
+        int thr = (int)(m_shipThrottleHud * 100.0f + (m_shipThrottleHud >= 0.0f ? 0.5f : -0.5f));
+        pushText("THR", lx, hy, gpx, col);
+        pushText(thr > 0 ? "F" : (thr < 0 ? "R" : ""), vx, hy, gpx, col);
+        pushNumber(thr < 0 ? -thr : thr, vx + 4.0f * gpx, hy, gpx, col);
+        hy += lh;
 
-        const ItemStack& st = m_invHud[i];
-        if (st.type != ItemType::NONE) {
-            float inset = 10.0f;
-            pushQuad(x + inset, startY + inset, slot - 2 * inset, slot - 2 * inset,
-                     glm::vec4(itemColor(st.type), 1.0f));
-            if (st.count > 1)
-                pushNumber(st.count, x + 5.0f, startY + slot - 5 * 3.0f - 5.0f, 3.0f, {1.0f, 1.0f, 1.0f, 0.95f});
+        // Rudder %. S = starboard (right), P = port (left).
+        int rud = (int)(m_shipRudderHud * 100.0f + (m_shipRudderHud >= 0.0f ? 0.5f : -0.5f));
+        pushText("RUD", lx, hy, gpx, col);
+        pushText(rud > 0 ? "S" : (rud < 0 ? "P" : ""), vx, hy, gpx, col);
+        pushNumber(rud < 0 ? -rud : rud, vx + 4.0f * gpx, hy, gpx, col);
+        hy += lh;
+
+        // Nearest port: name + 8-way compass letters (+Y = north) + distance (m).
+        if (m_portDistanceHud >= 0.0f) {
+            static const char* kCompass8[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+            const float bearing = std::atan2(m_portDirHud.x, m_portDirHud.y); // 0 = +Y (N), clockwise
+            int octant = (int)std::floor(bearing * (4.0f / 3.14159265f) + 0.5f);
+            octant = ((octant % 8) + 8) % 8;
+            char portLine[32];
+            std::snprintf(portLine, sizeof(portLine), "%s %s %d",
+                          m_nearestPortNameHud ? m_nearestPortNameHud : "",
+                          kCompass8[octant], (int)(m_portDistanceHud + 0.5f));
+            pushText("PRT", lx, hy, gpx, col);
+            pushText(portLine, vx, hy, gpx, col);
+            hy += lh;
         }
+
+        // Cargo hold usage and money.
+        char buf[24];
+        std::snprintf(buf, sizeof(buf), "%d/%d", m_cargoUsedHud, m_cargoCapHud);
+        pushText("CRG", lx, hy, gpx, col);
+        pushText(buf, vx, hy, gpx, col);
+        hy += lh;
+
+        pushText("GLD", lx, hy, gpx, col);
+        pushNumber(m_moneyHud, vx, hy, gpx, col);
+        hy += lh;
+
+        // Docking hint: actionable beats informational.
+        if (!m_dockedHud && m_canDockHud)
+            pushText("PRESS ENTER TO DOCK", lx, hy, gpx, {0.95f, 0.85f, 0.45f, 0.95f});
+        else if (!m_dockedHud && m_nearPortHud)
+            pushText("NEAR PORT", lx, hy, gpx, {0.95f, 0.85f, 0.45f, 0.95f});
     }
 
-    // --- Inventory overlay ---
-    if (m_inventoryOpen) {
-        const float gridW = INV_COLS * INV_SLOT_SIZE + (INV_COLS - 1) * INV_GAP;
-        const float gridH = INV_ROWS * INV_SLOT_SIZE + (INV_ROWS - 1) * INV_GAP;
-        const float ox = (W - gridW) * 0.5f - INV_PAD;
-        const float oy = (H - gridH) * 0.5f - INV_PAD;
-        const float panelW = gridW + 2 * INV_PAD;
-        const float panelH = gridH + 2 * INV_PAD;
-
-        // Dimmed background over entire screen
-        pushQuad(0.0f, 0.0f, W, H, {0.0f, 0.0f, 0.0f, 0.45f});
-
-        // Panel background
-        pushQuad(ox, oy, panelW, panelH, {0.12f, 0.12f, 0.15f, 0.92f});
-
-        for (int idx = 0; idx < INV_SLOTS; ++idx) {
-            int c = idx % INV_COLS;
-            int r = idx / INV_COLS;
-            float sx = ox + INV_PAD + c * (INV_SLOT_SIZE + INV_GAP);
-            float sy = oy + INV_PAD + r * (INV_SLOT_SIZE + INV_GAP);
-
-            glm::vec4 slotBg = (idx == m_hotbarSelected)
-                ? glm::vec4(0.35f, 0.35f, 0.40f, 1.0f)
-                : glm::vec4(0.22f, 0.22f, 0.27f, 1.0f);
-            pushQuad(sx, sy, INV_SLOT_SIZE, INV_SLOT_SIZE, slotBg);
-
-            const ItemStack& st = m_invHud[idx];
-            if (st.type != ItemType::NONE) {
-                float inset = 10.0f;
-                pushQuad(sx + inset, sy + inset, INV_SLOT_SIZE - 2 * inset, INV_SLOT_SIZE - 2 * inset,
-                         glm::vec4(itemColor(st.type), 1.0f));
-                if (st.count > 1)
-                    pushNumber(st.count, sx + 4.0f, sy + INV_SLOT_SIZE - 5 * 2.0f - 4.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-            }
-        }
-
-        // --- Crafting panel (basic recipes; row = result + inputs, dim if unaffordable) ---
-        auto invCount = [&](ItemType t) {
-            int c = 0;
-            for (const ItemStack& s : m_invHud) if (s.type == t) c += s.count;
-            return c;
-        };
-        int rn = 0;
-        const Recipe* rtable = craftingRecipes(rn);
-        for (int i = 0; i < rn; i++) {
-            if (rtable[i].requiresWorkbench && !m_nearWorkbenchHud) continue;
-            const Recipe& rc = rtable[i];
-
-            bool ok = true;
-            for (const RecipeInput& in : rc.inputs) {
-                if (in.type == ItemType::NONE) continue;
-                if (invCount(in.type) < in.count) { ok = false; break; }
-            }
-            const float a = ok ? 1.0f : 0.4f;
-
+    // Port menu (docked): port name + actions. Drawn under the pause overlay so
+    // pausing while docked still dims the menu. Hidden while the market is open.
+    if (m_dockedHud && !m_marketOpenHud && !m_pausedHud) {
+        pushCenteredText(m_portNameHud ? m_portNameHud : "PORT",
+                         H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 0.95f});
+        const char* rows[] = { "SET SAIL", "TRADE" };
+        for (int i = 0; i < 2; ++i) {
             float rx, ry, rw, rh;
-            craftRowRect(i, W, H, rx, ry, rw, rh);
-            pushQuad(rx, ry, rw, rh, {0.18f, 0.18f, 0.22f, ok ? 0.95f : 0.8f});
-
-            const float sw = rh - 12.0f;
-            pushQuad(rx + 6.0f, ry + 6.0f, sw, sw, glm::vec4(itemColor(rc.result), a));
-            if (rc.resultCount > 1)
-                pushNumber(rc.resultCount, rx + 8.0f, ry + rh - 5 * 2.0f - 6.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-
-            float ix = rx + sw + 20.0f;
-            for (const RecipeInput& in : rc.inputs) {
-                if (in.type == ItemType::NONE) continue;
-                pushQuad(ix, ry + 6.0f, sw, sw, glm::vec4(itemColor(in.type), a));
-                pushNumber(in.count, ix + 2.0f, ry + rh - 5 * 2.0f - 6.0f, 2.0f, {1.0f, 1.0f, 1.0f, 0.95f});
-                ix += sw + 14.0f;
-            }
+            portMenuRowRect(i, W, H, rx, ry, rw, rh);
+            pushQuad(rx, ry, rw, rh, {0.12f, 0.14f, 0.13f, 0.88f});
+            pushCenteredText(rows[i], ry + 9.0f, 5.0f, {0.95f, 0.92f, 0.82f, 0.92f});
         }
     }
 
-    // Day counter HUD (top-left)
-    pushNumber(m_dayHud, 16.0f, 16.0f, 4.0f, {1.0f, 1.0f, 1.0f, 0.9f});
+    // Market table (docked trade screen): GOOD | BUY | SELL | STK | HELD rows
+    // with the selected row highlighted. Keys: Up/Down select, B buy, S sell.
+    if (m_dockedHud && m_marketOpenHud && !m_pausedHud) {
+        const float gpx   = 4.0f;
+        const float rowH  = 5.0f * gpx + 12.0f;
+        const float pad   = 18.0f;
+        const float colGood = 0.0f, colBuy = 190.0f, colSell = 290.0f,
+                    colStk = 390.0f, colHeld = 490.0f;
+        const float panelW = colHeld + 90.0f + 2.0f * pad;
+        const float panelH = 56.0f + rowH * (float)(m_marketRowsHudCount + 1) + 44.0f;
+        const float px0 = (W - panelW) * 0.5f;
+        const float py0 = (H - panelH) * 0.5f;
+        const float tx0 = px0 + pad; // table left edge
+
+        pushQuad(px0, py0, panelW, panelH, {0.07f, 0.09f, 0.08f, 0.90f});
+
+        char title[40];
+        std::snprintf(title, sizeof(title), "%s MARKET", m_portNameHud ? m_portNameHud : "PORT");
+        pushCenteredText(title, py0 + 14.0f, 6.0f, {0.95f, 0.92f, 0.82f, 0.95f});
+
+        float ry = py0 + 56.0f;
+        const glm::vec4 headCol = {0.75f, 0.78f, 0.72f, 0.9f};
+        pushText("GOOD", tx0 + colGood, ry, gpx, headCol);
+        pushText("BUY",  tx0 + colBuy,  ry, gpx, headCol);
+        pushText("SELL", tx0 + colSell, ry, gpx, headCol);
+        pushText("STK",  tx0 + colStk,  ry, gpx, headCol);
+        pushText("HELD", tx0 + colHeld, ry, gpx, headCol);
+        ry += rowH;
+
+        for (int i = 0; i < m_marketRowsHudCount; i++) {
+            const MarketRowHud& row = m_marketRowsHud[(size_t)i];
+            const bool selected = (i == m_marketSelHud);
+            if (selected)
+                pushQuad(tx0 - 6.0f, ry - 5.0f, panelW - 2.0f * pad + 12.0f, rowH - 2.0f,
+                         {0.25f, 0.30f, 0.26f, 0.85f});
+            const glm::vec4 rowCol = selected ? glm::vec4{0.98f, 0.96f, 0.85f, 1.0f}
+                                              : glm::vec4{0.88f, 0.88f, 0.82f, 0.85f};
+            pushText(row.name, tx0 + colGood, ry, gpx, rowCol);
+            pushNumber(row.buy,   tx0 + colBuy,  ry, gpx, rowCol);
+            pushNumber(row.sell,  tx0 + colSell, ry, gpx, rowCol);
+            pushNumber(row.stock, tx0 + colStk,  ry, gpx, rowCol);
+            pushNumber(row.held,  tx0 + colHeld, ry, gpx, rowCol);
+            ry += rowH;
+        }
+
+        pushText("B BUY   S SELL   ESC BACK", tx0, py0 + panelH - 30.0f, gpx,
+                 {0.75f, 0.78f, 0.72f, 0.9f});
+    }
 
     if (m_pausedHud) {
         pushQuad(0.0f, 0.0f, W, H, {0.0f, 0.0f, 0.0f, 0.42f});

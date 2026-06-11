@@ -2,7 +2,6 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include "AreaTex.h"
@@ -633,34 +632,16 @@ VkPipeline VulkanContext::createPipeline(const PipelineConfig& cfg) {
     return pipeline;
 }
 
-void VulkanContext::createGraphicsPipeline() {
-    // Player / selector pipeline layout: UBO + shadow sampler descriptor
+void VulkanContext::createScenePipelineLayout() {
+    // Shared scene pipeline layout (UBO + shadow sampler descriptor), reused by the
+    // sky / chunk / object / grass / ship draw pipelines. The legacy instanced-cube
+    // pipeline that originally lived here was removed with the farm player cube / drops.
     VkPipelineLayoutCreateInfo layoutInfo{};
     layoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     layoutInfo.setLayoutCount = 1;
     layoutInfo.pSetLayouts    = &m_descriptorSetLayout;
     if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create pipeline layout");
-
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/triangle.vert.spv";
-    cfg.fragPath   = "shaders/triangle.frag.spv";
-    cfg.bindings   = {
-        { 0, sizeof(Vertex),       VK_VERTEX_INPUT_RATE_VERTEX   },
-        { 1, sizeof(InstanceData), VK_VERTEX_INPUT_RATE_INSTANCE },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, pos)             },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, normal)          },
-        { 2, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, pos)       },
-        { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, topColor)  },
-        { 4, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(InstanceData, sideColor) },
-    };
-    cfg.cullMode   = VK_CULL_MODE_BACK_BIT;
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;
-    m_pipeline = createPipeline(cfg);
 }
 
 void VulkanContext::createSkyPipeline() {
@@ -676,26 +657,6 @@ void VulkanContext::createSkyPipeline() {
     m_skyPipeline = createPipeline(cfg);
 }
 
-void VulkanContext::createChunkPipeline() {
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/chunk.vert.spv";
-    cfg.fragPath   = "shaders/chunk.frag.spv";
-    cfg.bindings   = {
-        { 0, sizeof(ChunkVertex), VK_VERTEX_INPUT_RATE_VERTEX },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)    },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal) },
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)  },
-        { 3, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)     },
-        { 4, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)  },
-    };
-    cfg.cullMode   = VK_CULL_MODE_BACK_BIT;
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;
-    m_chunkPipeline = createPipeline(cfg);
-}
 
 void VulkanContext::createUIPipeline() {
     // No descriptor sets — UI vertices are already in NDC
@@ -720,31 +681,6 @@ void VulkanContext::createUIPipeline() {
     cfg.layout     = m_uiPipelineLayout;
     cfg.renderPass = m_postRenderPass;
     m_uiPipeline = createPipeline(cfg);
-}
-
-void VulkanContext::createObjectPipeline() {
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/object.vert.spv";
-    cfg.fragPath   = "shaders/chunk.frag.spv";  // reuse chunk fragment shader
-    cfg.bindings   = {
-        { 0, sizeof(ChunkVertex),    VK_VERTEX_INPUT_RATE_VERTEX   },
-        { 1, sizeof(ObjectInstance), VK_VERTEX_INPUT_RATE_INSTANCE },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)      },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, normal)   },
-        { 2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, color)    },
-        { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ObjectInstance, pos)   },
-        { 4, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, scale) },
-        { 5, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, rot)   },
-        { 6, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(ChunkVertex, uv)       },
-        { 7, 0, VK_FORMAT_R32_SFLOAT,       offsetof(ChunkVertex, layer)    },
-    };
-    cfg.cullMode   = VK_CULL_MODE_NONE;  // procedural mesh — winding not guaranteed outward
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;
-    cfg.layout     = m_pipelineLayout;   // reuse UBO descriptor layout
-    m_objectPipeline = createPipeline(cfg);
 }
 
 void VulkanContext::createOceanDescriptorSetLayout() {
@@ -1040,29 +976,6 @@ void VulkanContext::createShipPipeline() {
     m_shipPipeline = createPipeline(cfg);
 }
 
-void VulkanContext::createGrassPipeline() {
-    PipelineConfig cfg;
-    cfg.vertPath   = "shaders/grass.vert.spv";
-    cfg.fragPath   = "shaders/grass.frag.spv";
-    cfg.bindings   = {
-        { 0, sizeof(GrassCardVertex), VK_VERTEX_INPUT_RATE_VERTEX   },
-        { 1, sizeof(ObjectInstance),  VK_VERTEX_INPUT_RATE_INSTANCE },
-    };
-    cfg.attributes = {
-        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GrassCardVertex, pos)    },
-        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GrassCardVertex, normal) },
-        { 2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(GrassCardVertex, uv)     },
-        { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ObjectInstance, pos)     },
-        { 4, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, scale)   },
-        { 5, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, rot)     },
-    };
-    cfg.cullMode   = VK_CULL_MODE_NONE;  // alpha cards are two-sided
-    cfg.depthTest  = true;
-    cfg.alphaBlend = false;              // alpha test in shader, not blended transparency
-    cfg.layout     = m_pipelineLayout;   // reuse UBO + shadow + grass texture descriptor layout
-    m_grassPipeline = createPipeline(cfg);
-}
-
 // ============================================================
 //  UI buffer
 // ============================================================
@@ -1276,384 +1189,9 @@ void VulkanContext::loadImportedShipMesh() {
     vkUnmapMemory(m_device, m_shipMesh.vbuf.memory);
 }
 
-// ============================================================
-//  Tree mesh
-// ============================================================
-// Shared low-poly pine tree: box trunk + 3 stacked cones, flat shaded.
-void VulkanContext::createObjectMeshes() {
-    auto uploadMesh = [&](ObjectMesh& mesh, const std::vector<ChunkVertex>& verts) {
-        mesh.count = (uint32_t)verts.size();
-        VkDeviceSize size = sizeof(ChunkVertex) * verts.size();
-        mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        void* mapped;
-        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
-            "Failed to map object mesh buffer");
-        memcpy(mapped, verts.data(), size);
-        vkUnmapMemory(m_device, mesh.vbuf.memory);
-    };
-    auto uploadGrassCardMesh = [&](ObjectMesh& mesh, const std::vector<GrassCardVertex>& verts) {
-        mesh.count = (uint32_t)verts.size();
-        VkDeviceSize size = sizeof(GrassCardVertex) * verts.size();
-        mesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        void* mapped;
-        vkCheck(vkMapMemory(m_device, mesh.vbuf.memory, 0, size, 0, &mapped),
-            "Failed to map grass mesh buffer");
-        memcpy(mapped, verts.data(), size);
-        vkUnmapMemory(m_device, mesh.vbuf.memory);
-    };
-
-    // Uploads a flat-shaded mesh into the registry slot for the given object type.
-    auto upload = [&](ObjectType type, const std::vector<ChunkVertex>& verts) {
-        ObjectMesh& mesh = m_objectMeshes[(size_t)type];
-        uploadMesh(mesh, verts);
-    };
-    const float LAYER_NONE  = -1.0f;
-    const float LAYER_STONE = (float)tileFaceLayer(TileType::STONE, true);
-    const float LAYER_WOOD  = (float)tileFaceLayer(TileType::WOOD, true);
-    const float LAYER_LEAF  = (float)tileFaceLayer(TileType::LEAVES, true);
-    auto makeVertex = [](glm::vec3 pos, glm::vec3 normal, glm::vec3 color, glm::vec2 uv, float layer) {
-        return ChunkVertex{pos, normal, color, uv, layer};
-    };
-    auto pushTri = [&](std::vector<ChunkVertex>& v, const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
-                       glm::vec3 n, glm::vec3 col, float layer) {
-        v.push_back(makeVertex(a, n, col, {0.0f, 1.0f}, layer));
-        v.push_back(makeVertex(b, n, col, {1.0f, 1.0f}, layer));
-        v.push_back(makeVertex(c, n, col, {0.5f, 0.0f}, layer));
-    };
-
-    // ---- TREE: box trunk + 3 stacked cones (pine) ----
-    {
-    std::vector<ChunkVertex> verts;
-
-    const glm::vec3 trunkColor = {0.40f, 0.26f, 0.13f};
-    const glm::vec3 leafColor  = {0.28f, 0.52f, 0.24f};
-
-    // Trunk: 4 side faces of a thin box (Z up), base at 0, top at 0.55
-    const float tw = 0.09f, t0 = 0.0f, t1 = 0.55f;
-    const glm::vec3 trunkCorners[4] = {
-        {-tw, -tw, 0}, { tw, -tw, 0}, { tw, tw, 0}, {-tw, tw, 0}
-    };
-    for (int i = 0; i < 4; i++) {
-        glm::vec3 a = trunkCorners[i];
-        glm::vec3 b = trunkCorners[(i + 1) % 4];
-        glm::vec3 n = glm::normalize(glm::vec3((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f, 0.0f));
-        glm::vec3 a0 = {a.x, a.y, t0}, b0 = {b.x, b.y, t0};
-        glm::vec3 a1 = {a.x, a.y, t1}, b1 = {b.x, b.y, t1};
-        verts.push_back(makeVertex(a0, n, trunkColor, {0.0f, 1.0f}, LAYER_WOOD));
-        verts.push_back(makeVertex(b0, n, trunkColor, {1.0f, 1.0f}, LAYER_WOOD));
-        verts.push_back(makeVertex(b1, n, trunkColor, {1.0f, 0.0f}, LAYER_WOOD));
-        verts.push_back(makeVertex(a0, n, trunkColor, {0.0f, 1.0f}, LAYER_WOOD));
-        verts.push_back(makeVertex(b1, n, trunkColor, {1.0f, 0.0f}, LAYER_WOOD));
-        verts.push_back(makeVertex(a1, n, trunkColor, {0.0f, 0.0f}, LAYER_WOOD));
-    }
-
-    // Canopy: 3 stacked cones
-    struct Cone { float baseZ, radius, topZ; };
-    const Cone cones[3] = {
-        {0.35f, 0.45f, 0.95f},
-        {0.70f, 0.34f, 1.25f},
-        {1.00f, 0.22f, 1.55f},
-    };
-    const int seg = 8;
-    for (const auto& cone : cones) {
-        for (int i = 0; i < seg; i++) {
-            float a0 = (float)i       / seg * 6.2831853f;
-            float a1 = (float)(i + 1) / seg * 6.2831853f;
-            glm::vec3 b0   = {cone.radius * cosf(a0), cone.radius * sinf(a0), cone.baseZ};
-            glm::vec3 b1   = {cone.radius * cosf(a1), cone.radius * sinf(a1), cone.baseZ};
-            glm::vec3 apex = {0.0f, 0.0f, cone.topZ};
-            glm::vec3 n    = glm::normalize(glm::cross(b1 - b0, apex - b0));
-            pushTri(verts, b0, b1, apex, n, leafColor, LAYER_LEAF);
-        }
-    }
-
-    upload(ObjectType::TREE, verts);
-    }
-
-    // ---- ROCK: squished octahedron (low-poly boulder) ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 rockColor = {0.52f, 0.52f, 0.56f};
-    const float r = 0.40f, mz = 0.22f, topZ = 0.50f;
-    const glm::vec3 apex   = {0.0f, 0.0f, topZ};
-    const glm::vec3 bottom = {0.0f, 0.0f, 0.0f};
-    const glm::vec3 ring[4] = {
-        { r, 0.0f, mz}, {0.0f,  r, mz}, {-r, 0.0f, mz}, {0.0f, -r, mz}
-    };
-    const glm::vec3 center = {0.0f, 0.0f, mz};
-    // Flat-shaded triangle; normal forced to point away from the rock center
-    auto tri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        if (glm::dot(n, (a + b + c) / 3.0f - center) < 0.0f) n = -n;
-        pushTri(verts, a, b, c, n, rockColor, LAYER_STONE);
-    };
-    for (int i = 0; i < 4; i++) {
-        const glm::vec3& p0 = ring[i];
-        const glm::vec3& p1 = ring[(i + 1) % 4];
-        tri(apex,   p0, p1); // upper face
-        tri(bottom, p0, p1); // lower face
-    }
-    upload(ObjectType::ROCK, verts);
-    }
-
-    // Flat-shaded axis-aligned box helper (cullMode is NONE for objects, so winding is free).
-    auto pushBox = [&](std::vector<ChunkVertex>& v, glm::vec3 mn, glm::vec3 mx, glm::vec3 col, float layer) {
-        const glm::vec3 c[8] = {
-            {mn.x,mn.y,mn.z},{mx.x,mn.y,mn.z},{mx.x,mx.y,mn.z},{mn.x,mx.y,mn.z},
-            {mn.x,mn.y,mx.z},{mx.x,mn.y,mx.z},{mx.x,mx.y,mx.z},{mn.x,mx.y,mx.z},
-        };
-        auto quad = [&](int a, int b, int d, int e, glm::vec3 n) {
-            v.push_back(makeVertex(c[a], n, col, {0.0f, 1.0f}, layer));
-            v.push_back(makeVertex(c[b], n, col, {1.0f, 1.0f}, layer));
-            v.push_back(makeVertex(c[d], n, col, {1.0f, 0.0f}, layer));
-            v.push_back(makeVertex(c[a], n, col, {0.0f, 1.0f}, layer));
-            v.push_back(makeVertex(c[d], n, col, {1.0f, 0.0f}, layer));
-            v.push_back(makeVertex(c[e], n, col, {0.0f, 0.0f}, layer));
-        };
-        quad(4,5,6,7,{0,0,1});  quad(0,3,2,1,{0,0,-1});
-        quad(0,1,5,4,{0,-1,0}); quad(3,7,6,2,{0,1,0});
-        quad(1,2,6,5,{1,0,0});  quad(0,4,7,3,{-1,0,0});
-    };
-
-    // ---- WORKBENCH: a simple low table box ----
-    {
-    std::vector<ChunkVertex> verts;
-    pushBox(verts, {-0.35f, -0.35f, 0.0f}, {0.35f, 0.35f, 0.42f}, {0.52f, 0.36f, 0.18f}, LAYER_WOOD);
-    pushBox(verts, {-0.40f, -0.40f, 0.42f}, {0.40f, 0.40f, 0.52f}, {0.62f, 0.45f, 0.25f}, LAYER_WOOD); // top slab
-    upload(ObjectType::WORKBENCH, verts);
-    }
-
-    // ---- FENCE: two posts + two rails ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 wood = {0.56f, 0.40f, 0.22f};
-    pushBox(verts, {-0.40f, -0.07f, 0.0f}, {-0.24f, 0.07f, 0.6f}, wood, LAYER_WOOD); // left post
-    pushBox(verts, { 0.24f, -0.07f, 0.0f}, { 0.40f, 0.07f, 0.6f}, wood, LAYER_WOOD); // right post
-    pushBox(verts, {-0.40f, -0.05f, 0.40f}, {0.40f, 0.05f, 0.50f}, wood, LAYER_WOOD); // top rail
-    pushBox(verts, {-0.40f, -0.05f, 0.18f}, {0.40f, 0.05f, 0.28f}, wood, LAYER_WOOD); // lower rail
-    upload(ObjectType::FENCE, verts);
-    }
-
-    // ---- STONE_FENCE: low stone wall ----
-    {
-    std::vector<ChunkVertex> verts;
-    pushBox(verts, {-0.42f, -0.14f, 0.0f}, {0.42f, 0.14f, 0.45f}, {0.56f, 0.56f, 0.60f}, LAYER_STONE);
-    upload(ObjectType::STONE_FENCE, verts);
-    }
-
-    // ---- SHIP: imported textured hero asset (OBJ + BC1 DDS material maps). ----
-    loadImportedShipMesh();
-
-    // ---- GROUND PATCH: thin visual-only dirt/dry-grass breakup decal ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 n = {0.0f, 0.0f, 1.0f};
-    const glm::vec3 center = {0.0f, 0.0f, 0.006f};
-    const glm::vec3 ring[7] = {
-        { 0.46f,  0.02f, 0.006f},
-        { 0.24f,  0.25f, 0.006f},
-        {-0.06f,  0.33f, 0.006f},
-        {-0.40f,  0.12f, 0.006f},
-        {-0.30f, -0.22f, 0.006f},
-        { 0.05f, -0.31f, 0.006f},
-        { 0.35f, -0.17f, 0.006f},
-    };
-    const glm::vec3 dryGrass = {0.42f, 0.46f, 0.24f};
-    const glm::vec3 dirt     = {0.34f, 0.30f, 0.18f};
-    for (int i = 0; i < 7; i++) {
-        const glm::vec3 col = (i % 2 == 0) ? dryGrass : dirt;
-        pushTri(verts, center, ring[i], ring[(i + 1) % 7], n, col, LAYER_NONE);
-    }
-    uploadMesh(m_groundPatchMesh, verts);
-    }
-
-    // ---- PEBBLE: tiny visual-only low-poly stone, not a collidable object ----
-    {
-    std::vector<ChunkVertex> verts;
-    const glm::vec3 pebbleColor = {0.42f, 0.42f, 0.40f};
-    const glm::vec3 center = {0.0f, 0.0f, 0.035f};
-    const glm::vec3 top    = {0.0f, 0.0f, 0.11f};
-    const glm::vec3 ring[5] = {
-        { 0.16f,  0.00f, 0.025f},
-        { 0.04f,  0.12f, 0.030f},
-        {-0.14f,  0.08f, 0.020f},
-        {-0.11f, -0.10f, 0.030f},
-        { 0.08f, -0.13f, 0.022f},
-    };
-    auto tri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c) {
-        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
-        if (glm::dot(n, (a + b + c) / 3.0f - center) < 0.0f) n = -n;
-        pushTri(verts, a, b, c, n, pebbleColor, LAYER_NONE);
-    };
-    for (int i = 0; i < 5; i++) {
-        tri(top, ring[i], ring[(i + 1) % 5]);
-        tri({0.0f, 0.0f, 0.0f}, ring[(i + 1) % 5], ring[i]);
-    }
-    uploadMesh(m_pebbleMesh, verts);
-    }
-
-    // ---- GRASS CARD: small blade-field cluster, instanced by the grass pipeline ----
-    {
-    std::vector<GrassCardVertex> verts;
-    auto bladeCard = [&](float angle, glm::vec2 base, float halfW, float h, float lean, glm::vec4 uv) {
-        const glm::vec3 dir  = {cosf(angle), sinf(angle), 0.0f};
-        const glm::vec3 side = dir * halfW;
-        const glm::vec3 leanOff = {-dir.y * lean, dir.x * lean, 0.0f};
-        const glm::vec3 b = {base.x, base.y, 0.0f};
-        const glm::vec3 n    = {-dir.y, dir.x, 0.0f};
-
-        const GrassCardVertex bl{b - side, n, {uv.x, uv.w}};
-        const GrassCardVertex br{b + side, n, {uv.z, uv.w}};
-        const GrassCardVertex tr{b + side * 0.42f + leanOff + glm::vec3(0.0f, 0.0f, h), n, {uv.z, uv.y}};
-        const GrassCardVertex tl{b - side * 0.42f + leanOff + glm::vec3(0.0f, 0.0f, h), n, {uv.x, uv.y}};
-
-        verts.insert(verts.end(), {bl, br, tr, bl, tr, tl});
-    };
-    // UV rects are measured from grass_blades/opacity.png so each card samples one atlas blade.
-    bladeCard(0.10f, {-0.20f, -0.08f}, 0.054f, 0.54f,  0.038f, {0.0742f, 0.0479f, 0.1152f, 0.9648f});
-    bladeCard(1.05f, { 0.02f, -0.17f}, 0.052f, 0.46f, -0.030f, {0.2061f, 0.0010f, 0.2461f, 0.4385f});
-    bladeCard(2.05f, { 0.20f, -0.02f}, 0.050f, 0.47f,  0.034f, {0.3779f, 0.0127f, 0.4160f, 0.4541f});
-    bladeCard(3.18f, {-0.04f,  0.15f}, 0.048f, 0.45f, -0.026f, {0.5254f, 0.0088f, 0.5566f, 0.4658f});
-    bladeCard(4.15f, { 0.13f,  0.15f}, 0.056f, 0.52f,  0.030f, {0.2178f, 0.4795f, 0.2627f, 0.9990f});
-    bladeCard(5.20f, {-0.17f,  0.11f}, 0.052f, 0.50f, -0.026f, {0.3799f, 0.5000f, 0.4189f, 0.9805f});
-    bladeCard(0.70f, { 0.00f,  0.00f}, 0.060f, 0.52f,  0.034f, {0.4971f, 0.5127f, 0.5605f, 0.9863f});
-    bladeCard(2.62f, {-0.10f, -0.19f}, 0.048f, 0.42f,  0.020f, {0.2061f, 0.0010f, 0.2461f, 0.4385f});
-    bladeCard(4.72f, { 0.19f,  0.07f}, 0.048f, 0.44f, -0.020f, {0.3799f, 0.5000f, 0.4189f, 0.9805f});
-    uploadGrassCardMesh(m_grassCardMesh, verts);
-    }
-}
-
-// ============================================================
-//  Grass blade textures
-// ============================================================
-void VulkanContext::createGrassTexture() {
-    // Color/albedo uploads as sRGB (hardware linearizes on sample); the opacity mask
-    // uploads as UNORM (raw coverage value, no gamma).
-    auto uploadImage = [&](const LoadedImageRGBA8& image, VkFormat format, bool mip) {
-        const VkDeviceSize imgSize = (VkDeviceSize)image.width * (VkDeviceSize)image.height * 4;
-        return createTexture((uint32_t)image.width, (uint32_t)image.height,
-            format, image.pixels.data(), imgSize, /*withSampler=*/true, mip);
-    };
-    auto makeOpacityFromAlpha = [](const LoadedImageRGBA8& source) {
-        LoadedImageRGBA8 opacity;
-        opacity.width = source.width;
-        opacity.height = source.height;
-        opacity.pixels.resize((size_t)source.width * (size_t)source.height * 4, 255);
-        for (size_t i = 0, count = (size_t)source.width * (size_t)source.height; i < count; i++) {
-            const uint8_t alpha = source.pixels[i * 4 + 3];
-            opacity.pixels[i * 4 + 0] = alpha;
-            opacity.pixels[i * 4 + 1] = alpha;
-            opacity.pixels[i * 4 + 2] = alpha;
-            opacity.pixels[i * 4 + 3] = 255;
-        }
-        return opacity;
-    };
-
-    const std::string grassColorPath = "assets/textures/vegetation/grass_blades/color.png";
-    const std::string grassOpacityPath = "assets/textures/vegetation/grass_blades/opacity.png";
-    const bool hasGrassColor = fileExists(grassColorPath);
-    const bool hasGrassOpacity = fileExists(grassOpacityPath);
-    if (hasGrassColor || hasGrassOpacity) {
-        if (!hasGrassColor || !hasGrassOpacity) {
-            throw std::runtime_error("Grass blade texture set requires both color.png and opacity.png");
-        }
-
-        LoadedImageRGBA8 colorImage = loadImageRGBA8(grassColorPath);
-        LoadedImageRGBA8 opacityImage = loadImageRGBA8(grassOpacityPath);
-        if (colorImage.width != opacityImage.width || colorImage.height != opacityImage.height) {
-            throw std::runtime_error("Grass blade color/opacity texture size mismatch");
-        }
-
-        m_grassTex = uploadImage(colorImage, VK_FORMAT_R8G8B8A8_SRGB, /*mipmapped=*/true);
-        m_grassOpacityTex = uploadImage(opacityImage, VK_FORMAT_R8G8B8A8_UNORM, /*mipmapped=*/false);
-        return;
-    }
-
-    const std::string authoredGrassPath = "assets/textures/grass.png";
-    if (fileExists(authoredGrassPath)) {
-        LoadedImageRGBA8 image = loadImageRGBA8(authoredGrassPath);
-        m_grassTex = uploadImage(image, VK_FORMAT_R8G8B8A8_SRGB, /*mipmapped=*/true);
-        m_grassOpacityTex = uploadImage(makeOpacityFromAlpha(image), VK_FORMAT_R8G8B8A8_UNORM, /*mipmapped=*/false);
-        return;
-    }
-
-    // A slim grass-blade mask: narrow tapering blades drawn into alpha, with a
-    // base-dark / tip-light green. Kept as a fallback when authored foliage textures
-    // are not present.
-    const uint32_t W = 64, H = 64;
-    std::vector<uint8_t> pixels((size_t)W * H * 4, 0); // RGBA8, fully transparent
-
-    auto clamp01 = [](float v) {
-        return v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
-    };
-    auto smooth = [](float t) {
-        return t * t * (3.0f - 2.0f * t);
-    };
-    auto writePixel = [&](int x, int y, const glm::vec3& c, float alpha) {
-        if (x < 0 || x >= (int)W || y < 0 || y >= (int)H) return;
-        uint8_t* p = &pixels[((size_t)y * W + x) * 4];
-        const float a = clamp01(alpha);
-        const float oldA = (float)p[3] / 255.0f;
-        if (a < oldA * 0.85f) return;
-        p[0] = (uint8_t)(c.r * 255.0f);
-        p[1] = (uint8_t)(c.g * 255.0f);
-        p[2] = (uint8_t)(c.b * 255.0f);
-        p[3] = (uint8_t)(std::max(oldA, a) * 255.0f);
-    };
-
-    struct Blade { float baseX, midX, tipX, height, halfW, shade; };
-    static const Blade blades[] = {
-        {0.50f, 0.50f, 0.54f, 1.00f, 0.075f, 1.08f},
-        {0.40f, 0.34f, 0.24f, 0.84f, 0.052f, 0.94f},
-        {0.60f, 0.66f, 0.78f, 0.80f, 0.052f, 1.02f},
-        {0.46f, 0.41f, 0.32f, 0.62f, 0.040f, 0.88f},
-        {0.55f, 0.62f, 0.72f, 0.58f, 0.040f, 0.96f},
-        {0.32f, 0.25f, 0.16f, 0.54f, 0.034f, 0.82f},
-        {0.68f, 0.76f, 0.88f, 0.52f, 0.034f, 0.86f},
-    };
-    const glm::vec3 baseCol = {0.16f, 0.34f, 0.12f};
-    const glm::vec3 tipCol  = {0.58f, 0.72f, 0.26f};
-
-    for (const Blade& b : blades) {
-        for (uint32_t y = 0; y < H; y++) {
-            const float t = 1.0f - (float)y / (float)(H - 1); // 0 at bottom row, 1 at top row
-            if (t > b.height) continue;
-
-            const float u = t / b.height;
-            const float su = smooth(u);
-            const float cx = glm::mix(glm::mix(b.baseX, b.midX, su), b.tipX, su * su);
-            const float halfW = b.halfW * powf(1.0f - u, 1.45f);
-            const float feather = 1.25f / (float)W;
-            const glm::vec3 col = glm::mix(baseCol, tipCol, smooth(u)) * b.shade;
-
-            const int x0 = (int)((cx - halfW - feather) * W);
-            const int x1 = (int)((cx + halfW + feather) * W);
-            for (int x = x0; x <= x1; x++) {
-                const float px = ((float)x + 0.5f) / (float)W;
-                const float dist = fabsf(px - cx);
-                const float a = clamp01((halfW + feather - dist) / feather);
-                writePixel(x, (int)y, col, a * (0.76f + 0.24f * u));
-            }
-        }
-    }
-
-    std::vector<uint8_t> opacityPixels((size_t)W * H * 4, 255);
-    for (size_t i = 0, count = (size_t)W * H; i < count; i++) {
-        const uint8_t alpha = pixels[i * 4 + 3];
-        opacityPixels[i * 4 + 0] = alpha;
-        opacityPixels[i * 4 + 1] = alpha;
-        opacityPixels[i * 4 + 2] = alpha;
-        opacityPixels[i * 4 + 3] = 255;
-    }
-
-    // Upload the procedural pixels through the shared texture helper. The grass card
-    // pipeline samples these with their own LINEAR/CLAMP samplers (withSampler=true).
-    const VkDeviceSize imgSize = (VkDeviceSize)W * H * 4;
-    m_grassTex = createTexture(W, H, VK_FORMAT_R8G8B8A8_SRGB, pixels.data(), imgSize, /*withSampler=*/true, /*mipmapped=*/true);
-    m_grassOpacityTex = createTexture(W, H, VK_FORMAT_R8G8B8A8_UNORM, opacityPixels.data(), imgSize, /*withSampler=*/true);
-}
+// (createObjectMeshes — the farm tree/rock/fence prop meshes — was removed with the
+//  object dressing rendering. The hero ship mesh load that lived at its end is now
+//  called directly from the constructor via loadImportedShipMesh().)
 
 TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
     VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped)
@@ -1799,178 +1337,6 @@ TextureResource VulkanContext::createTextureArray(uint32_t width, uint32_t heigh
     }
 
     return tex;
-}
-
-void VulkanContext::createTerrainTextureArray() {
-    struct TerrainLayerFile {
-        uint32_t layer;
-        const char* path;
-    };
-    static const TerrainLayerFile terrainLayerFiles[] = {
-        {0, "assets/textures/terrain/grass_top.png"},
-        {1, "assets/textures/terrain/grass_side.png"},
-        {2, "assets/textures/terrain/dirt.png"},
-        {3, "assets/textures/terrain/stone.png"},
-        {4, "assets/textures/terrain/wood.png"},
-        {5, "assets/textures/terrain/leaves.png"},
-        {6, "assets/textures/terrain/farmland.png"},
-        {7, "assets/textures/terrain/wheat.png"},
-        {8, "assets/textures/terrain/water.png"},
-    };
-
-    // Step 4b: authored terrain images override the procedural material masks per layer.
-    uint32_t W = 64, H = 64;
-    for (const TerrainLayerFile& file : terrainLayerFiles) {
-        if (!fileExists(file.path)) continue;
-        LoadedImageRGBA8 image = loadImageRGBA8(file.path);
-        W = (uint32_t)image.width;
-        H = (uint32_t)image.height;
-        break;
-    }
-
-    const uint32_t L = TERRAIN_TEX_LAYERS;
-    std::vector<uint8_t> pixels((size_t)W * H * 4 * L, 255);
-
-    auto smooth = [](float t) { return t * t * (3.0f - 2.0f * t); };
-    auto lerp   = [](float a, float b, float t) { return a + (b - a) * t; };
-    auto clamp01 = [](float v) { return std::clamp(v, 0.0f, 1.0f); };
-    auto fract = [](float v) { return v - std::floor(v); };
-    auto hash01 = [](int x, int y, int salt) -> float {
-        uint32_t h = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u ^ (uint32_t)salt * 83492791u;
-        h ^= h >> 13; h *= 1274126177u;
-        return (float)(h & 65535u) / 65535.0f;
-    };
-    // Tileable value noise: lattice coords wrap modulo (size/cell) so texture edges match.
-    auto tileNoise = [&](int x, int y, int cell, int salt) -> float {
-        const int cells = (int)W / cell;
-        auto wh = [&](int gx, int gy) { return hash01(((gx % cells) + cells) % cells, ((gy % cells) + cells) % cells, salt); };
-        const int gx = x / cell, gy = y / cell;
-        const float tx = smooth((float)(x - gx * cell) / (float)cell);
-        const float ty = smooth((float)(y - gy * cell) / (float)cell);
-        return lerp(lerp(wh(gx, gy), wh(gx + 1, gy), tx),
-                    lerp(wh(gx, gy + 1), wh(gx + 1, gy + 1), tx), ty);
-    };
-    auto fbm = [&](int x, int y, int salt) {
-        return tileNoise(x, y, 16, salt) * 0.50f +
-               tileNoise(x, y,  8, salt + 1) * 0.32f +
-               tileNoise(x, y,  4, salt + 2) * 0.18f;
-    };
-    auto wave = [](float t, float freq, float phase = 0.0f) {
-        return 0.5f + 0.5f * std::sin((t * freq + phase) * 6.28318530718f);
-    };
-    auto thinLine = [&](float t, float freq, float phase = 0.0f) {
-        float d = std::abs(fract(t * freq + phase) - 0.5f) * 2.0f;
-        return std::pow(1.0f - d, 9.0f);
-    };
-    auto writePixel = [&](uint32_t layer, uint32_t x, uint32_t y, glm::vec3 c) {
-        uint8_t* p = &pixels[(((size_t)layer * H + y) * W + x) * 4];
-        p[0] = (uint8_t)(clamp01(c.r) * 255.0f);
-        p[1] = (uint8_t)(clamp01(c.g) * 255.0f);
-        p[2] = (uint8_t)(clamp01(c.b) * 255.0f);
-        p[3] = 255;
-    };
-
-    for (uint32_t layer = 0; layer < L; layer++) {
-        const int salt = 100 + (int)layer * 37;
-        for (uint32_t y = 0; y < H; y++)
-        for (uint32_t x = 0; x < W; x++) {
-            const float u = ((float)x + 0.5f) / (float)W;
-            const float v = ((float)y + 0.5f) / (float)H;
-            const float n = fbm((int)x, (int)y, salt);
-            const float fine = tileNoise((int)x, (int)y, 2, salt + 7);
-
-            glm::vec3 c(0.9f);
-            switch (layer) {
-                case 0: { // Grass top: soft blades and clumps.
-                    float blades = wave(u + tileNoise((int)x, (int)y, 8, salt + 11) * 0.10f, 18.0f);
-                    float value = 0.78f + n * 0.15f + blades * 0.07f + fine * 0.03f;
-                    c = glm::vec3(value * 0.96f, value * 1.02f, value * 0.93f);
-                    break;
-                }
-                case 1: { // Grass side: dirt strata with a little root breakup.
-                    float strata = wave(v + n * 0.07f, 5.0f);
-                    float value = 0.72f + n * 0.15f + strata * 0.07f;
-                    c = glm::vec3(value * 1.02f, value * 0.93f, value * 0.82f);
-                    break;
-                }
-                case 2: { // Dirt: clods and small darker grains.
-                    float speck = hash01((int)x, (int)y, salt + 19) > 0.78f ? 1.0f : 0.0f;
-                    float value = 0.70f + n * 0.22f + fine * 0.05f - speck * 0.07f;
-                    c = glm::vec3(value * 1.03f, value * 0.92f, value * 0.78f);
-                    break;
-                }
-                case 3: { // Stone: mottled facets and hairline cracks.
-                    float crack = std::max(thinLine(u + n * 0.05f, 4.0f), thinLine(v + n * 0.05f, 4.0f));
-                    float value = 0.72f + n * 0.20f + fine * 0.04f - crack * 0.13f;
-                    c = glm::vec3(value * 0.96f, value * 0.98f, value * 1.02f);
-                    break;
-                }
-                case 4: { // Wood: broad grain lines.
-                    float grain = wave(u + tileNoise((int)x, (int)y, 16, salt + 23) * 0.18f, 9.0f);
-                    float ring = thinLine(u + n * 0.08f, 4.0f);
-                    float value = 0.68f + grain * 0.16f + n * 0.12f - ring * 0.06f;
-                    c = glm::vec3(value * 1.06f, value * 0.91f, value * 0.70f);
-                    break;
-                }
-                case 5: { // Leaves: clustered mottling.
-                    float spot = hash01((int)(x / 2), (int)(y / 2), salt + 31) > 0.70f ? 1.0f : 0.0f;
-                    float value = 0.76f + n * 0.17f + fine * 0.06f - spot * 0.06f;
-                    c = glm::vec3(value * 0.92f, value * 1.03f, value * 0.86f);
-                    break;
-                }
-                case 6: { // Farmland: tilled furrows.
-                    float furrow = wave(v + n * 0.04f, 6.0f);
-                    float darkLine = std::pow(1.0f - furrow, 3.0f);
-                    float value = 0.68f + n * 0.12f + furrow * 0.08f - darkLine * 0.13f;
-                    c = glm::vec3(value * 1.03f, value * 0.88f, value * 0.68f);
-                    break;
-                }
-                case 7: { // Wheat: thin stalk rhythm.
-                    float stalks = std::pow(wave(u + n * 0.07f, 14.0f), 2.5f);
-                    float value = 0.76f + n * 0.12f + stalks * 0.14f;
-                    c = glm::vec3(value * 1.06f, value * 0.98f, value * 0.70f);
-                    break;
-                }
-                case 8: { // Water: subtle placeholder ripples; a dedicated water pass comes later.
-                    float ripple = wave(u + v + n * 0.03f, 2.0f) * 0.55f +
-                                   wave(u - v + n * 0.03f, 3.0f) * 0.45f;
-                    float value = 0.83f + ripple * 0.04f + n * 0.025f;
-                    c = glm::vec3(value * 0.88f, value * 0.98f, value * 1.03f);
-                    break;
-                }
-                default: {
-                    float value = 0.74f + n * 0.24f;
-                    c = glm::vec3(value);
-                    break;
-                }
-            }
-
-            writePixel(layer, x, y, c);
-        }
-    }
-
-    auto copyLayerFromFile = [&](const TerrainLayerFile& file) {
-        if (!fileExists(file.path)) return;
-
-        LoadedImageRGBA8 image = loadImageRGBA8(file.path);
-        if ((uint32_t)image.width != W || (uint32_t)image.height != H) {
-            std::cerr << "Skipping terrain texture with mismatched size: " << file.path
-                      << " (" << image.width << "x" << image.height
-                      << ", expected " << W << "x" << H << ")\n";
-            return;
-        }
-
-        const size_t layerOffset = (size_t)file.layer * W * H * 4;
-        const size_t byteCount = (size_t)W * H * 4;
-        memcpy(pixels.data() + layerOffset, image.pixels.data(), byteCount);
-    };
-
-    for (const TerrainLayerFile& file : terrainLayerFiles) {
-        if (file.layer < L) copyLayerFromFile(file);
-    }
-
-    const VkDeviceSize size = (VkDeviceSize)W * H * 4 * L;
-    m_terrainTex = createTextureArray(W, H, L, VK_FORMAT_R8G8B8A8_SRGB, pixels.data(), size, /*withSampler=*/true, /*mipmapped=*/true);
 }
 
 // ============================================================
@@ -2152,6 +1518,98 @@ void VulkanContext::createSmaaRenderPass() {
     info.pDependencies   = deps;
     if (vkCreateRenderPass(m_device, &info, nullptr, &m_smaaRenderPass) != VK_SUCCESS)
         throw std::runtime_error("Failed to create SMAA render pass");
+}
+
+void VulkanContext::createTaaRenderPass() {
+    // Same shape as the SMAA pass but on the HDR scene format: fullscreen
+    // overwrite, then sampled by the post pass (and as next frame's history).
+    VkAttachmentDescription color{};
+    color.format         = m_sceneColorFormat;
+    color.samples        = VK_SAMPLE_COUNT_1_BIT;
+    color.loadOp         = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    color.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    color.finalLayout    = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkAttachmentReference colorRef{};
+    colorRef.attachment = 0;
+    colorRef.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpass{};
+    subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments    = &colorRef;
+
+    VkSubpassDependency deps[2]{};
+    // Wait on last frame's history read (and this frame's scene write) before overwriting.
+    deps[0].srcSubpass    = VK_SUBPASS_EXTERNAL;
+    deps[0].dstSubpass    = 0;
+    deps[0].srcStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    deps[0].dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+    deps[1].srcSubpass    = 0;
+    deps[1].dstSubpass    = VK_SUBPASS_EXTERNAL;
+    deps[1].srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    deps[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[1].dstStageMask  = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    deps[1].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+    VkRenderPassCreateInfo info{};
+    info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    info.attachmentCount = 1;
+    info.pAttachments    = &color;
+    info.subpassCount    = 1;
+    info.pSubpasses      = &subpass;
+    info.dependencyCount = 2;
+    info.pDependencies   = deps;
+    if (vkCreateRenderPass(m_device, &info, nullptr, &m_taaRenderPass) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA render pass");
+}
+
+void VulkanContext::createTaaResources() {
+    m_taaHistoryFrames = 0;
+    m_taaImage.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaMemory.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaView.resize(MAX_FRAMES_IN_FLIGHT);
+    m_taaFramebuffers.resize(MAX_FRAMES_IN_FLIGHT);
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        createImage(m_swapchainExtent.width, m_swapchainExtent.height, m_sceneColorFormat,
+            VK_IMAGE_TILING_OPTIMAL,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+            m_taaImage[i], m_taaMemory[i]);
+
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image                           = m_taaImage[i];
+        viewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format                          = m_sceneColorFormat;
+        viewInfo.subresourceRange.aspectMask     = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.levelCount     = 1;
+        viewInfo.subresourceRange.layerCount     = 1;
+        if (vkCreateImageView(m_device, &viewInfo, nullptr, &m_taaView[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create TAA image view");
+
+        VkFramebufferCreateInfo fbInfo{};
+        fbInfo.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        fbInfo.renderPass      = m_taaRenderPass;
+        fbInfo.attachmentCount = 1;
+        fbInfo.pAttachments    = &m_taaView[i];
+        fbInfo.width           = m_swapchainExtent.width;
+        fbInfo.height          = m_swapchainExtent.height;
+        fbInfo.layers          = 1;
+        if (vkCreateFramebuffer(m_device, &fbInfo, nullptr, &m_taaFramebuffers[i]) != VK_SUCCESS)
+            throw std::runtime_error("Failed to create TAA framebuffer");
+
+        // The other index is bound as history before this image is ever written;
+        // move it out of UNDEFINED so the descriptor binding is always legal.
+        transitionImageLayout(m_taaImage[i],
+            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    }
 }
 
 void VulkanContext::createOffscreenResources() {
@@ -2742,6 +2200,193 @@ void VulkanContext::createSmaaPipelines() {
         m_smaaNeighborhoodPipelineLayout, m_postRenderPass, m_smaaNeighborhoodPipeline, "SMAA neighborhood");
 }
 
+void VulkanContext::createTaaPipeline() {
+    // Set layout: 0 = current scene color, 1 = history color, 2 = scene depth.
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    for (uint32_t b = 0; b < 3; b++) {
+        bindings[b].binding         = b;
+        bindings[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        bindings[b].descriptorCount = 1;
+        bindings[b].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+    VkDescriptorSetLayoutCreateInfo dl{};
+    dl.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dl.bindingCount = 3;
+    dl.pBindings    = bindings;
+    if (vkCreateDescriptorSetLayout(m_device, &dl, nullptr, &m_taaDescriptorSetLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA descriptor set layout");
+
+    VkPushConstantRange push{};
+    push.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    push.offset     = 0;
+    push.size       = sizeof(TaaPushConstants);
+    VkPipelineLayoutCreateInfo pl{};
+    pl.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pl.setLayoutCount         = 1;
+    pl.pSetLayouts            = &m_taaDescriptorSetLayout;
+    pl.pushConstantRangeCount = 1;
+    pl.pPushConstantRanges    = &push;
+    if (vkCreatePipelineLayout(m_device, &pl, nullptr, &m_taaPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA pipeline layout");
+
+    auto vertCode = readFile("shaders/post.vert.spv");
+    auto fragCode = readFile("shaders/taa.frag.spv");
+    VkShaderModule vertMod = createShaderModule(vertCode);
+    VkShaderModule fragMod = createShaderModule(fragCode);
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vertMod;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = fragMod;
+    stages[1].pName  = "main";
+
+    VkPipelineVertexInputStateCreateInfo vertexInput{}; // no vertex buffers (gl_VertexIndex)
+    vertexInput.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{ 0, 0, (float)m_swapchainExtent.width, (float)m_swapchainExtent.height, 0.0f, 1.0f };
+    VkRect2D   scissor{ {0, 0}, m_swapchainExtent };
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports    = &viewport;
+    viewportState.scissorCount  = 1;
+    viewportState.pScissors     = &scissor;
+
+    VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType             = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = 2;
+    dynamicState.pDynamicStates    = dynamicStates;
+
+    VkPipelineRasterizationStateCreateInfo raster{};
+    raster.sType       = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    raster.polygonMode = VK_POLYGON_MODE_FILL;
+    raster.cullMode    = VK_CULL_MODE_NONE;
+    raster.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    raster.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo msaa{};
+    msaa.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    msaa.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState blendAttach{};
+    blendAttach.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                 VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo blend{};
+    blend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    blend.attachmentCount = 1;
+    blend.pAttachments    = &blendAttach;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_FALSE;
+    depthStencil.depthWriteEnable = VK_FALSE;
+    depthStencil.depthCompareOp   = VK_COMPARE_OP_ALWAYS;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 2;
+    pipelineInfo.pStages             = stages;
+    pipelineInfo.pVertexInputState   = &vertexInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &raster;
+    pipelineInfo.pMultisampleState   = &msaa;
+    pipelineInfo.pColorBlendState    = &blend;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pDynamicState       = &dynamicState;
+    pipelineInfo.layout              = m_taaPipelineLayout;
+    pipelineInfo.renderPass          = m_taaRenderPass;
+    pipelineInfo.subpass             = 0;
+
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_taaPipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA pipeline");
+
+    vkDestroyShaderModule(m_device, vertMod, nullptr);
+    vkDestroyShaderModule(m_device, fragMod, nullptr);
+}
+
+void VulkanContext::updateTaaDescriptors() {
+    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+        // Resolve inputs: this frame's scene, the other index as history
+        // (frames in flight alternate, so [1-i] holds last frame's resolve).
+        VkDescriptorImageInfo images[3]{};
+        images[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[0].imageView   = m_offscreenView[i];
+        images[0].sampler     = m_postSampler;
+        images[1].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[1].imageView   = m_taaView[(i + 1) % MAX_FRAMES_IN_FLIGHT];
+        images[1].sampler     = m_postSampler;
+        images[2].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        images[2].imageView   = m_depthImageView;
+        images[2].sampler     = m_sceneDepthSampler;
+
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t b = 0; b < 3; b++) {
+            writes[b].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[b].dstSet          = m_taaDescriptorSets[i];
+            writes[b].dstBinding      = b;
+            writes[b].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[b].descriptorCount = 1;
+            writes[b].pImageInfo      = &images[b];
+        }
+        vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
+
+        // Post pass variant that tone-maps the TAA resolve instead of the raw scene.
+        VkDescriptorImageInfo resolved{};
+        resolved.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        resolved.imageView   = m_taaView[i];
+        resolved.sampler     = m_postSampler;
+        VkWriteDescriptorSet postWrite{};
+        postWrite.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        postWrite.dstSet          = m_postTaaDescriptorSets[i];
+        postWrite.dstBinding      = 0;
+        postWrite.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        postWrite.descriptorCount = 1;
+        postWrite.pImageInfo      = &resolved;
+        vkUpdateDescriptorSets(m_device, 1, &postWrite, 0, nullptr);
+    }
+}
+
+void VulkanContext::createTaaDescriptors() {
+    VkDescriptorPoolSize ps{};
+    ps.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps.descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // 3 resolve inputs + 1 post input
+    VkDescriptorPoolCreateInfo pi{};
+    pi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pi.poolSizeCount = 1;
+    pi.pPoolSizes    = &ps;
+    pi.maxSets       = MAX_FRAMES_IN_FLIGHT * 2;
+    if (vkCreateDescriptorPool(m_device, &pi, nullptr, &m_taaDescriptorPool) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create TAA descriptor pool");
+
+    std::vector<VkDescriptorSetLayout> taaLayouts(MAX_FRAMES_IN_FLIGHT, m_taaDescriptorSetLayout);
+    VkDescriptorSetAllocateInfo ai{};
+    ai.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    ai.descriptorPool     = m_taaDescriptorPool;
+    ai.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
+    ai.pSetLayouts        = taaLayouts.data();
+    m_taaDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &ai, m_taaDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate TAA descriptor sets");
+
+    std::vector<VkDescriptorSetLayout> postLayouts(MAX_FRAMES_IN_FLIGHT, m_postDescriptorSetLayout);
+    ai.pSetLayouts = postLayouts.data();
+    m_postTaaDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
+    if (vkAllocateDescriptorSets(m_device, &ai, m_postTaaDescriptorSets.data()) != VK_SUCCESS)
+        throw std::runtime_error("Failed to allocate TAA post descriptor sets");
+
+    updateTaaDescriptors();
+}
+
 void VulkanContext::createPostSampler() {
     VkSamplerCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -3074,9 +2719,11 @@ void VulkanContext::createSyncObjects() {
 // ============================================================
 void VulkanContext::createDepthResources() {
     VkFormat depthFormat = findDepthFormat();
+    // SAMPLED: the TAA resolve reads the final (post-water) depth for reprojection.
     createImage(m_swapchainExtent.width, m_swapchainExtent.height, depthFormat,
         VK_IMAGE_TILING_OPTIMAL,
-        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+            VK_IMAGE_USAGE_SAMPLED_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         m_depthImage, m_depthImageMemory);
 
@@ -3222,10 +2869,10 @@ void VulkanContext::createShadowPipeline() {
     vertStage.module = vertMod;
     vertStage.pName  = "main";
 
-    // ChunkVertex binding — shadow shader only reads pos (location 0)
+    // ShipVertex binding — shadow shader only reads pos (location 0)
     VkVertexInputBindingDescription binding{};
     binding.binding   = 0;
-    binding.stride    = sizeof(ChunkVertex);
+    binding.stride    = sizeof(ShipVertex);
     binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
     VkVertexInputAttributeDescription attr{};
@@ -3311,266 +2958,6 @@ void VulkanContext::createShadowPipeline() {
     vkDestroyShaderModule(m_device, vertMod, nullptr);
 }
 
-// ============================================================
-//  Shadow pipeline for instanced objects (trees)
-// ============================================================
-void VulkanContext::createShadowObjectPipeline() {
-    auto vert = readFile("shaders/shadow_object.vert.spv");
-    VkShaderModule vertMod = createShaderModule(vert);
-
-    VkPipelineShaderStageCreateInfo vertStage{};
-    vertStage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertStage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
-    vertStage.module = vertMod;
-    vertStage.pName  = "main";
-
-    // Tree mesh (ChunkVertex pos) + per-instance transform (ObjectInstance)
-    VkVertexInputBindingDescription bindings[2]{};
-    bindings[0].binding   = 0;
-    bindings[0].stride    = sizeof(ChunkVertex);
-    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    bindings[1].binding   = 1;
-    bindings[1].stride    = sizeof(ObjectInstance);
-    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-    VkVertexInputAttributeDescription attrs[4]{};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ChunkVertex, pos)      };
-    attrs[1] = { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ObjectInstance, pos)   };
-    attrs[2] = { 4, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, scale) };
-    attrs[3] = { 5, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, rot)   };
-
-    VkPipelineVertexInputStateCreateInfo vertInput{};
-    vertInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertInput.vertexBindingDescriptionCount   = 2;
-    vertInput.pVertexBindingDescriptions      = bindings;
-    vertInput.vertexAttributeDescriptionCount = 4;
-    vertInput.pVertexAttributeDescriptions    = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f};
-    VkRect2D   scissor{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports    = &viewport;
-    viewportState.scissorCount  = 1;
-    viewportState.pScissors     = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode                = VK_CULL_MODE_NONE;  // tree mesh isn't watertight
-    rasterizer.frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable         = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 1.5f;
-    rasterizer.depthBiasSlopeFactor    = 1.2f;
-    rasterizer.lineWidth               = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable  = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendStateCreateInfo colorBlend{};
-    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount          = 1;
-    pipelineInfo.pStages             = &vertStage;
-    pipelineInfo.pVertexInputState   = &vertInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState      = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState   = &multisampling;
-    pipelineInfo.pDepthStencilState  = &depthStencil;
-    pipelineInfo.pColorBlendState    = &colorBlend;
-    pipelineInfo.layout              = m_shadowPipelineLayout;  // reuse lightMVP push constant
-    pipelineInfo.renderPass          = m_shadowRenderPass;
-    pipelineInfo.subpass             = 0;
-
-    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowObjectPipeline) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow object pipeline");
-
-    vkDestroyShaderModule(m_device, vertMod, nullptr);
-}
-
-// ============================================================
-//  Shadow pipeline for alpha-tested grass cards
-// ============================================================
-void VulkanContext::createShadowGrassPipeline() {
-    VkDescriptorSetLayoutBinding opacityBinding{};
-    opacityBinding.binding         = 0;
-    opacityBinding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    opacityBinding.descriptorCount = 1;
-    opacityBinding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    VkDescriptorSetLayoutCreateInfo setInfo{};
-    setInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    setInfo.bindingCount = 1;
-    setInfo.pBindings    = &opacityBinding;
-    if (vkCreateDescriptorSetLayout(m_device, &setInfo, nullptr, &m_shadowGrassDescriptorSetLayout) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow grass descriptor set layout");
-
-    VkPushConstantRange pushRange{};
-    pushRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-    pushRange.offset     = 0;
-    pushRange.size       = sizeof(glm::mat4);
-
-    VkPipelineLayoutCreateInfo layoutInfo{};
-    layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    layoutInfo.setLayoutCount         = 1;
-    layoutInfo.pSetLayouts            = &m_shadowGrassDescriptorSetLayout;
-    layoutInfo.pushConstantRangeCount = 1;
-    layoutInfo.pPushConstantRanges    = &pushRange;
-    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_shadowGrassPipelineLayout) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow grass pipeline layout");
-
-    auto vert = readFile("shaders/shadow_grass.vert.spv");
-    auto frag = readFile("shaders/shadow_grass.frag.spv");
-    VkShaderModule vertMod = createShaderModule(vert);
-    VkShaderModule fragMod = createShaderModule(frag);
-
-    VkPipelineShaderStageCreateInfo stages[2]{};
-    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
-    stages[0].module = vertMod;
-    stages[0].pName  = "main";
-    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
-    stages[1].module = fragMod;
-    stages[1].pName  = "main";
-
-    VkVertexInputBindingDescription bindings[2]{};
-    bindings[0].binding   = 0;
-    bindings[0].stride    = sizeof(GrassCardVertex);
-    bindings[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-    bindings[1].binding   = 1;
-    bindings[1].stride    = sizeof(ObjectInstance);
-    bindings[1].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
-
-    VkVertexInputAttributeDescription attrs[5]{};
-    attrs[0] = { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(GrassCardVertex, pos) };
-    attrs[1] = { 2, 0, VK_FORMAT_R32G32_SFLOAT,    offsetof(GrassCardVertex, uv)  };
-    attrs[2] = { 3, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(ObjectInstance, pos)   };
-    attrs[3] = { 4, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, scale) };
-    attrs[4] = { 5, 1, VK_FORMAT_R32_SFLOAT,       offsetof(ObjectInstance, rot)   };
-
-    VkPipelineVertexInputStateCreateInfo vertInput{};
-    vertInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertInput.vertexBindingDescriptionCount   = 2;
-    vertInput.pVertexBindingDescriptions      = bindings;
-    vertInput.vertexAttributeDescriptionCount = 5;
-    vertInput.pVertexAttributeDescriptions    = attrs;
-
-    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
-    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-
-    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f};
-    VkRect2D   scissor{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
-
-    VkPipelineViewportStateCreateInfo viewportState{};
-    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-    viewportState.viewportCount = 1;
-    viewportState.pViewports    = &viewport;
-    viewportState.scissorCount  = 1;
-    viewportState.pScissors     = &scissor;
-
-    VkPipelineRasterizationStateCreateInfo rasterizer{};
-    rasterizer.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-    rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
-    rasterizer.cullMode                = VK_CULL_MODE_NONE;
-    rasterizer.frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-    rasterizer.depthBiasEnable         = VK_TRUE;
-    rasterizer.depthBiasConstantFactor = 0.2f;
-    rasterizer.depthBiasSlopeFactor    = 0.4f;
-    rasterizer.lineWidth               = 1.0f;
-
-    VkPipelineMultisampleStateCreateInfo multisampling{};
-    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-    VkPipelineDepthStencilStateCreateInfo depthStencil{};
-    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-    depthStencil.depthTestEnable  = VK_TRUE;
-    depthStencil.depthWriteEnable = VK_TRUE;
-    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
-
-    VkPipelineColorBlendStateCreateInfo colorBlend{};
-    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-
-    VkGraphicsPipelineCreateInfo pipelineInfo{};
-    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-    pipelineInfo.stageCount          = 2;
-    pipelineInfo.pStages             = stages;
-    pipelineInfo.pVertexInputState   = &vertInput;
-    pipelineInfo.pInputAssemblyState = &inputAssembly;
-    pipelineInfo.pViewportState      = &viewportState;
-    pipelineInfo.pRasterizationState = &rasterizer;
-    pipelineInfo.pMultisampleState   = &multisampling;
-    pipelineInfo.pDepthStencilState  = &depthStencil;
-    pipelineInfo.pColorBlendState    = &colorBlend;
-    pipelineInfo.layout              = m_shadowGrassPipelineLayout;
-    pipelineInfo.renderPass          = m_shadowRenderPass;
-    pipelineInfo.subpass             = 0;
-
-    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_shadowGrassPipeline) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow grass pipeline");
-
-    vkDestroyShaderModule(m_device, fragMod, nullptr);
-    vkDestroyShaderModule(m_device, vertMod, nullptr);
-}
-
-void VulkanContext::createShadowGrassDescriptors() {
-    VkDescriptorPoolSize poolSize{};
-    poolSize.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSize.descriptorCount = MAX_FRAMES_IN_FLIGHT;
-
-    VkDescriptorPoolCreateInfo poolInfo{};
-    poolInfo.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolInfo.poolSizeCount = 1;
-    poolInfo.pPoolSizes    = &poolSize;
-    poolInfo.maxSets       = MAX_FRAMES_IN_FLIGHT;
-    if (vkCreateDescriptorPool(m_device, &poolInfo, nullptr, &m_shadowGrassDescriptorPool) != VK_SUCCESS)
-        throw std::runtime_error("Failed to create shadow grass descriptor pool");
-
-    std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, m_shadowGrassDescriptorSetLayout);
-    VkDescriptorSetAllocateInfo allocInfo{};
-    allocInfo.sType              = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    allocInfo.descriptorPool     = m_shadowGrassDescriptorPool;
-    allocInfo.descriptorSetCount = MAX_FRAMES_IN_FLIGHT;
-    allocInfo.pSetLayouts        = layouts.data();
-
-    m_shadowGrassDescriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
-    if (vkAllocateDescriptorSets(m_device, &allocInfo, m_shadowGrassDescriptorSets.data()) != VK_SUCCESS)
-        throw std::runtime_error("Failed to allocate shadow grass descriptor sets");
-
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        VkDescriptorImageInfo opacityInfo{};
-        opacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        opacityInfo.imageView   = m_grassOpacityTex.view;
-        opacityInfo.sampler     = m_grassOpacityTex.sampler;
-
-        VkWriteDescriptorSet write{};
-        write.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        write.dstSet          = m_shadowGrassDescriptorSets[i];
-        write.dstBinding      = 0;
-        write.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        write.descriptorCount = 1;
-        write.pImageInfo      = &opacityInfo;
-        vkUpdateDescriptorSets(m_device, 1, &write, 0, nullptr);
-    }
-}
 
 // ============================================================
 //  Shadow sampler
@@ -3595,7 +2982,10 @@ void VulkanContext::createShadowSampler() {
 //  Descriptor set layout
 // ============================================================
 void VulkanContext::createDescriptorSetLayout() {
-    VkDescriptorSetLayoutBinding bindings[8]{};
+    // Bindings 2-4 (grass/terrain) were removed with the farm world; ship textures keep
+    // their original binding numbers 5-7 so the live ship shaders need no changes. Vulkan
+    // permits the resulting non-contiguous binding set {0,1,5,6,7}.
+    VkDescriptorSetLayoutBinding bindings[5]{};
 
     bindings[0].binding         = 0;
     bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
@@ -3607,39 +2997,24 @@ void VulkanContext::createDescriptorSetLayout() {
     bindings[1].descriptorCount = 1;
     bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[2].binding         = 2;
+    bindings[2].binding         = 5; // imported ship albedo
     bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[2].descriptorCount = 1;
     bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[3].binding         = 3; // terrain texture array (sampler2DArray)
+    bindings[3].binding         = 6; // imported ship normal
     bindings[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[3].descriptorCount = 1;
     bindings[3].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[4].binding         = 4; // grass opacity mask
+    bindings[4].binding         = 7; // imported ship specular
     bindings[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     bindings[4].descriptorCount = 1;
     bindings[4].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
 
-    bindings[5].binding         = 5; // imported ship albedo
-    bindings[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[5].descriptorCount = 1;
-    bindings[5].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    bindings[6].binding         = 6; // imported ship normal
-    bindings[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[6].descriptorCount = 1;
-    bindings[6].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-    bindings[7].binding         = 7; // imported ship specular
-    bindings[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    bindings[7].descriptorCount = 1;
-    bindings[7].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
-
     VkDescriptorSetLayoutCreateInfo info{};
     info.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    info.bindingCount = 8;
+    info.bindingCount = 5;
     info.pBindings    = bindings;
 
     if (vkCreateDescriptorSetLayout(m_device, &info, nullptr, &m_descriptorSetLayout) != VK_SUCCESS)
@@ -3683,7 +3058,7 @@ void VulkanContext::createDescriptorPool() {
     poolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     poolSizes[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
     poolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 14; // main + reflection scene descriptors
+    poolSizes[1].descriptorCount = MAX_FRAMES_IN_FLIGHT * 8; // main + reflection scene descriptors (4 samplers each)
 
     VkDescriptorPoolCreateInfo info{};
     info.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -3718,21 +3093,6 @@ void VulkanContext::createDescriptorSets() {
         imageInfo.imageView   = m_shadowImageView;
         imageInfo.sampler     = m_shadowSampler;
 
-        VkDescriptorImageInfo grassInfo{};
-        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassInfo.imageView   = m_grassTex.view;
-        grassInfo.sampler     = m_grassTex.sampler;
-
-        VkDescriptorImageInfo grassOpacityInfo{};
-        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
-        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
-
-        VkDescriptorImageInfo terrainInfo{};
-        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        terrainInfo.imageView   = m_terrainTex.view;
-        terrainInfo.sampler     = m_terrainTex.sampler;
-
         VkDescriptorImageInfo shipAlbedoInfo{};
         shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
@@ -3748,7 +3108,7 @@ void VulkanContext::createDescriptorSets() {
         shipSpecularInfo.imageView   = m_shipSpecularTex.view;
         shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_descriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3765,47 +3125,26 @@ void VulkanContext::createDescriptorSets() {
 
         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet          = m_descriptorSets[i];
-        writes[2].dstBinding      = 2;
+        writes[2].dstBinding      = 5;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[2].descriptorCount = 1;
-        writes[2].pImageInfo      = &grassInfo;
+        writes[2].pImageInfo      = &shipAlbedoInfo;
 
         writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[3].dstSet          = m_descriptorSets[i];
-        writes[3].dstBinding      = 3;
+        writes[3].dstBinding      = 6;
         writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[3].descriptorCount = 1;
-        writes[3].pImageInfo      = &terrainInfo;
+        writes[3].pImageInfo      = &shipNormalInfo;
 
         writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[4].dstSet          = m_descriptorSets[i];
-        writes[4].dstBinding      = 4;
+        writes[4].dstBinding      = 7;
         writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
-        writes[4].pImageInfo      = &grassOpacityInfo;
+        writes[4].pImageInfo      = &shipSpecularInfo;
 
-        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet          = m_descriptorSets[i];
-        writes[5].dstBinding      = 5;
-        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &shipAlbedoInfo;
-
-        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet          = m_descriptorSets[i];
-        writes[6].dstBinding      = 6;
-        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &shipNormalInfo;
-
-        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[7].dstSet          = m_descriptorSets[i];
-        writes[7].dstBinding      = 7;
-        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &shipSpecularInfo;
-
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
 }
 
@@ -3832,21 +3171,6 @@ void VulkanContext::createReflectionDescriptorSets() {
         imageInfo.imageView   = m_shadowImageView;
         imageInfo.sampler     = m_shadowSampler;
 
-        VkDescriptorImageInfo grassInfo{};
-        grassInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassInfo.imageView   = m_grassTex.view;
-        grassInfo.sampler     = m_grassTex.sampler;
-
-        VkDescriptorImageInfo grassOpacityInfo{};
-        grassOpacityInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        grassOpacityInfo.imageView   = m_grassOpacityTex.view;
-        grassOpacityInfo.sampler     = m_grassOpacityTex.sampler;
-
-        VkDescriptorImageInfo terrainInfo{};
-        terrainInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        terrainInfo.imageView   = m_terrainTex.view;
-        terrainInfo.sampler     = m_terrainTex.sampler;
-
         VkDescriptorImageInfo shipAlbedoInfo{};
         shipAlbedoInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         shipAlbedoInfo.imageView   = m_shipAlbedoTex.view;
@@ -3862,7 +3186,7 @@ void VulkanContext::createReflectionDescriptorSets() {
         shipSpecularInfo.imageView   = m_shipSpecularTex.view;
         shipSpecularInfo.sampler     = m_shipSpecularTex.sampler;
 
-        VkWriteDescriptorSet writes[8]{};
+        VkWriteDescriptorSet writes[5]{};
         writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[0].dstSet          = m_reflectionDescriptorSets[i];
         writes[0].dstBinding      = 0;
@@ -3879,47 +3203,26 @@ void VulkanContext::createReflectionDescriptorSets() {
 
         writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[2].dstSet          = m_reflectionDescriptorSets[i];
-        writes[2].dstBinding      = 2;
+        writes[2].dstBinding      = 5;
         writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[2].descriptorCount = 1;
-        writes[2].pImageInfo      = &grassInfo;
+        writes[2].pImageInfo      = &shipAlbedoInfo;
 
         writes[3].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[3].dstSet          = m_reflectionDescriptorSets[i];
-        writes[3].dstBinding      = 3;
+        writes[3].dstBinding      = 6;
         writes[3].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[3].descriptorCount = 1;
-        writes[3].pImageInfo      = &terrainInfo;
+        writes[3].pImageInfo      = &shipNormalInfo;
 
         writes[4].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         writes[4].dstSet          = m_reflectionDescriptorSets[i];
-        writes[4].dstBinding      = 4;
+        writes[4].dstBinding      = 7;
         writes[4].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         writes[4].descriptorCount = 1;
-        writes[4].pImageInfo      = &grassOpacityInfo;
+        writes[4].pImageInfo      = &shipSpecularInfo;
 
-        writes[5].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[5].dstSet          = m_reflectionDescriptorSets[i];
-        writes[5].dstBinding      = 5;
-        writes[5].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[5].descriptorCount = 1;
-        writes[5].pImageInfo      = &shipAlbedoInfo;
-
-        writes[6].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[6].dstSet          = m_reflectionDescriptorSets[i];
-        writes[6].dstBinding      = 6;
-        writes[6].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[6].descriptorCount = 1;
-        writes[6].pImageInfo      = &shipNormalInfo;
-
-        writes[7].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        writes[7].dstSet          = m_reflectionDescriptorSets[i];
-        writes[7].dstBinding      = 7;
-        writes[7].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        writes[7].descriptorCount = 1;
-        writes[7].pImageInfo      = &shipSpecularInfo;
-
-        vkUpdateDescriptorSets(m_device, 8, writes, 0, nullptr);
+        vkUpdateDescriptorSets(m_device, 5, writes, 0, nullptr);
     }
 }
 
@@ -4127,136 +3430,3 @@ void VulkanContext::updateOceanHistoryDescriptor(uint32_t currentFrame) {
     vkUpdateDescriptorSets(m_device, 2, writes, 0, nullptr);
 }
 
-// ============================================================
-//  Static geometry buffers
-// ============================================================
-void VulkanContext::createIndexBuffer() {
-    VkDeviceSize size = sizeof(kIndices[0]) * kIndices.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map index staging buffer");
-    memcpy(data, kIndices.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_indexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_indexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createVertexBuffer() {
-    VkDeviceSize size = sizeof(kVertices[0]) * kVertices.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map vertex staging buffer");
-    memcpy(data, kVertices.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_vertexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_vertexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createItemMesh() {
-    // Small cube: reuse the unit cube scaled down so dropped items read as little pickups.
-    std::vector<Vertex> verts = kVertices;
-    for (auto& v : verts) v.pos *= 0.3f;
-    VkDeviceSize size = sizeof(Vertex) * verts.size();
-
-    GpuBuffer staging = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, size, 0, &data),
-        "Failed to map item mesh staging buffer");
-    memcpy(data, verts.data(), (size_t)size);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_itemVertexBuffer = createBuffer(size,
-        VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-    copyBuffer(staging, m_itemVertexBuffer, size);
-    // staging frees itself at scope exit
-}
-
-void VulkanContext::createDropInstanceBuffer() {
-    VkDeviceSize size = sizeof(InstanceData) * MAX_DROPS;
-    m_dropInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_dropInstBuffer[i] = createBuffer(size,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_dropInstBuffer[i].memory, 0, size, 0, &m_dropInstBuffer[i].mapped),
-            "Failed to map drop instance buffer");
-    }
-}
-
-void VulkanContext::createPlayerInstanceBuffer(const glm::vec3& playerPosition) {
-    VkDeviceSize size = sizeof(InstanceData);
-    m_playerInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_playerInstBuffer[i] = createBuffer(size,
-            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_playerInstBuffer[i].memory, 0, size, 0, &m_playerInstBuffer[i].mapped),
-            "Failed to map player instance buffer");
-    }
-
-    updatePlayerInstanceBuffer(playerPosition);
-}
-
-void VulkanContext::createSelectorBuffers() {
-    VkDeviceSize vertexSize = sizeof(kSelectorVertices[0]) * kSelectorVertices.size();
-
-    GpuBuffer staging = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    void* data;
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, vertexSize, 0, &data),
-        "Failed to map selector vertex staging buffer");
-    memcpy(data, kSelectorVertices.data(), vertexSize);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_selectorVertexBuffer = createBuffer(vertexSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    copyBuffer(staging, m_selectorVertexBuffer, vertexSize);
-
-    VkDeviceSize indexSize = sizeof(kSelectorIndices[0]) * kSelectorIndices.size();
-    staging = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-
-    vkCheck(vkMapMemory(m_device, staging.memory, 0, indexSize, 0, &data),
-        "Failed to map selector index staging buffer");
-    memcpy(data, kSelectorIndices.data(), indexSize);
-    vkUnmapMemory(m_device, staging.memory);
-
-    m_selectorIndexBuffer = createBuffer(indexSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    copyBuffer(staging, m_selectorIndexBuffer, indexSize);
-    // staging frees itself at scope exit
-
-    VkDeviceSize instanceSize = sizeof(InstanceData);
-    m_selectorInstBuffer.resize(MAX_FRAMES_IN_FLIGHT);
-    for (int i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-        m_selectorInstBuffer[i] = createBuffer(instanceSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        vkCheck(vkMapMemory(m_device, m_selectorInstBuffer[i].memory, 0, instanceSize, 0, &m_selectorInstBuffer[i].mapped),
-            "Failed to map selector instance buffer");
-    }
-}

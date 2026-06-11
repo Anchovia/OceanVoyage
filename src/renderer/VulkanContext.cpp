@@ -2,7 +2,6 @@
 #include "VulkanContext_Private.h"
 #include "renderer/Types.h"
 #include "platform/Window.h"
-#include "world/World.h"
 #include "game/Camera.h"
 
 #include <stdexcept>
@@ -22,7 +21,7 @@
 // ============================================================
 //  Constructor / Destructor
 // ============================================================
-VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m_world(world) {
+VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createInstance();
     setupDebugMessenger();
     createSurface();
@@ -33,46 +32,35 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createRenderPass();
     createPostRenderPass();
     createSmaaRenderPass();
+    createTaaRenderPass();
     createDescriptorSetLayout();
     createOceanDescriptorSetLayout();
-    createGraphicsPipeline();
+    createScenePipelineLayout();
     createSkyPipeline();
-    createChunkPipeline();
     createUIPipeline();
-    createObjectPipeline();
     createOceanPipeline();
     createShipPipeline();
-    createGrassPipeline();
     createPostPipeline();
     createSmaaPipelines();
+    createTaaPipeline();
     createDepthResources();
     createOffscreenResources();
     createPlanarReflectionResources();
     createSmaaResources();
     createShadowResources();
     createShadowPipeline();
-    createShadowObjectPipeline();
-    createShadowGrassPipeline();
     createFramebuffers();
     createCommandPool();
     createSmaaLookupTextures();
+    createTaaResources(); // needs the command pool for the initial layout transition
 #ifdef PASTEL_DEV_BUILD
     createDevTools();
 #endif
-    createVertexBuffer();
-    createIndexBuffer();
-    createSelectorBuffers();
     createUIBuffer();
-    createObjectMeshes();
+    loadImportedShipMesh();
     createOceanMesh();
     createOceanNormalTextures();
     createOceanFFT();
-    createGrassTexture();
-    createTerrainTextureArray();
-    createItemMesh();
-    createDropInstanceBuffer();
-    rebuildDirtyChunks();
-    createPlayerInstanceBuffer({15.0f, 15.0f, 1.0f});
     createUniformBuffers();
     createReflectionUniformBuffers();
     createShadowSampler();
@@ -81,9 +69,9 @@ VulkanContext::VulkanContext(Window& window, World& world) : m_window(window), m
     createDescriptorSets();
     createReflectionDescriptorSets();
     createOceanDescriptors();
-    createShadowGrassDescriptors();
     createPostDescriptors();
     createSmaaDescriptors();
+    createTaaDescriptors();
     createCommandBuffers();
     createSyncObjects();
 }
@@ -107,12 +95,6 @@ VulkanContext::~VulkanContext() {
     vkDestroyDescriptorSetLayout(m_device, m_oceanDescriptorSetLayout, nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     m_reflectionUniformBuffers.clear();
-    m_playerInstBuffer.clear();
-    m_selectorInstBuffer.clear();
-    m_selectorIndexBuffer.destroy();
-    m_selectorVertexBuffer.destroy();
-    m_chunkBuffers.clear();          // frees chunk mesh, dressing, and object group buffers
-    for (auto& mesh : m_objectMeshes) mesh.vbuf.destroy();
     destroyOceanFFT();
     m_oceanNormalB.destroy();
     m_oceanNormalA.destroy();
@@ -120,33 +102,17 @@ VulkanContext::~VulkanContext() {
     m_shipNormalTex.destroy();
     m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
-    m_grassCardMesh.vbuf.destroy();
-    m_groundPatchMesh.vbuf.destroy();
-    m_pebbleMesh.vbuf.destroy();
-    m_itemVertexBuffer.destroy();
-    m_dropInstBuffer.clear();
     m_oceanIndexBuffer.destroy();
     m_oceanVertexBuffer.destroy();
-    m_indexBuffer.destroy();
-    m_vertexBuffer.destroy();
     m_uiBuffer.clear();
     vkDestroyPipeline(m_device, m_uiPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_grassPipeline, nullptr);
     vkDestroyPipeline(m_device, m_shipPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanPipelineLayout, nullptr);
-    vkDestroyPipeline(m_device, m_objectPipeline, nullptr);
-    vkDestroyPipeline(m_device, m_chunkPipeline, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);
-    vkDestroyPipeline(m_device, m_pipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
-    vkDestroyPipeline      (m_device, m_shadowGrassPipeline,  nullptr);
-    vkDestroyPipelineLayout(m_device, m_shadowGrassPipelineLayout, nullptr);
-    vkDestroyDescriptorPool(m_device, m_shadowGrassDescriptorPool, nullptr);
-    vkDestroyDescriptorSetLayout(m_device, m_shadowGrassDescriptorSetLayout, nullptr);
-    vkDestroyPipeline      (m_device, m_shadowObjectPipeline, nullptr);
     vkDestroyPipeline      (m_device, m_shadowPipeline,       nullptr);
     vkDestroyPipelineLayout(m_device, m_shadowPipelineLayout, nullptr);
     vkDestroySampler       (m_device, m_shadowSampler,        nullptr);
@@ -162,6 +128,10 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipelineLayout     (m_device, m_postPipelineLayout,      nullptr);
     vkDestroyDescriptorPool     (m_device, m_postDescriptorPool,      nullptr);
     vkDestroyDescriptorSetLayout(m_device, m_postDescriptorSetLayout, nullptr);
+    vkDestroyPipeline           (m_device, m_taaPipeline,            nullptr);
+    vkDestroyPipelineLayout     (m_device, m_taaPipelineLayout,      nullptr);
+    vkDestroyDescriptorPool     (m_device, m_taaDescriptorPool,      nullptr);
+    vkDestroyDescriptorSetLayout(m_device, m_taaDescriptorSetLayout, nullptr);
     vkDestroyPipeline           (m_device, m_smaaNeighborhoodPipeline,       nullptr);
     vkDestroyPipelineLayout     (m_device, m_smaaNeighborhoodPipelineLayout, nullptr);
     vkDestroyPipeline           (m_device, m_smaaBlendPipeline,              nullptr);
@@ -176,9 +146,7 @@ VulkanContext::~VulkanContext() {
     m_smaaSearchTex.destroy();
     vkDestroySampler            (m_device, m_sceneDepthSampler,       nullptr);
     vkDestroySampler            (m_device, m_postSampler,             nullptr);
-    m_grassTex.destroy();
-    m_grassOpacityTex.destroy();
-    m_terrainTex.destroy();
+    vkDestroyRenderPass         (m_device, m_taaRenderPass,           nullptr);
     vkDestroyRenderPass         (m_device, m_smaaRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_postRenderPass,          nullptr);
     vkDestroyRenderPass         (m_device, m_sceneLoadRenderPass,     nullptr);
@@ -342,6 +310,12 @@ void VulkanContext::cleanupSwapchain() {
     for (auto fb : m_postFramebuffers)     vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaEdgeFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
     for (auto fb : m_smaaBlendFramebuffers) vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (auto fb : m_taaFramebuffers)      vkDestroyFramebuffer(m_device, fb, nullptr);
+    for (size_t i = 0; i < m_taaImage.size(); i++) {
+        vkDestroyImageView(m_device, m_taaView[i],   nullptr);
+        vkDestroyImage    (m_device, m_taaImage[i],  nullptr);
+        vkFreeMemory      (m_device, m_taaMemory[i], nullptr);
+    }
 
     vkDestroyImageView(m_device, m_depthImageView, nullptr);
     vkDestroyImage    (m_device, m_depthImage,     nullptr);
@@ -395,10 +369,12 @@ void VulkanContext::recreateSwapchain() {
     createOffscreenResources();
     createPlanarReflectionResources();
     createSmaaResources();
+    createTaaResources();
     createFramebuffers();
     updatePostDescriptors();   // offscreen views were recreated
     updateOceanDescriptors();  // planar reflection views were recreated
     updateSmaaDescriptors();   // SMAA intermediate views were recreated
+    updateTaaDescriptors();    // TAA history/depth views were recreated
 
     // Swapchain image count may have changed — recreate per-image present semaphores
     for (auto& sem : m_renderFinished) {
@@ -505,6 +481,14 @@ void VulkanContext::transitionImageLayout(VkImage image, VkImageLayout oldLayout
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
         barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
         srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    } else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+               newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        // Fresh attachment bound as sampled history before its first write
+        // (TAA): contents are garbage but the layout must be legal to bind.
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
         dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
     } else {
         throw std::runtime_error("Unsupported image layout transition");

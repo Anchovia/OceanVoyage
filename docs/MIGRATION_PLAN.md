@@ -5,9 +5,11 @@
 목표는 농장 게임 코드를 즉시 전부 삭제하는 것이 아니다.
 재사용 가능한 엔진 코드는 보존하고, 농장 게임 전용 시스템은 안전하게 제거하며, 전환 과정에서도 프로젝트가 계속 빌드 가능한 상태를 유지하는 것이 목표다.
 
+> **범위:** 이 문서는 "농장 코드를 안전하게 걷어내는 전환"까지(아래 Phase 0~5)를 다룬다. 그 위에 새 게임(항구·경제·날씨·비주얼 고도화 등)을 쌓아 올리는 장기 개발 순서는 `docs/ROADMAP.md`가 단일 출처다. 아래 Phase 3~5의 티켓 단위 세부(작업·검증·닿는 파일)는 ROADMAP Phase 1~3과 대응한다.
+
 ## Phase 0: 프로젝트 정체성 정리
 
-상태: 시작 전
+상태: ✅ 완료 — README/문서 OceanVoyage로 정리, 전환·엔진 구조 문서 추가, 빌드 가능 유지.
 
 작업 목록:
 
@@ -20,7 +22,7 @@
 
 ## Phase 1: 엔진 / 게임 경계 검토
 
-상태: 시작 전
+상태: ✅ 분류 완료 / 🔶 구조 정리 진행 중 — `docs/CODE_CLASSIFICATION.md`로 4분류 정리는 완료됐다. 다만 렌더러는 아직 `World&`를 직접 보유하고 `Chunk`/`TileType`/`ObjectType` 기반 버퍼를 관리한다. `FrameRenderData`도 inventory/hotbar/drops/workbench 같은 농장 상태를 포함하므로, 의존성 방향 정리는 아직 핵심 남은 작업이다.
 
 기존 코드를 네 가지 그룹으로 분류한다.
 
@@ -82,55 +84,76 @@ OceanVoyage에 맞는 새 시스템으로 바꿔야 하는 영역.
 * 작물 경제 → 교역품 / 자원 / 산업 경제
 * 농장 오브젝트 → 선박, 항구, 건물, 화물, 산업 시설
 
-## Phase 2: 최소 테스트 씬
+## Phase 2: 해양 렌더링 기준점
 
-상태: 시작 전
+상태: ✅ 렌더링 기준점 달성 / 🔶 게임 상태 분리 미완료 — 하늘/안개/후처리/수면/선박/디버그 UI/배 추적 궤도 카메라가 모두 동작하고, 사실적 해양 스택(FFT·SSR·플래너 반사·CSM·PBR·wake)까지 구현됐다(`docs/ARCHITECTURE.md` §2.5). 다만 이 씬은 **독립된 OceanVoyage 게임 상태가 아니라 `World`/`Chunk` 기반 해상 테스트 월드 위에서 동작**한다.
 
-농장 게임플레이를 제거하기 전에, 먼저 최소한의 OceanVoyage 테스트 씬을 만든다.
+농장 게임플레이를 제거하기 전에 필요했던 최소 해양 화면 기준점은 확보됐다.
 
-테스트 씬 목표:
+달성된 기준:
 
 * Vulkan 창 생성
-* 자유 카메라 또는 궤도 카메라
+* 선박 추적 / 궤도 카메라
 * 하늘 / 안개 / 후처리 유지
-* 임시 물 평면
-* 임시 선박 오브젝트 1개
+* 다중 캐스케이드 FFT 해수면
+* PBR 선박 1척
+* wake/foam 시뮬레이션
+* SSR/플래너 반사
+* CSM 그림자
 * 디버그 UI
 * 정상 종료
 
-이 테스트 씬이 빌드되고 실행되기 전에는 대규모 농장 시스템 삭제를 하지 않는다.
+남은 분리 조건:
 
-## Phase 3: 농장 시스템 제거
+* `Player`/농장 이동을 `ShipState`/항해 물리로 교체
+* `FrameRenderData`에서 농장 UI·인벤토리·드롭·타일 선택 상태 제거
+* `VulkanContext`가 `World`를 직접 읽지 않도록 렌더 스냅샷 경계 정리
 
-상태: 시작 전
+## Phase 3: 선박 상태와 렌더 데이터 경계 교체
 
-농장 전용 시스템은 작은 커밋 단위로 제거한다.
+상태: 🔴 다음 핵심 작업 — 현재 선박 위치와 heading은 `Player` 위치/이동 방향에서 나온다. 이동은 `World::isWalkable`/타일 충돌 기반 축분리 걷기이며, 항해 물리·풍향·타각·선회반경·관성은 없다.
+
+> 티켓 단위 세부(ShipState 필드, 입력 매핑, 물리 적분식, 초기 상수, 검증)는 `docs/ROADMAP.md` Phase 1을 본다.
+
+우선 작업:
+
+1. `ShipState` 또는 동등한 선박 상태 구조 추가
+2. 전진/후진/타각/돛 또는 추진 입력을 별도 입력 의미로 분리
+3. 관성·선회율·속도 제한·풍향/추진 계수를 가진 기본 항해 물리 도입
+4. 선박 위치/속도/heading을 wake·부력·카메라·렌더러의 단일 입력으로 사용
+5. `FrameRenderData`를 OceanVoyage 렌더 데이터로 정리
+6. `VulkanContext`의 `World&` 직접 참조 제거를 위한 중간 렌더 스냅샷 도입
+
+## Phase 4: 농장 시스템 제거
+
+상태: 🔶 진행 중 — `GameState`에서 작물 성장 틱·농기구·타일 상호작용은 비활성화/제거됐고, 시작 인벤토리도 비웠다. 단 `World`/`Chunk` 스트리밍, `TileType`/`ObjectType`, 인벤토리/핫바/제작 UI, save v3의 inventory/drops/chunk 저장 구조는 아직 잔존한다.
+
+농장 전용 시스템은 대체 구조가 생긴 뒤 작은 커밋 단위로 제거한다.
 
 권장 제거 순서:
 
-1. 작물 게임플레이
-2. 농기구
-3. 제작 / 작업대 규칙
-4. 농장 전용 아이템 정의
-5. 농장 전용 오브젝트 정의
-6. 농장 전용 타일 상호작용
-7. 농장 전용 UI 패널
+1. 제작 패널 / workbench 상태 제거 또는 비활성 UI 제거
+2. hotbar/inventory를 화물창 또는 임시 선박 상태 UI로 교체
+3. `ItemType`/농장 recipe 제거
+4. 농장 object/ground/grass dressing 경로를 OceanVoyage 렌더 스냅샷 밖으로 분리
+5. save/load에서 inventory/drops/farm chunk 필드 제거 또는 Voyage save schema로 교체
+6. `TileType` 중심 월드를 OceanWorld/Region/Harbor 구조로 교체
 
 각 제거 단계 후에는 반드시 빌드 가능 상태를 유지한다.
 
-## Phase 4: OceanVoyage 초기 프로토타입
+## Phase 5: OceanVoyage 초기 프로토타입
 
-상태: 시작 전
+상태: 🔶 부분 — 선박 1척·사실적 바다·배 추적 궤도 카메라·기본 조작은 있으나, 이동이 **농장 타일-워크 컨트롤러 잔재**(관성·풍향 없음)이고 항구·화물 매매 루프·항해용 저장은 미구현.
 
 초기 OceanVoyage 프로토타입 목표:
 
 * 조작 가능한 선박 1척
-* 간단한 바다 평면 또는 타일형 수면
+* 사실적 FFT 해수면 위의 조작 가능한 선박
 * 선박 추적 / 궤도 카메라
-* 기본 이동
+* 기본 항해 물리
 * 임시 항구 1개
 * 단순 화물 구매 / 판매 루프
-* 플레이어 위치와 화물 저장 / 로드
+* 선박 위치와 화물 저장 / 로드
 
 ## 커밋 원칙
 
@@ -138,9 +161,8 @@ OceanVoyage에 맞는 새 시스템으로 바꿔야 하는 영역.
 
 권장 커밋 예시:
 
-* `Document OceanVoyage migration plan`
-* `Rename project identity to OceanVoyage`
-* `Add minimal ocean test scene`
-* `Remove crop gameplay`
-* `Replace farming inventory with cargo model`
-* `Add basic ship controller`
+* `OceanVoyage 전환 계획 정리`
+* `해양 렌더링 현재 상태 문서화`
+* `기본 선박 상태 추가`
+* `농장 이동을 항해 물리로 교체`
+* `농장 인벤토리를 화물 모델로 교체`

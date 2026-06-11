@@ -6,6 +6,296 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-11 — 두 번째 항구 + 첫 교역 루프 성립 (ROADMAP Phase 3c-3, **Phase 3 완료**)
+
+- `LIVERPOOL` 추가(BRISTOL 정동 600m). 가격 차별화로 양방향 이익 항로 성립: Coal 동행(8→11, +3/개), Machinery 서행(44→48, +4/개). 동일 항구 왕복은 여전히 손해. **빌드·검증 완료 — 첫 교역 루프(매입→항해→매도→이익) 동작.**
+- HUD `PRT` 라인에 최근접 항구 이름 추가(`PRT LIVERPOOL E 620`) — 2항구 항법용, Phase 5 nearest-port HUD의 선행.
+- **Phase 3 종결**: VoyageSave(OVYG v2) + 항구/화물/money + 입항·정박·출항 + 시장 매매 + 2항구 교역 루프. 농장 레거시 0. 다음은 ROADMAP Phase 4(렌더링 후속), 첫 항목은 기준 성능 측정.
+
+### 2026-06-11 — 교역소 시장 매매 (ROADMAP Phase 3c-2)
+
+- `MarketEntry { good; buyPrice; sellPrice; stock }` + BRISTOL 시장 5종(Coal 8/6, IronOre 12/9, Steel 30/24, Machinery 60/48, Grain 10/8 — buy>sell 스프레드로 동일 항구 왕복 매매는 손해). **빌드·동작 검증 완료.**
+- 시장은 Docked 하위 상태: TRADE 클릭 → Up/Down 선택, B 구매 1, S 판매 1(Ctrl 제외로 Ctrl+S 저장과 무충돌), Esc로 항구 메뉴 복귀(이후 Esc는 pause). 검증: stock/money/적재공간/보유량.
+- UI: `GOOD|BUY|SELL|STK|HELD` 표 + 선택 행 하이라이트. 렌더러는 `MarketRowHud` 표시값 배열만 복사(게임 무지 유지). `UI_MAX_VERTS` 8192→32768(시장 표 글리프 ~12k 버텍스).
+- 한계(의도): 항구 재고(stock)는 save 미저장 — 로드 시 리셋. 재고 영속화는 save v3(ROADMAP Phase 9 save migration)에서.
+
+### 2026-06-11 — 항구 입항·정박·출항 1차 (ROADMAP Phase 3c-1)
+
+- `GameMode { Sailing, Docked }` 도입(AppMode 메뉴/일시정지와 별개). **빌드·동작 검증 완료.**
+- 입항: 항구 반경(30m) 안 + 저속(≤2m/s)에서 `PRESS ENTER TO DOCK` 힌트 → Enter(edge-detect)로 정박(운동량 0, 물리 스킵, 부력은 렌더러 FFT 리드백이라 파도 위 부유 유지).
+- 항구 메뉴: 화면 중앙 항구명 + `SET SAIL`/`TRADE`(3c-2까지 흐림 placeholder). 기존 pause 메뉴 rect+클릭 edge 패턴 재사용(`portMenuRowRect`, `consumePortMenuClick`). 일시정지 오버레이와 겹치지 않게 paused 중엔 숨김.
+- 설계: 별도 정박 "씬" 없이 mode+UI만 — Phase 5 부두/등대 메시가 들어오면 같은 화면이 항구 풍경이 됨(대항해시대식 선착장→마을 트리는 이 메뉴의 항목 확장으로 수용). save에 mode 미저장(로드 시 항구 안 Sailing, Enter 재입항).
+- 수정: `GameState.{h,cpp}`/`InputManager.cpp`(Enter)/`Types.h`/`VulkanContext.{h,_Frame.cpp}`/`main.cpp`.
+
+### 2026-06-11 — 항구·화물 데이터 1차 + save v2 (ROADMAP Phase 3b)
+
+- `Port { id, name, position, radius }`(시작 항구 BRISTOL, 초기 진행방향 200m 앞), `CargoGoodId` 5종/`CargoStack`/`CargoHold{capacity 100}`, money 1000. **빌드·동작 검증 완료.**
+- save v2: money(음수 거부) + cargo stacks(enum 범위·count>0·합≤capacity 검증). v1은 버전 불일치 거부(개발 정책).
+- HUD: `PRT 방위 거리`/`CRG used/cap`/`GLD money` + 반경 내 `NEAR PORT`. 렌더러는 `FrameRenderData` 표시값만 받음(게임 무지 유지). 벡터 폰트에 `/` 글리프 추가.
+- 항구 시각 표현은 의도적으로 없음(Phase 5, 임시 마커 금지 원칙).
+
+### 2026-06-11 — Player 미러 shim 제거 (Phase 1 잔재 완료)
+
+- 농장 `Player` 클래스 완전 제거(`Player.h` 삭제) — ship을 미러링하던 임시 호환 shim의 소멸. **빌드·동작 검증 완료(시각 변화 0).**
+- `GameState`: `m_player`/`player()` 제거 → `shipWorldPosition()` 추가(ship 2D 위치+deck 높이 1.0; 카메라 타깃·그림자 중심용, 부력은 GPU 리드백으로 실제 높이 재계산). `setShipState`는 단순 대입으로 인라인화.
+- `main.cpp`: 카메라 추적·스냅·렌더러 입력 전부 `shipWorldPosition()` 직결. 프레임 순서(직전 프레임 위치 추적 → 물리 → 렌더) 동일.
+- 이로써 농장 레거시 정리 완료. 남은 이름 잔재: `PlayerInput` 구조체명, CMake `PASTEL_DEV_BUILD` 옵션명(기능 무관).
+
+### 2026-06-11 — World·Chunk·TerrainGen 완전 제거 (Phase 3 잔재 정리)
+
+- 농장 월드 레거시 최종 삭제: `src/world/` 디렉터리(`World.{h,cpp}`/`TerrainGen.{h,cpp}`/`Chunk.h`) + CMake 등록 제거. **빌드·동작 검증 완료(시각 변화 0).**
+- `main.cpp`: `World` 인스턴스·청크 스트리밍·`LOAD_RADIUS`/`UNLOAD_RADIUS` 제거. 세션 시작=VoyageSave 로드, 타이틀 복귀=`gameState` 리셋만.
+- `Types.h`: 농장 타입 클러스터 118줄 제거(`TileType`/`ItemType`/헬퍼/`Vertex`/`InstanceData`/`ChunkVertex`/`TERRAIN_TEX_LAYERS`/`tileFaceLayer`/`ObjectInstance` — 전부 사용처 0 확인). 잔존: 메뉴 rect·`ShipVertex`·`UIVertex`.
+- `ShipVertex` pad 제거(48→44B): pad는 `sizeof(ChunkVertex)` stride 호환용이었고, shadow 파이프라인 stride를 `sizeof(ShipVertex)`로 교체하며 존재 이유 소멸. ship 경로는 전부 `sizeof`/`offsetof` 기반이라 자동 추종 — 선박 렌더·그림자 정상 확인.
+- 남은 레거시: `Player` 미러 shim(카메라가 사용), `GameState::day()`/`m_prevDay`(read 0), CMake `PASTEL_DEV_BUILD` 옵션명.
+
+### 2026-06-11 — GameState 농장 잔재 제거 (Phase 3 잔재 정리)
+
+- VoyageSave 전환으로 보존 이유가 사라진 GameState 농장 멤버 일괄 제거(-214줄). **빌드·동작 검증 완료.**
+- 제거: `m_inventory`/`m_drops`/핫바/`m_inventoryOpen`/`m_nearWorkbench` + getter, `addItem/countItem/removeItem/craft`, `PlayerInput.toggleInventory/selectSlot`, I키·숫자키 바인딩(`InputManager`), `consumeInventoryEscape`(`main.cpp`), Types.h 농장 클러스터(`ItemStack`/`DroppedItem`/`INV_*`/`HOTBAR_SLOTS`/`Recipe`/`craftingRecipes`/`CRAFT_*`/`craftRowRect`).
+- 의도된 동작 변화: I키·숫자키 무동작, 게임플레이 ESC는 항상 즉시 pause(인벤토리 닫기 단계 소멸). 스크롤 줌·항해·HUD는 무변경.
+- 보류: `ItemType`/`TileType`/`isBlock/isTool/itemToTile/itemColor`는 `World::tryHarvestObject`/`Chunk`가 사용 중 → World 제거 슬라이스에서 일괄 정리.
+
+### 2026-06-11 — 일시정지 UI 텍스트 잘림 수정 (UI_MAX_VERTS 2048→8192)
+
+- 일시정지 화면에서 SETTINGS가 "SE"에서 끊기고 QUIT이 사라지는 버그 수정. **빌드·동작 검증 완료.**
+- 원인: 벡터 폰트가 글리프 픽셀당 쿼드 1개(6버텍스)라 선박 HUD+PAUSED+메뉴 3행 동시 표시가 ~3k 버텍스 → `UI_MAX_VERTS`(2048) 초과분을 overflow 가드 `resize`가 잘라냄. Phase 2b 선박 HUD 추가 때부터 잠재, HUD 숫자 자릿수에 따라 간헐 재현(항해 중 ESC).
+- 수정: `VulkanContext.h` 상수 1줄(2048→8192, 프레임당 ~192KB로 무시 가능). 버퍼는 `createUIBuffer`가 상수 기준 생성이라 추가 변경 없음.
+
+### 2026-06-11 — 죽은 농장 세이브 배관 제거 (Phase 3 잔재 정리)
+
+- VoyageSave 교체로 호출처 0이 된 농장 세이브 경로 제거. **빌드·동작 검증 완료(순수 삭제, 동작 변화 0).**
+- 제거: `World::save/load` 정의 229줄+선언(`PFRM` 직렬화 전체 — `PFRM` 문자열이 src에서 소멸), `GameState::setPlayerPosition/setInventory/setDrops`, 고아 include(`World.cpp`의 cstring/fstream/filesystem, `World.h`의 string/array).
+- 유지: `m_inventory`/`m_drops`/`craft`/청크 스트리밍 — 아직 살아있는 코드, 다음 슬라이스에서 정리.
+
+### 2026-06-11 — VoyageSave(OVYG) 도입 (ROADMAP Phase 3a)
+
+- 저장 책임을 `World::save/load`(농장 `PFRM`)에서 신규 `src/game/VoyageSave.{h,cpp}`로 이동. **빌드·동작 검증 완료(항해 상태 저장/복원, legacy 거부, 손상 파일 무크래시).**
+- 포맷: magic `"OVYG"` + version 1. 필드: gameTime + ship position/velocity/heading/yawRate/throttle/rudder(float 9개). heading·velocity까지 복원되는 건 처음(기존엔 위치만).
+- 검증·안전: atomic write(`.tmp`→rename, 실패 시 라이브 파일 보존), 전체 읽기 성공 시에만 commit, magic/version/finite-float 검증(NaN 전파 차단), throttle/rudder `[-1,1]` clamp. 구 `PFRM` save.dat은 magic 불일치로 거부 → 새 게임(개발 정책).
+- `GameState::setShipState` 추가 — ship 전체 복원 + legacy Player 미러 즉시 동기화(카메라 스냅·청크 스트리밍이 로드 프레임에 복원 위치를 봄).
+- 저장 안 함: timeOfDay(gameTime에서 계산), inventory/drops/청크(항해 게임에서 무의미), wake field/FFT phase(gameTime으로 재현).
+- 죽은 코드化: `World::save/load`, `GameState::setPlayerPosition/setInventory/setDrops` 호출처 0 → 농장 레거시 정리 슬라이스에서 제거 예정.
+- 수정: `main.cpp`(배선 교체, 고아 include 정리), `GameState.{h,cpp}`, `CMakeLists.txt`. 신규: `VoyageSave.{h,cpp}`.
+
+### 2026-06-10 — 죽은 frustum 멤버 제거 (Phase 2d 후속 정리)
+
+- 농장 청크/오브젝트 컬링에 쓰이던 `m_frustum`/`m_reflectionFrustum`이 해당 렌더 제거(2d-1~4) 후 write-only(대입만, read 0)로 남음 → 제거. **빌드·동작 검증 완료(시각 변화 없음).**
+- 제거: 멤버 2개(`VulkanContext.h`), `#include "renderer/Frustum.h"`, `drawFrame`/`updateUniformBuffer`의 `Frustum::extractFrom` 대입 2개(`_Frame`).
+- 유지: `Frustum.h`(Gribb-Hartmann 평면 추출 + AABB 컬링) — 향후 섬·항구 프러스텀 컬링용 휴면 유틸. `ubo.reflectionViewProj`는 GPU 전송분이라 유지.
+- 수정: `VulkanContext.h`/`_Frame`.
+
+### 2026-06-10 — 공유 씬 디스크립터에서 죽은 grass/terrain 제거 (ROADMAP Phase 2d-5b)
+
+- 2d-5c에서 미뤘던 항목 완료. 공유 scene/reflection 디스크립터의 죽은 grass/terrain 텍스처 바인딩 제거. **빌드·동작 검증 완료(선박·하늘·그림자·반사·바다 정상, 화면 변화 없음).**
+- 레이아웃: `createDescriptorSetLayout`에서 binding 2/3/4(grass·terrain·grassOpacity) 제거 → `{0,1,5,6,7}` 비연속 레이아웃(`bindings[8]→[5]`). **ship 텍스처는 binding 5/6/7 유지 → 살아있는 셰이더 0줄 수정**(Vulkan은 비연속 binding 허용).
+- write: `createDescriptorSets`/`createReflectionDescriptorSets`의 grass/terrain image info + `writes[2..4]` 제거(`writes[8]→[5]`). 디스크립터 풀 이미지샘플러 `*14→*8`.
+- 제거: `createGrassTexture`/`createTerrainTextureArray` 정의(절차 텍스처 생성 포함) + ctor 호출 + 소멸자 `destroy` + `m_grassTex`/`m_grassOpacityTex`/`m_terrainTex` 멤버·선언.
+- 유지: `createTextureArray` 범용 헬퍼(미사용이 됐지만 향후 섬·항구 terrain 배열에 재사용 여지). 죽은 `m_frustum`/`m_reflectionFrustum`은 별도 슬라이스로 보류.
+- 남은 고아: `TERRAIN_TEX_LAYERS`(`Types.h`) — `tileFaceLayer`/`TileType` 농장 레거시 타입 클러스터에 묶여 Phase 3 일괄 정리에 포함.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`.
+
+### 2026-06-09 — dead 셰이더·빈 청크 TU CMake 정리 (ROADMAP Phase 2d-5c)
+
+- 2d 제거로 죽은 셰이더를 CMake(컴파일 목록·복사 명령)에서 빼고 파일 삭제, 빈 `VulkanContext_Chunk.cpp`를 소스 목록·파일에서 제거.
+- 삭제(10): `triangle.vert/.frag`(player 큐브), `chunk.vert/.frag`(청크·오브젝트 reuse), `object.vert`, `grass.vert/.frag`, `shadow_object.vert`, `shadow_grass.vert/.frag` + `VulkanContext_Chunk.cpp`.
+- 유지: ui/ship/ocean*/`shadow.vert`/sky/post/smaa.
+- 검증: 코드에서 삭제 셰이더 참조 0. **⚠️ CMake 변경이라 클린 빌드로 검증 권장.**
+- **미완(2d-5b)**: 공유 디스크립터의 grass/terrain 텍스처(`m_terrainTex`/`createTerrainTextureArray`/`m_grassTex`/`m_grassOpacityTex`) 제거는 **디스크립터 레이아웃↔셰이더 바인딩 좌표가 얽혀** 있어 빌드 열고 별도 진행 권장(무해한 dead GPU 메모리). 죽은 `m_frustum`/`m_reflectionFrustum`도 함께 검토.
+- 수정: `CMakeLists.txt`, 셰이더/소스 파일 10+1 삭제.
+
+### 2026-06-09 — 렌더러-World 분리 완료 (ROADMAP Phase 2d-5a)
+
+- **렌더러가 `World`를 완전히 모르게 됨(Phase 2d 핵심 달성).** 생성자 `VulkanContext(Window&, World&)` → **`VulkanContext(Window&)`**, `m_world` 멤버·world include·`class World;` 전방선언·dev UI 청크수 줄 제거. `main.cpp`는 `VulkanContext ctx(window)`.
+- `VulkanContext.h`의 `world/Chunk.h` → `renderer/Types.h`(타입 유지, world 의존 제거). cpp/Frame/Init의 `world/World.h` 제거.
+- `main.cpp`의 `world`는 청크 스트리밍·세이브용으로 유지(게임측).
+- 검증: 렌더러에 `m_world`/`World&`/world include **0**. 빌드·동작 검증 완료.
+- 남은 dead code: 공유 농장 텍스처(grass/terrain)+디스크립터 바인딩, dead 셰이더/CMake/빈 `_Chunk.cpp` → 2d-5b/5c.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`/`_Frame`, `main.cpp`.
+
+### 2026-06-09 — 청크 메시 빌더·데이터 제거 (ROADMAP Phase 2d-4b)
+
+- 2d-4a로 청크가 더 이상 그려지지 않게 된 뒤, 청크 메시 빌드/데이터 제거(191줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `buildChunkBuffer`(내부 `m_world.getTile`), `rebuildDirtyChunks`(`m_world.chunks()`) → `VulkanContext_Chunk.cpp` 비워짐(주석만), `ChunkRenderData`/`m_chunkBuffers`, ctor/drawFrame/cleanup 호출, 선언.
+- **결과: `m_world` 사용처가 3곳만 남음** — 생성자 `World&`, `m_world` 멤버, dev UI 청크수. → 2d-5에서 최종 제거.
+- 수정: `VulkanContext.{cpp,h}`/`_Chunk`/`_Frame`.
+
+### 2026-06-09 — 청크 voxel 메시 렌더링 제거 (ROADMAP Phase 2d-4a)
+
+- 청크 메시는 물 월드(전부 WATER, 메셔가 스킵)에서 빈 메시 → 렌더링 제거(78줄). **빌드·동작 검증 완료(선박 그림자/반사 정상, 화면 변화 없음).**
+- 제거: 청크 draw 3블록(shadow/reflection/scene), `createChunkPipeline` + `m_chunkPipeline`(생성/파괴/선언).
+- shadow 패스 정리: 청크 제거로 미사용이 된 `lightFrustum` + 고아가 된 `m_shadowPipeline` 바인드(ship이 자체 재바인드) 제거. **ship 그림자 캐스터는 유지.**
+- 유지: `buildChunkBuffer`/`rebuildDirtyChunks`/`m_chunkBuffers`/`ChunkRenderData`(빌드만 하고 미사용) → 2d-4b. reflection/scene의 dead descriptor 바인드는 sky 등 위해 유지.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`/`_Frame`.
+
+### 2026-06-09 — 죽은 오브젝트 리소스 제거 (ROADMAP Phase 2d-3b)
+
+- 2d-3a로 오브젝트가 더 이상 그려지지 않게 된 뒤, 죽은 오브젝트 리소스 제거(291줄). **빌드·동작 검증 완료(선박 정상 표시, 화면 변화 없음).**
+- 제거: `createObjectMeshes`(나무/바위/울타리 메시 빌드), `createObjectPipeline`, `createShadowObjectPipeline` + ctor/cleanup 배선 + `m_objectPipeline`/`m_objectMeshes`/`m_shadowObjectPipeline` 멤버·선언.
+- **ship 보존**: `createObjectMeshes` 끝의 `loadImportedShipMesh()` 호출을 ctor로 이전. `ObjectMesh` 구조체·`m_shipMesh`·`loadImportedShipMesh`는 유지.
+- 수정: `VulkanContext.{cpp,h}`/`_Init`.
+
+### 2026-06-09 — 오브젝트 dressing 렌더·빌더 제거 (ROADMAP Phase 2d-3a)
+
+- 농장 오브젝트(나무/바위) dressing은 `placeTrees`/`placeRocks` 미호출(객체 0)인 물 월드에서 항상 빈 렌더 → 제거(117줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: object draw 3블록(shadow/reflection/scene), `buildChunkObjectBuffer`(호출+정의), `objectsDirty` 블록, `rebuildDirtyChunks` objGroups 정리, 선언, `ChunkRenderData::ObjGroup` 구조체 + `objGroups` 필드.
+- renderer가 더 이상 `chunk.objectsDirty`를 읽지 않음(world/Chunk.h 필드는 게임측 유지).
+- 유지: `m_objectMeshes`·object/shadowObject 파이프라인(죽었지만 생성/파괴만) → 2d-3b. `ObjectMesh` 구조체는 ship(`m_shipMesh`)이 사용하므로 유지.
+- 수정: `VulkanContext.h`/`_Chunk`/`_Frame`.
+
+### 2026-06-09 — 지면 dressing(ground patch/pebble) 렌더 제거 (ROADMAP Phase 2d-2)
+
+- 농장 지면 dressing(ground patch + pebble)은 grass/dirt 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(232줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: ground/pebble draw(reflection 블록은 object draw 유지, scene 블록 전체), `buildGroundDressingBuffer`(호출+정의, 내부 `m_world.getTile`), `grassDirty` dressing 블록(objectsDirty만 유지), `rebuildDirtyChunks` 정리, `ChunkRenderData`의 groundPatch/pebble 필드, `m_groundPatchMesh`/`m_pebbleMesh` + 메시 빌드.
+- renderer가 더 이상 `chunk.grassDirty`를 읽지 않음(world/Chunk.h 필드는 게임측이라 유지).
+- 수정: `VulkanContext.{cpp,h}`/`_Chunk`/`_Frame`/`_Init`.
+
+### 2026-06-09 — 죽은 그래스 리소스 제거 (ROADMAP Phase 2d-1b)
+
+- 2d-1a로 그래스가 더 이상 그려지지 않게 된 뒤, standalone 그래스 리소스를 제거(257줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `createGrassPipeline`(+`m_grassPipeline`), grass card 메시(`uploadGrassCardMesh` 람다 + GRASS CARD 빌드 + `m_grassCardMesh`), shadow grass(`createShadowGrassPipeline`/`createShadowGrassDescriptors` + `m_shadowGrass*` 5종), `GrassCardVertex`.
+- **유지**: `m_grassTex`/`m_grassOpacityTex` + `createGrassTexture` — 그래스 텍스처가 **공유 scene·reflection 디스크립터에 묶여 있어**(chunk/object가 같은 descriptor 사용) 지금 제거 불가 → chunk/object 렌더 제거(2d-4/5) 시 함께 정리.
+- shaders `grass.*`/`shadow_grass.*`는 미사용이 됨(CMake/에셋 정리는 farm 렌더 제거 끝에 일괄).
+- 수정: `VulkanContext.{cpp,h}`/`_Init`, `Types.h`.
+
+### 2026-06-09 — 그래스 렌더링 제거 (ROADMAP Phase 2d-1a)
+
+- 렌더러-`World` 분리(Phase 2d)의 첫 슬라이스. 농장 grass dressing은 grass 타일이 0인 물 월드에서 항상 빈 렌더 → 제거(189줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: 그래스 draw 3블록(shadow[비활성]/reflection/scene), `buildGrassDressingBuffer`(호출+정의, 내부 `m_world.getTile` 그래스 샘플 포함), `rebuildDirtyChunks`의 grassBuffer 정리, 선언, `ChunkRenderData`의 `grassBuffer/grassCount`.
+- 남은 그래스 리소스(`m_grassPipeline`/`m_grassCardMesh`/`m_grassTex`/`m_shadowGrass*`)는 이제 죽은 채 생성/파괴만 됨 → 다음 슬라이스(2d-1b).
+- 2d는 농장 voxel 지형·그래스·지면·오브젝트 dressing 렌더 일체(~600줄+, shadow/reflection/scene 패스 통합)를 들어내는 큰 작업이라 빌드 검증 가능한 슬라이스로 진행: **2d-1a(그래스 draw+dressing, 이 커밋)** → 2d-1b(그래스 리소스) → 2d-2(지면) → 2d-3(오브젝트) → 2d-4(청크 메시) → 2d-5(`rebuildDirtyChunks`+`m_world`/생성자 `World&` 제거).
+- 수정: `VulkanContext.h`, `VulkanContext_Chunk.cpp`, `VulkanContext_Frame.cpp`.
+
+### 2026-06-09 — 죽은 legacy 인스턴스 큐브 서브시스템 제거 (ROADMAP Phase 2a-3c)
+
+- player 큐브/selector/drops가 모두 빠지며 아무것도 안 그리게 된 인스턴스 큐브 렌더 일체를 제거(5개 파일, ~136줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `m_pipeline`(인스턴스 큐브 파이프라인) · 큐브 메시(`m_vertexBuffer`/`m_indexBuffer` + `createVertexBuffer`/`createIndexBuffer` + `kVertices`/`kIndices`) · player 큐브(`m_playerInstBuffer` + `createPlayerInstanceBuffer`/`updatePlayerInstanceBuffer` + `kPlayerColor`) — 생성·파괴·선언 전부.
+- `createGraphicsPipeline()` → `createScenePipelineLayout()`로 개명하고 **공유 `m_pipelineLayout` 생성만 남김**(sky/chunk/object/grass/ship가 재사용 → 유지). grep로 제거 심볼 참조 0, 공유 레이아웃 12곳 정상 확인.
+- `shaders/triangle.vert`/`.frag`는 미사용이 됐으나 에셋/CMake 정리는 별도(삭제 안 함).
+- 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`/`_Private`.
+
+### 2026-06-09 — drops 렌더 plumbing 제거 (ROADMAP Phase 2a-3b)
+
+- 2c 이후 항상 비어 inert였던 드롭 아이템 렌더 경로를 **완전 제거**(5개 파일, ~74줄). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `FrameRenderData.drops`+main 인자+dev UI Drops 줄, `updateDropInstanceBuffer`(호출/정의/선언), `createItemMesh`/`createDropInstanceBuffer`(정의/ctor 호출/cleanup/선언), 멤버 `m_itemVertexBuffer`/`m_dropInstBuffer`/`m_dropCount`/`MAX_DROPS`, drop draw + 그 앞의 고아 `m_pipeline` 바인드.
+- 아이템 큐브 메시는 drops 전용이라 함께 삭제. 그 자리에 NOTE 주석: legacy 인스턴스 큐브 파이프라인(`m_pipeline`/player-cube)은 이제 아무것도 안 그림 → 이후 cleanup.
+- 유지: `GameState`의 `m_drops`/`drops()`/`setDrops` + save/load drops(저장 포맷 묶임 → Phase 3에서 정리).
+- 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`, `main.cpp`.
+
+### 2026-06-09 — 타일 selector 서브시스템 제거 (ROADMAP Phase 2a-3a)
+
+- 2c 이후 항상 inert였던 타일 selector를 코드까지 **완전 제거**(7개 파일, ~108줄 삭제). **빌드·동작 검증 완료(화면 변화 없음).**
+- 제거: `FrameRenderData.targetTile`, `updateSelectorInstanceBuffer`(호출/정의/선언), `createSelectorBuffers`(호출/정의/선언)+cleanup, selector draw, 멤버(`m_selectorVertex/Index/InstBuffer`/`m_showSelector`), 메시 데이터(`kSelectorVertices/Indices`), `GameState`의 `m_targetTile`+`targetTile()`+orphan된 `#include <optional>`.
+- `updateSelectorInstanceBuffer`가 쓰던 `m_world.tileCenter` 의존이 함께 사라짐 → 2d(렌더러-World 분리) 선행.
+- 곁다리: stale가 된 `// Player / selector` 파이프라인 주석 → `// Player / drops`로 정정.
+- 공유 `m_pipeline`·큐브 메시·drops·player 경로는 유지. 수정: `VulkanContext.{h,cpp}`/`_Init`/`_Frame`/`_Private`, `main.cpp`, `GameState.h`.
+
+### 2026-06-09 — 죽은 농장 HUD 필드 제거 (ROADMAP Phase 2a-2)
+
+- 2b로 *write-only*가 된 농장 HUD 데이터 경로를 렌더 데이터에서 제거. **빌드·동작 검증 완료(게임 화면 변화 없음).**
+- `FrameRenderData`에서 `hotbarSelected`/`inventory`/`inventoryOpen`/`day`/`nearWorkbench` 5개 필드 제거. `main.cpp` 인자·`drawFrame` 미러 대입·죽은 멤버(`m_hotbarSelected`/`m_invHud`/`m_inventoryOpen`/`m_dayHud`/`m_nearWorkbenchHud`) 함께 제거.
+- dev UI(`buildDevUi`): 농장 표시(Day/Selected slot/Near workbench) → 선박 상태(Heading/Thr/Rud)로 교체.
+- 인벤토리/드롭은 `GameState` getter·save/load 경로로는 유지(렌더 입력에서만 분리). 남은 selector(`targetTile`)/drops 렌더 plumbing은 2a-3에서.
+- 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
+### 2026-06-09 — 농장 HUD → 선박 HUD (ROADMAP Phase 2b)
+
+- 게임플레이 농장 HUD(hotbar·인벤토리 격자·제작 패널·day 숫자)를 좌상단 **선박 HUD**로 교체. **빌드·동작 검증 완료.**
+- 표시: `SPD`(속도) / `HDG`(deg, 0~359) / `THR`(F전진·R후진 %) / `RUD`(S우현·P좌현 %). 글리프에 마이너스가 없어 부호를 방향 문자로 표시.
+- 배선: `FrameRenderData`에 `shipThrottle`/`shipRudder` 추가, `main.cpp` 전달, HUD 미러 멤버(`m_shipSpeed/Heading/Throttle/RudderHud`) 추가·`drawFrame` 대입(속도=`length(shipVelocity)`). 기존 `pushText`/`pushNumber` 벡터 폰트 재사용(새 의존성 없음).
+- 메뉴/설정/로딩/일시정지 UI는 그대로. 농장 HUD 미러(`m_invHud`/`m_hotbarSelected`/`m_dayHud`/`m_nearWorkbenchHud`)는 이제 대입만 되고 안 읽힘 → 다음 단위(2a-2)에서 `FrameRenderData` 필드와 함께 제거.
+- 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
+### 2026-06-09 — 농장 상호작용 제거 + GameState 디커플링 (ROADMAP Phase 2c)
+
+- `GameState::update`에서 농장 상호작용 3종 제거: 드롭 줍기, 인접 작업대 감지(`nearWorkbench`), 마우스 ray 타일 피킹(`targetTile`).
+- `m_targetTile`을 더 이상 set하지 않아 `nullopt` 유지 → 렌더러의 타일 selector가 자동 inert(수면 위 노란 선택자 박스 사라짐). 렌더 plumbing·`FrameRenderData` 필드는 유지(다음 단위에서 제거).
+- 이제 안 쓰므로 `update` 시그니처에서 `Camera`/`World` 인자 제거 → `update(dt, input)`. `GameState.cpp`의 `world/Camera` include·`GameState.h` 전방선언 제거. **GameState 게임 루프가 World/Camera에 더 이상 의존하지 않음**(Phase 2d 렌더-World 분리의 선행).
+- 수정: `src/game/GameState.{h,cpp}`, `src/main.cpp`.
+
+### 2026-06-09 — 렌더 입력 이름 정리: player* → ship* (ROADMAP Phase 2a-1)
+
+- `FrameRenderData`의 `playerPosition/Velocity/Heading` → `shipPosition/Velocity/Heading`. 렌더 입력이 "player"가 아니라 "ship"을 의미하게. **빌드·동작 검증 완료(행동 불변).**
+- `main.cpp`가 이 값을 `gameState.ship()`에서 **직접** 공급 → 기존의 속도 차분(`(pos-posBefore)/dt`)·`atan2(facing)` heading 추출 hack 제거. 정확한 `ship.velocity`/`ship.heading` 사용(wake 입력의 1프레임 지연 제거).
+- 소비처 갱신: dev UI 라벨(`Player:`→`Ship:`), 그림자 center, wake 입력, 부력(`updateShipTransform`). 의미만 정리.
+- `Player` 미러는 유지(카메라·청크 스트리밍·세이브가 아직 사용). 수정: `VulkanContext.h`, `VulkanContext_Frame.cpp`, `main.cpp`.
+
+### 2026-06-09 — 기본 선박 상태와 항해 물리 (ROADMAP Phase 1)
+
+- 농장 `Player` 위치로 선박을 흉내 내던 구조를 끝내고, 관성·선회반경을 가진 `ShipState` 기반 항해로 교체. **빌드·체감 검증 완료.**
+- **`ShipState`**(position/velocity/heading/yawRate/throttle/rudder)를 `GameState`가 소유, `ship()` getter 추가.
+- **입력 의미 교체**: WASD를 카메라상대 타일-워크에서 throttle(W/S)·rudder(A/D)로 재해석. `InputManager`/`PlayerInput` 무변경(기존 필드 재사용).
+- **항해 물리 1차**(`updateShipPhysics`): 전진 추진 + 선형 드래그 + 속도 제한(전진 9 / 후진 2, 비대칭) + 속도 의존 선회(정지 시 제자리 회전 불가) + yaw 감쇠 + 미세속도/yaw 스냅. 튜닝 상수는 익명 namespace에 모음.
+- **호환 미러링**: `Player`를 임시 shim으로 두고 매 update 끝에 ship→player(position/facing)를 미러. 덕분에 `main.cpp`·렌더러 무수정으로 카메라·wake(`m_oceanWakeShip*`)·부력(`updateShipTransform`)·그림자 center·청크 스트리밍·세이브가 선박을 따라감.
+- `setPlayerPosition`이 ship도 동기화 → 로드/텔레포트 위치가 미러에 덮어써지지 않음. (heading 저장은 Phase 3 VoyageSave에서.)
+- 농장 카메라상대 이동·타일 충돌(`canOccupy`) 제거. `Player::moveBy/moveSpeed`는 미사용으로 shim에 잔존(Player 제거 시 함께 정리).
+- 수정 범위: `src/game/GameState.h`, `src/game/GameState.cpp` 두 파일만.
+- 다음: Phase 2(`FrameRenderData` `player*`→`ship*` 이름 정리, 농장 HUD→선박 HUD, 렌더-`World` 분리).
+
+### 2026-06-06 — 그래픽 레퍼런스 문서화 (`docs/RENDERING_REFERENCES.md`)
+
+- AAA 사실적 해양 구현에 쓸 **기법·논문·엔진 문서·오픈소스 라이브러리·참고 게임**을 신규 `docs/RENDERING_REFERENCES.md`로 정리.
+- 구성(13개 섹션): 참고 게임 → 해양·물(Tessendorf FFT·Horvath 스펙트럼·Bruneton ocean BRDF·GPU Gems·keithlantz 튜토리얼) → PBR(selfshadow 코스·Filament·PBR Book) → 반사(Stochastic SSR) → TAA(Karis 2014·Playdead INSIDE) → 그림자(CSM/PCSS) → 대기/구름(Hosek-Wilkie·Bruneton·Hillaire·Nubis) → 톤매핑(Hable·Narkowicz·AgX) → 식생/바람 → **선박 부력·항해 물리(Kerner)** → **라이브러리·오픈소스** → Vulkan API → 종합 허브.
+- **신규 섹션 2개**(2차 보강):
+  - §10 선박 부력·항해 물리 — Jacques Kerner "Water interaction model for boats"(hydrostatic+동적 힘). 우리 Phase 1 부력/Phase 6~7 선체 hydrodynamics에 직접 연결.
+  - §11 라이브러리·오픈소스 — VMA/volk/SPIRV-Reflect(Vulkan, Phase 9), KTX-Software/meshoptimizer/cgltf(에셋, Phase 8), Crest/GarrettGunnell·Water/gasgiant·FFT-Ocean(해양 학습 코드). 도입은 승인+라이선스 정책 명시.
+- **URL 검증 완료**: WebFetch로 핵심 링크 직접 확인. 수정: Playdead TAA repo는 `playdeadgames/temporal`(과거 표기 temporalAA는 404), GPU Gems Ch.1 정확 딥링크 적용, 죽은 WaveWorks GitHub 링크 제거(상용·비공개로 표기). 일부 논문/GDC 발표는 제목 검색으로 안내.
+- **문서 scope 분리 명시**: `RENDERING_REFERENCES`=무엇을 구현/누구를 보고 배우나(기법·논문·라이브러리·게임), `VULKAN_REFERENCES`=Vulkan으로 어떻게 배선하나(API 패턴). 상호 보완.
+- 각 항목을 ROADMAP Phase에 매핑. 교차 참조 추가: `VULKAN_REFERENCES`(상호 보완), `DESIGN`(Visual North Star), `ROADMAP`(Phase 4).
+
+### 2026-06-06 — 개발 로드맵 문서화 (`docs/ROADMAP.md`)
+
+- AI 브레인스토밍으로 뽑은 장기 개발 순서(10개 묶음, 약 580개 세부 항목)를 프로젝트 문서 체계에 맞게 정리.
+- **신규 `docs/ROADMAP.md`**: Phase 0~10으로 정제 압축. 근거리(Phase 1~4)는 작업·검증·닿는 파일까지 상세, 원거리(Phase 5~10)는 가볍게. 중복 제거.
+  - Phase 1 항해 물리 → Phase 2 농장 제거/렌더 경계 → Phase 3 VoyageSave/교역 1차 → Phase 4 렌더 후속(TAA 등) → Phase 5~7 세계/경제/항해 심화 → Phase 8 비주얼·에셋 → Phase 9 기술 부채/구조 → Phase 10 완성도.
+  - 핵심 결정: **항해 물리가 TAA/async보다 먼저**, async compute는 마지막. 첫 작업 단위 = `ShipState` + WASD throttle/rudder + 관성 이동 1차.
+- **전체 동기화**: 문서 역할 경계를 지키며 교차 참조로 연결.
+  - `README.md`: 현재 개발 목표에 ROADMAP/Phase 1 포인터.
+  - `DESIGN.md`(안정 닻 유지): 헤더·MVP에 ROADMAP 포인터만.
+  - `docs/ARCHITECTURE.md`: §7.1 신규 데이터 구조 스케치(ShipState/ShipDef/CargoHold/Port/Island/Wind/VoyageSave), §14.1 엔진 구조 안정화, §14에 ROADMAP 매핑.
+  - `docs/ENGINE_TODO.md`: P3에 엔진 구조·디버깅·테스트(파일 분리/descriptor 정리/debug label/pure logic 테스트/save migration/품질 tier/legacy 제거) 추가, ROADMAP Phase 4/9 연결.
+  - `docs/MIGRATION_PLAN.md`: 범위를 "농장 전환(Phase 0~5)"으로 명확화, 이후 게임 구축은 ROADMAP로. Phase 3 → ROADMAP Phase 1 티켓 포인터.
+  - `docs/RUN_CHECKLIST.md`: §9.1 ROADMAP Phase별 점검(도입 시 활성) 추가.
+- 코드 변경 없음. 문서 전용이라 빌드/실행 점검 불필요.
+
+### 2026-06-06 — 프로젝트 문서 최신화
+
+- README/DESIGN/ARCHITECTURE/ENGINE_TODO/MIGRATION_PLAN/CODE_CLASSIFICATION/VULKAN_REFERENCES/RUN_CHECKLIST를 현재 코드 기준으로 정리.
+- 핵심 정정:
+  - 해양 렌더링은 다중 캐스케이드 FFT·SSR/플래너 반사·CSM·PBR·wake 시뮬레이션까지 구현된 상태로 명확화.
+  - 게임플레이는 아직 농장 `Player`/타일 충돌 이동을 선박처럼 렌더링하는 상태이며, `ShipState`/항해 물리가 다음 핵심 작업임을 명확화.
+  - 기본 월드 생성은 물 타일 기반 해상 테스트 상태지만, `World`/`Chunk`/`TileType`/인벤토리/핫바/저장 포맷 구조가 남아 있음을 문서화.
+  - SMAA는 edge pass에서 톤매핑 luma를 쓰지만 neighborhood는 HDR scene color를 섞은 뒤 톤매핑하므로, 완전한 tone-map 후 SMAA 구조는 아직 아님을 정정.
+  - displacement 리드백 크기를 512²×3 RGBA16F = 약 6.0 MiB/프레임으로 정정.
+- 빌드/실행 점검은 수행하지 않음. 사용자가 다음 빌드에서 `docs/RUN_CHECKLIST.md` 기준으로 확인.
+
+### 2026-06-06 — 항적(wake) 시뮬레이션 + 조명/선박 머티리얼
+
+- **선박 항적을 시뮬레이션 마스크로 구현** (화면 도색이 아님). `shaders/ocean_wake.comp` + `VulkanContext_Ocean.cpp`의 `createOceanWake`/`recordOceanWake`.
+  - world-locked 토로이달 R16F 마스크를 프레임 간 ping-pong(frame-in-flight별 이미지)으로 유지. 채널 = `r` foam / `g` turbulence / `b` signed height / `a` churn.
+  - 매 프레임 이류(advection)·확산·감쇠 후 선박 입력 주입: Kelvin arm(tan 19.47°), prop wash, bow shoulder/fan, hull shear, 선체 half-width 프로파일 16샘플(`m_shipHullProfile`).
+  - `ocean.vert`는 wake height + choppiness를, `ocean.frag`는 foam/노멀 섭동을 샘플. 거리 페이드로 원거리 안정화.
+- **중앙 흰 리본 아티팩트 제거** + foam 생성 위치를 스턴/현측/bow로 재분배.
+- **조명 + 선박 머티리얼 보강**: `ship.frag` PBR을 specular 맵 기반 roughness/F0, 달빛 specular, 하늘광 ambient/반사, 흘수선(wetline) 처리까지 확장. 낮/밤·달 조명 경로 정리. 빛 보간(day/night 전이) fix.
+
+### 2026-06-05 — 깊이 기반 물 · SSR · CSM · 선박 PBR
+
+- **pre-water scene color/depth 복사 패스 분리**: 불투명 패스를 끝낸 뒤 색·깊이를 복사하고, 별도 water 패스에서 물이 이를 샘플 → 실제 씬 깊이 기반 굴절·흡수(Beer-Lambert)·얕은 물 처리. `copySceneColorForWater`/`copySceneDepthForWater`.
+- **화면공간 반사(SSR)**: 28스텝 레이마치 + 5스텝 이분 refinement + temporal reprojection(이전 프레임 색/깊이 history rejection). 플래너 반사·분석적 하늘과 confidence 가중 합성. 여러 커밋에 걸쳐 1차→안정화→refinement로 발전.
+- **CSM(3 캐스케이드)**: 뷰 프러스텀 슬라이스 바운딩 스피어 fit + 텍셀 스냅(shimmer 제거) + 캐스케이드 블렌드 밴드 + Poisson 16탭 PCF. (Phase 2까지)
+- **선박 PBR 에셋**: LSV018 선체 모델 + albedo/normal/specular DDS 텍스처 로드(`createDDSBC1Texture`).
+- 기타: displacement+slope 맵 더블버퍼(컴퓨트/그래픽스 오버랩), 메뉴/로딩 시 FFT 디스패치 게이팅, Jacobian whitecap seed를 `ocean.frag` foam coverage로 연결, 디바이스/스왑체인 적합성 검사, Dev 이동 속도 조절.
+
+### 2026-06-04 (후반) — 농장→바다 전환 + FFT 해양 스택 구축
+
+> 이 날 같은 날짜의 앞 항목(원칙 재명문화/세이브 무결성/그림자·풀)은 농장 시기 작업이고, 아래는 그 뒤 진행된 바다 전환 작업이다.
+
+- **전환 1단계**: 농장 게임플레이 행동 비활성화, 카메라를 UWO식 배 추적 시점으로, 월드를 평평한 바다 기준점으로, 플레이어 큐브를 임시 선박(선체·돛·그림자)으로 교체.
+- **해수면을 Gerstner 1차에서 다중 캐스케이드 Tessendorf FFT로 발전**. GPU 컴퓨트 체인: 초기 스펙트럼 h0(k) 생성 → per-frame 스펙트럼 애니메이션 H(k,t) → butterfly IFFT(log2N 수평+수직) → displacement/slope 조립. 512² × 3 캐스케이드. `VulkanContext_Ocean.cpp`, `shaders/ocean_spectrum*.comp`/`ocean_fft.comp`/`ocean_assemble.comp`.
+- **해수면 셰이딩**: 픽셀 단위 FFT 노멀(slope 맵 샘플) + 수평 변위(choppiness), GGX 태양 반사·윤슬, 하늘/태양 반사 + 플래너 반사(평면 클리핑), 다중 스케일 타일 노멀맵 디테일, HDR(R16F) + ACES 톤매핑, 원거리 LOD 방사형 메시 + 장거리 대기 fog, procedural sky 배경 패스.
+- **선박 부력**: FFT displacement를 host로 리드백하고 수평 변위를 역산해 선박을 실제 파면 위에 부유·틸트.
+- 정리: 위험한 spectrum 튜닝과 임시/저품질 foam 제거, Jacobian 기반 whitecap seed 도입.
+
 ### 2026-06-04 — RTX 3060 / AAA급 해양 렌더링 원칙 재명문화
 
 - 반복적으로 저사양 임시 기법이나 화면 도색식 fake 효과가 들어가는 문제를 막기 위해 프로젝트 최상위 개발 원칙을 다시 명문화했다.

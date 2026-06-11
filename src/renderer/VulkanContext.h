@@ -8,11 +8,9 @@
 #include <unordered_map>
 #include <array>
 #include <stdexcept>
-#include "world/Chunk.h"
-#include "renderer/Frustum.h"
+#include "renderer/Types.h"
 
 class Window;
-class World;
 class Camera;
 
 inline void vkCheck(VkResult result, const char* message) {
@@ -95,33 +93,52 @@ struct TextureResource {
     }
 };
 
+// One market table row, display values only (names point at static literals).
+struct MarketRowHud {
+    const char* name;
+    int buy;
+    int sell;
+    int stock;
+    int held;
+};
+
 // Per-frame snapshot the renderer consumes. Mirrors the previous drawFrame
 // argument list (by-ref for heavy data, by-value for scalars).
 struct FrameRenderData {
     const Camera&                            camera;
-    glm::vec3                                playerPosition;
-    glm::vec3                                playerVelocity;
-    float                                    playerHeading;  // radians; ship bow orientation
-    std::optional<glm::ivec3>                targetTile;
-    int                                      hotbarSelected;
-    const std::array<ItemStack, INV_SLOTS>&  inventory;
+    glm::vec3                                shipPosition;
+    glm::vec3                                shipVelocity;
+    float                                    shipHeading;    // radians; ship bow orientation
+    float                                    shipThrottle;   // -1..1 (HUD)
+    float                                    shipRudder;     // -1..1 (HUD)
     float                                    timeOfDay;
     float                                    gameTime;
-    bool                                     inventoryOpen;
-    int                                      day;
-    const std::vector<DroppedItem>&          drops;
-    bool                                     nearWorkbench;
     bool                                     mainMenu;
     bool                                     settings;
     bool                                     loading;
     bool                                     paused;
     bool                                     vsyncEnabled;
     int                                      aaMode;
+    // Voyage HUD display values (plain numbers so the renderer stays game-agnostic)
+    float                                    portDistance;   // metres to nearest port; < 0 = no ports
+    glm::vec2                                portDir;        // normalized world-space direction toward it
+    bool                                     nearPort;       // ship is inside the port radius
+    int                                      cargoUsed;
+    int                                      cargoCapacity;
+    int                                      money;
+    bool                                     canDock;        // sailing, in range, slow enough to dock
+    bool                                     docked;         // port menu open (anchored)
+    const char*                              portName;       // docked port display name (uppercase); may be null
+    bool                                     marketOpen;     // trade screen open (sub-state of docked)
+    int                                      marketSelected; // highlighted row index
+    int                                      marketRowCount; // entries in marketRows (≤ 8 used)
+    const MarketRowHud*                      marketRows;     // caller-owned; copied during drawFrame
+    const char*                              nearestPortName; // for the PRT HUD line; may be null
 };
 
 class VulkanContext {
 public:
-    VulkanContext(Window& window, World& world);
+    VulkanContext(Window& window);
     ~VulkanContext();
 
     void drawFrame(const FrameRenderData& frame);
@@ -168,31 +185,20 @@ private:
         VkRenderPass     renderPass = VK_NULL_HANDLE;
     };
     VkPipeline createPipeline(const PipelineConfig& cfg);
-    void createGraphicsPipeline();
+    void createScenePipelineLayout();
     void createSkyPipeline();
     void createFramebuffers();
     void createCommandPool();
     void createCommandBuffers();
     void createSyncObjects();
     void createDescriptorSetLayout();
-    void createVertexBuffer();
-    void createIndexBuffer();
-    void createSelectorBuffers();
-    void createChunkPipeline();
-    void buildChunkBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildChunkObjectBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildGrassDressingBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void buildGroundDressingBuffer(const glm::ivec2& coord, Chunk& chunk);
-    void rebuildDirtyChunks();
     void createUIPipeline();
     void createUIBuffer();
     void updateHotbar();
-    void createObjectPipeline();
     void createOceanDescriptorSetLayout();
     void createOceanPipeline();
     void createOceanMesh();
     void createShipPipeline();
-    void createGrassPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
     void createPlanarReflectionResources();
@@ -206,6 +212,11 @@ private:
     void createSmaaLookupTextures();
     void createSmaaDescriptors();
     void updateSmaaDescriptors();
+    void createTaaRenderPass();
+    void createTaaResources();
+    void createTaaPipeline();
+    void createTaaDescriptors();
+    void updateTaaDescriptors();
     // Generic uploaded-texture helper: staging upload + image + view (+ optional sampler).
     TextureResource createTexture(uint32_t width, uint32_t height, VkFormat format,
         const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
@@ -214,14 +225,7 @@ private:
     TextureResource createTextureArray(uint32_t width, uint32_t height, uint32_t layerCount,
         VkFormat format, const void* bytes, VkDeviceSize size, bool withSampler, bool mipmapped = false);
     void loadImportedShipMesh();
-    void createObjectMeshes();
-    void createGrassTexture();
     void createOceanNormalTextures();
-    void createTerrainTextureArray();
-    void createItemMesh();
-    void createDropInstanceBuffer();
-    void updateDropInstanceBuffer(const std::vector<DroppedItem>& drops);
-    void createPlayerInstanceBuffer(const glm::vec3& playerPosition);
     void createUniformBuffers();
     void createReflectionUniformBuffers();
     void createDescriptorPool();
@@ -242,16 +246,11 @@ private:
     void destroyOceanFFT();
     void updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
     void updateReflectionUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime);
-    void updatePlayerInstanceBuffer(const glm::vec3& playerPosition);
     void updateShipTransform(const glm::vec3& position, float heading, float gameTime);
-    void updateSelectorInstanceBuffer(const std::optional<glm::ivec3>& targetTile);
     void createDepthResources();
     void createShadowResources();
     void createShadowPipeline();
-    void createShadowObjectPipeline();
-    void createShadowGrassPipeline();
     void createShadowSampler();
-    void createShadowGrassDescriptors();
     void createImage(uint32_t width, uint32_t height, VkFormat format,
         VkImageTiling tiling, VkImageUsageFlags usage,
         VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& memory,
@@ -292,7 +291,6 @@ private:
 
     // ---- Vulkan handles ----
     Window& m_window;
-    World&  m_world;
 
     VkInstance               m_instance        = VK_NULL_HANDLE;
     VkDebugUtilsMessengerEXT m_debugMessenger   = VK_NULL_HANDLE;
@@ -315,14 +313,10 @@ private:
     std::vector<VkFramebuffer> m_postFramebuffers;   // swapchain (per image)
 
     VkRenderPass             m_renderPass        = VK_NULL_HANDLE;
-    VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;
-    VkPipeline               m_pipeline          = VK_NULL_HANDLE;  // Player / selector (instancing)
+    VkPipelineLayout         m_pipelineLayout    = VK_NULL_HANDLE;  // shared scene layout (sky/chunk/object/grass/ship)
     VkPipeline               m_skyPipeline       = VK_NULL_HANDLE;  // Procedural analytic sky background
-    VkPipeline               m_chunkPipeline     = VK_NULL_HANDLE;  // Chunk mesh
     VkPipeline               m_uiPipeline        = VK_NULL_HANDLE;  // 2D UI overlay
     VkPipelineLayout         m_uiPipelineLayout  = VK_NULL_HANDLE;
-    VkPipeline               m_objectPipeline    = VK_NULL_HANDLE;  // Instanced low-poly props and dressing
-    VkPipeline               m_grassPipeline     = VK_NULL_HANDLE;  // Instanced alpha-card grass
     VkPipeline               m_oceanPipeline     = VK_NULL_HANDLE;  // Gerstner-wave ocean surface
     VkPipelineLayout         m_oceanPipelineLayout = VK_NULL_HANDLE;
     VkDescriptorSetLayout    m_oceanDescriptorSetLayout = VK_NULL_HANDLE;
@@ -465,39 +459,32 @@ private:
     TextureResource m_smaaAreaTex;
     TextureResource m_smaaSearchTex;
 
-    GpuBuffer                m_vertexBuffer;
-    GpuBuffer                m_indexBuffer;
+    // TAA (aaMode 3): resolve the HDR scene against a reprojected history before
+    // tone mapping. m_taaImage[i] is written on frame-in-flight i and read as
+    // history by the other index (frames alternate, so [1-i] is last frame).
+    VkRenderPass             m_taaRenderPass          = VK_NULL_HANDLE;
+    VkPipeline               m_taaPipeline            = VK_NULL_HANDLE;
+    VkPipelineLayout         m_taaPipelineLayout      = VK_NULL_HANDLE;
+    VkDescriptorSetLayout    m_taaDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool         m_taaDescriptorPool      = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_taaDescriptorSets;     // scene + history + depth, per frame
+    std::vector<VkDescriptorSet> m_postTaaDescriptorSets; // post pass sampling the TAA resolve
+    std::vector<VkImage>         m_taaImage;
+    std::vector<VkDeviceMemory>  m_taaMemory;
+    std::vector<VkImageView>     m_taaView;
+    std::vector<VkFramebuffer>   m_taaFramebuffers;
+    uint32_t                 m_taaHistoryFrames = 0;   // 0 = history invalid (blend skipped)
+    glm::mat4                m_taaReprojection  = glm::mat4(1.0f);
+
     GpuBuffer                m_oceanVertexBuffer; // flat grid displaced by the ocean vertex shader
     GpuBuffer                m_oceanIndexBuffer;
     uint32_t                 m_oceanIndexCount = 0;
-    struct ChunkRenderData {
-        GpuBuffer      vertexBuffer;
-        GpuBuffer      indexBuffer;
-        uint32_t       indexCount   = 0;
-        // Per-chunk object instances, one buffer group per ObjectType present
-        struct ObjGroup {
-            ObjectType     type   = ObjectType::TREE;
-            GpuBuffer      buffer;
-            uint32_t       count  = 0;
-        };
-        std::vector<ObjGroup> objGroups;
-        GpuBuffer      grassBuffer;
-        uint32_t       grassCount = 0;
-        GpuBuffer      groundPatchBuffer;
-        uint32_t       groundPatchCount = 0;
-        GpuBuffer      pebbleBuffer;
-        uint32_t       pebbleCount = 0;
-    };
-    std::unordered_map<glm::ivec2, ChunkRenderData, IVec2Hash> m_chunkBuffers;
-    Frustum                  m_frustum;
-    Frustum                  m_reflectionFrustum;
 
-    // Shared low-poly object meshes, indexed by ObjectType (instanced per Object)
+    // Simple owned vertex mesh (currently only the hero ship)
     struct ObjectMesh {
         GpuBuffer      vbuf;
         uint32_t       count = 0;
     };
-    std::array<ObjectMesh, (size_t)ObjectType::COUNT> m_objectMeshes;
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     struct ShipHullProfile {
@@ -514,49 +501,43 @@ private:
     TextureResource m_shipAlbedoTex;
     TextureResource m_shipNormalTex;
     TextureResource m_shipSpecularTex;
-    ObjectMesh m_grassCardMesh;
-    ObjectMesh m_groundPatchMesh;
-    ObjectMesh m_pebbleMesh;
-
-    // Grass blade textures (sampled by the grass card pipeline). The opacity mask is
-    // split out so foliage material maps can expand without repacking the color image.
-    TextureResource m_grassTex;
-    TextureResource m_grassOpacityTex;
 
     // Multi-scale ocean normal maps (UNORM, mipmapped, anisotropic).
     TextureResource m_oceanNormalA;
     TextureResource m_oceanNormalB;
 
-    // Terrain material texture array (sampler2DArray, one layer per tile material).
-    TextureResource m_terrainTex;
-
-    // Dropped items — shared small cube mesh + per-frame instance buffer (reuses m_indexBuffer + m_pipeline)
-    static constexpr uint32_t   MAX_DROPS = 256;
-    GpuBuffer                   m_itemVertexBuffer;
-    std::vector<GpuBuffer>      m_dropInstBuffer;
-    uint32_t                    m_dropCount = 0;
 
     // UI / hotbar — one buffer per frame in flight (avoids overwrite while GPU still reads)
-    static constexpr uint32_t   UI_MAX_VERTS = 2048;
+    // Worst case is the docked market table: ship HUD + 5-row price table of pixel-quad
+    // vector glyphs (~12k verts). 32768 (~768 KB/frame) leaves ample headroom.
+    static constexpr uint32_t   UI_MAX_VERTS = 32768;
     std::vector<GpuBuffer>      m_uiBuffer;
     uint32_t                 m_uiVertexCount   = 0;
-    int                      m_hotbarSelected  = 0;
-    int                      m_dayHud          = 0;
-    std::array<ItemStack, INV_SLOTS> m_invHud{};
-    bool                     m_inventoryOpen   = false;
     bool                     m_mainMenuHud      = false;
     bool                     m_settingsHud      = false;
     bool                     m_loadingHud       = false;
     bool                     m_pausedHud       = false;
     bool                     m_vsyncHud        = true;
     int                      m_aaModeHud       = 0;
-    bool                     m_nearWorkbenchHud = false;
+    float                    m_shipSpeedHud    = 0.0f;
+    float                    m_shipHeadingHud  = 0.0f; // radians
+    float                    m_shipThrottleHud = 0.0f; // -1..1
+    float                    m_shipRudderHud   = 0.0f; // -1..1
+    float                    m_portDistanceHud = -1.0f; // metres; < 0 = no ports
+    glm::vec2                m_portDirHud      = {0.0f, 0.0f};
+    bool                     m_nearPortHud     = false;
+    int                      m_cargoUsedHud    = 0;
+    int                      m_cargoCapHud     = 0;
+    int                      m_moneyHud        = 0;
+    bool                     m_canDockHud      = false;
+    bool                     m_dockedHud       = false;
+    const char*              m_portNameHud     = nullptr; // points at static port name literals
+    bool                     m_marketOpenHud   = false;
+    int                      m_marketSelHud    = 0;
+    const char*              m_nearestPortNameHud = nullptr; // points at static port name literals
+    int                      m_marketRowsHudCount = 0;
+    std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
-    std::vector<GpuBuffer>      m_playerInstBuffer;
-    GpuBuffer                m_selectorVertexBuffer;
-    GpuBuffer                m_selectorIndexBuffer;
-    std::vector<GpuBuffer>      m_selectorInstBuffer;
-    bool                     m_showSelector          = false;
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
     VkDeviceMemory               m_depthImageMemory     = VK_NULL_HANDLE;
@@ -576,12 +557,6 @@ private:
     std::array<VkFramebuffer, CSM_CASCADES> m_shadowFramebuffers{}; // one framebuffer per cascade layer
     VkPipelineLayout             m_shadowPipelineLayout = VK_NULL_HANDLE;
     VkPipeline                   m_shadowPipeline       = VK_NULL_HANDLE;
-    VkPipeline                   m_shadowObjectPipeline = VK_NULL_HANDLE;  // instanced tree shadow caster
-    VkPipelineLayout             m_shadowGrassPipelineLayout = VK_NULL_HANDLE;
-    VkPipeline                   m_shadowGrassPipeline       = VK_NULL_HANDLE;  // alpha-tested grass caster
-    VkDescriptorSetLayout        m_shadowGrassDescriptorSetLayout = VK_NULL_HANDLE;
-    VkDescriptorPool             m_shadowGrassDescriptorPool      = VK_NULL_HANDLE;
-    std::vector<VkDescriptorSet> m_shadowGrassDescriptorSets;
     VkSampler                    m_shadowSampler        = VK_NULL_HANDLE;
     std::array<glm::mat4, CSM_CASCADES> m_lightMVPCascade{}; // per-cascade light-space transforms
     glm::vec4                    m_cascadeSplits        = glm::vec4(0.0f); // xyz = cascade far view-depths

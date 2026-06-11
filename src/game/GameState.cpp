@@ -1,6 +1,4 @@
 #include "game/GameState.h"
-#include "world/World.h"
-#include "game/Camera.h"
 
 #include <glm/geometric.hpp>
 #include <glm/trigonometric.hpp>
@@ -11,226 +9,205 @@
 #include <algorithm>
 
 namespace {
-bool canOccupy(const World& world, const glm::vec3& position) {
-    const glm::ivec3 tile = world.worldToTile(position);
-    TileType body = world.getTile(tile.x, tile.y, tile.z + 1);
-    bool bodyPassable = (body == TileType::AIR || body == TileType::WHEAT);
-    return world.isWalkable(tile.x, tile.y, tile.z) && bodyPassable
-           && !world.isCollidableAt(tile.x, tile.y);
+// Sailing physics tuning (first pass — expect to retune after a build).
+constexpr float kMaxForwardSpeed    = 9.0f;  // units/s
+constexpr float kMaxReverseSpeed    = 2.0f;  // units/s (reverse is slow and sluggish)
+constexpr float kThrust             = 5.5f;  // forward accel per full throttle (units/s^2)
+constexpr float kLinearDrag         = 0.35f; // velocity damping per second
+constexpr float kVelocitySnap       = 0.05f; // below this speed, kill micro-drift
+constexpr float kTurnPower          = 1.2f;  // yaw accel per full rudder at speed
+constexpr float kYawDamping         = 1.8f;  // yaw-rate damping per second
+constexpr float kYawSnap            = 0.01f; // below this yaw rate, snap to 0
+constexpr float kSpeedForFullRudder = 3.0f;  // speed at which the rudder has full authority
+constexpr float kThrottleRate       = 0.8f;  // throttle change per second while keyed
+constexpr float kThrottleReturn     = 0.5f;  // throttle ease-back per second with no input
+constexpr float kRudderRate         = 2.5f;  // rudder change per second while keyed
+constexpr float kRudderReturn       = 3.0f;  // rudder centering per second with no input
+constexpr float kDockMaxSpeed       = 2.0f;  // ship must be this slow (units/s) to dock
+
+// Move v toward 0 by at most `amount`.
+float approachZero(float v, float amount) {
+    if (v >  amount) return v - amount;
+    if (v < -amount) return v + amount;
+    return 0.0f;
 }
 }
 
-GameState::GameState() {
-    // Inventory starts empty for OceanVoyage. The farm starting tools (hoe, watering
-    // can, seeds, axe, sickle, pickaxe) were removed in the farm-gameplay transition;
-    // a cargo/ship inventory will replace them later. m_inventory default-initializes
-    // every slot to NONE/0, so no explicit clearing is needed here.
-}
-
-void GameState::update(float dt, const PlayerInput& input, const Camera& camera, World& world) {
+void GameState::update(float dt, const PlayerInput& input) {
     // Time
     m_time += dt;
     m_day = static_cast<int>(m_time / DAY_DURATION);
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
 
-    // Crop growth tick removed for OceanVoyage transition (farm gameplay disabled).
-    // World::growthTick is kept as reference until the ocean systems replace it.
-
-    // Inventory toggle (I key — edge-detect to avoid repeated triggers)
-    if (input.toggleInventory && !m_prevToggleInv)
-        m_inventoryOpen = !m_inventoryOpen;
-    m_prevToggleInv = input.toggleInventory;
-
-    // Hotbar selection
-    if (input.selectSlot >= 0 && input.selectSlot < HOTBAR_SLOTS)
-        m_selectedSlot = input.selectSlot;
-    if (input.scrollDelta != 0) {
-        m_selectedSlot = (m_selectedSlot + input.scrollDelta) % HOTBAR_SLOTS;
-        if (m_selectedSlot < 0) m_selectedSlot += HOTBAR_SLOTS;
-    }
-
-    const glm::vec3& camPos = camera.position();
-    const glm::vec3& playerPos = m_player.position();
-
-    glm::vec2 forward = glm::normalize(glm::vec2(playerPos.x - camPos.x, playerPos.y - camPos.y));
-    glm::vec2 right = glm::vec2(forward.y, -forward.x);
-
-    glm::vec2 move{ 0.0f };
-    if (input.moveForward)  move += forward;
-    if (input.moveBackward) move -= forward;
-    if (input.moveLeft)     move -= right;
-    if (input.moveRight)    move += right;
-
-    if (glm::length(move) > 0.0f) {
-        const glm::vec2 direction = glm::normalize(move);
-        const float speedMultiplier = std::clamp(input.moveSpeedMultiplier, 0.1f, 12.0f);
-        const glm::vec2 delta = direction * m_player.moveSpeed() * speedMultiplier * dt;
-        m_player.setFacingDirection(direction);
-
-        glm::vec3 next = m_player.position();
-        next.x += delta.x;
-        if (canOccupy(world, next)) {
-            m_player.moveBy({ delta.x, 0.0f });
-        }
-
-        next = m_player.position();
-        next.y += delta.y;
-        if (canOccupy(world, next)) {
-            m_player.moveBy({ 0.0f, delta.y });
-        }
-    }
-
-    // Pick up nearby dropped items (horizontal distance, so vertical offset never blocks it)
-    {
-        constexpr float kPickupRadius = 0.9f;
-        const glm::vec3 p = m_player.position();
-        for (auto it = m_drops.begin(); it != m_drops.end();) {
-            const float dx = it->pos.x - p.x;
-            const float dy = it->pos.y - p.y;
-            if (dx * dx + dy * dy <= kPickupRadius * kPickupRadius && addItem(it->type, it->count))
-                it = m_drops.erase(it);
-            else
-                ++it;
-        }
-    }
-
-    // Advanced recipes unlock only near a placed workbench.
-    {
-        glm::ivec3 pTile = world.worldToTile(m_player.position());
-        m_nearWorkbench = world.isObjectTypeNear(pTile.x, pTile.y, ObjectType::WORKBENCH, 2);
-    }
-
-    if (input.windowWidth > 0 && input.windowHeight > 0) {
-        // Crafting removed for OceanVoyage transition (farm recipes disabled).
-
-        // World interaction — suppressed while inventory is open
-        if (!m_inventoryOpen) {
-            float ndcX = (2.0f * (float)input.mouseX) / input.windowWidth - 1.0f;
-            float ndcY = (2.0f * (float)input.mouseY) / input.windowHeight - 1.0f;
-
-            glm::mat4 invViewProj = glm::inverse(camera.viewProj());
-
-            glm::vec4 target = invViewProj * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
-            glm::vec3 rayDir = glm::normalize(glm::vec3(target / target.w) - camPos);
-
-            if (std::abs(rayDir.z) > 1e-5f) {
-                float t = -camPos.z / rayDir.z;
-                if (t > 0.0f) {
-                    glm::vec3 hitPoint = camPos + rayDir * t;
-
-                    glm::ivec3 pickedTile = world.worldToTile(hitPoint);
-
-                    // Find topmost non-AIR tile at this XY
-                    for (int z = CHUNK_DEPTH - 1; z >= 0; z--) {
-                        if (world.getTile(pickedTile.x, pickedTile.y, z) != TileType::AIR) {
-                            pickedTile.z = z;
-                            break;
-                        }
-                    }
-
-                    glm::ivec3 playerTile = world.worldToTile(m_player.position());
-
-                    glm::ivec3 delta = pickedTile - playerTile;
-                    delta.x = std::clamp(delta.x, -1, 1);
-                    delta.y = std::clamp(delta.y, -1, 1);
-                    delta.z = std::clamp(delta.z, -1, 1);
-
-                    glm::ivec3 finalTargetTile = playerTile + delta;
-
-                    if (world.inBounds(finalTargetTile.x, finalTargetTile.y, finalTargetTile.z)) {
-                        m_targetTile = finalTargetTile;
-                        // Farm tile interaction (object harvest / crop harvest / hoe / plant /
-                        // water / object placement) removed for OceanVoyage transition. The
-                        // World methods (tryHarvestObject / placeObject / setTileState) are kept
-                        // as reference until the ocean interaction systems replace them.
-                    }
-                    else {
-                        m_targetTile = std::nullopt;
-                    }
-                }
+    // Docking (Enter, edge-detected): anchor at the nearby port and open the
+    // port menu. Undocking happens through the menu (setSail).
+    const bool dockPressed = input.dockKey && !m_prevDockKey;
+    m_prevDockKey = input.dockKey;
+    if (m_mode == GameMode::Sailing && dockPressed && canDock()) {
+        for (size_t i = 0; i < m_ports.size(); i++) {
+            if (glm::length(m_ports[i].position - m_ship.position) <= m_ports[i].radius) {
+                m_mode            = GameMode::Docked;
+                m_dockedPortIndex = (int)i;
+                m_ship.velocity   = glm::vec2(0.0f);
+                m_ship.yawRate    = 0.0f;
+                m_ship.throttle   = 0.0f;
+                m_ship.rudder     = 0.0f;
+                break;
             }
         }
     }
+
+    // While docked the ship stays anchored: no physics integration. Buoyancy
+    // still floats the hull visually (renderer-side FFT readback).
+    if (m_mode == GameMode::Docked) {
+        updateMarket(input);
+        return;
+    }
+
+    // --- Ship sailing physics (replaces the farm camera-relative tile walk) ---
+    updateShipPhysics(dt, input);
 }
 
-bool GameState::addItem(ItemType type, int count) {
-    // Fill an existing stack of the same type first.
-    for (ItemStack& slot : m_inventory) {
-        if (slot.type == type && slot.count > 0) {
-            slot.count += count;
-            return true;
-        }
+void GameState::updateMarket(const PlayerInput& input) {
+    const bool upPressed   = input.menuUp   && !m_prevMenuUp;
+    const bool downPressed = input.menuDown && !m_prevMenuDown;
+    const bool buyPressed  = input.buyKey   && !m_prevBuyKey;
+    const bool sellPressed = input.sellKey  && !m_prevSellKey;
+    m_prevMenuUp   = input.menuUp;
+    m_prevMenuDown = input.menuDown;
+    m_prevBuyKey   = input.buyKey;
+    m_prevSellKey  = input.sellKey;
+
+    if (!m_marketOpen || m_dockedPortIndex < 0)
+        return;
+    Port& port = m_ports[(size_t)m_dockedPortIndex];
+    if (port.market.empty())
+        return;
+
+    const int rowCount = (int)port.market.size();
+    if (upPressed)   m_marketSelected = std::max(0, m_marketSelected - 1);
+    if (downPressed) m_marketSelected = std::min(rowCount - 1, m_marketSelected + 1);
+    m_marketSelected = std::clamp(m_marketSelected, 0, rowCount - 1);
+
+    MarketEntry& entry = port.market[(size_t)m_marketSelected];
+    if (buyPressed && entry.stock > 0 && m_money >= entry.buyPrice
+        && m_cargo.used() < m_cargo.capacity) {
+        m_money -= entry.buyPrice;
+        entry.stock -= 1;
+        cargoAdd(entry.good, 1);
     }
-    // Otherwise use the first empty slot.
-    for (ItemStack& slot : m_inventory) {
-        if (slot.type == ItemType::NONE || slot.count <= 0) {
-            slot = { type, count };
-            return true;
-        }
+    if (sellPressed && cargoRemove(entry.good, 1)) {
+        m_money += entry.sellPrice;
+        entry.stock += 1;
     }
-    return false; // inventory full
 }
 
-int GameState::countItem(ItemType type) const {
+int GameState::cargoCount(CargoGoodId good) const {
     int total = 0;
-    for (const ItemStack& s : m_inventory)
-        if (s.type == type) total += s.count;
+    for (const CargoStack& s : m_cargo.stacks)
+        if (s.good == good) total += s.count;
     return total;
 }
 
-bool GameState::removeItem(ItemType type, int count) {
-    if (countItem(type) < count) return false;
-    for (ItemStack& s : m_inventory) {
-        if (s.type != type) continue;
-        int take = std::min(s.count, count);
-        s.count -= take;
-        count   -= take;
-        if (s.count <= 0) s = ItemStack{};
-        if (count == 0) break;
+void GameState::cargoAdd(CargoGoodId good, int count) {
+    for (CargoStack& s : m_cargo.stacks) {
+        if (s.good == good) {
+            s.count += count;
+            return;
+        }
     }
-    return true;
+    m_cargo.stacks.push_back({ good, count });
 }
 
-bool GameState::craft(int recipeIndex) {
-    int n = 0;
-    const Recipe* table = craftingRecipes(n);
-    if (recipeIndex < 0 || recipeIndex >= n) return false;
-    const Recipe& r = table[recipeIndex];
-
-    // Need every input in stock
-    for (const RecipeInput& in : r.inputs) {
-        if (in.type == ItemType::NONE) continue;
-        if (countItem(in.type) < in.count) return false;
+bool GameState::cargoRemove(CargoGoodId good, int count) {
+    // cargoAdd always merges, so each good has at most one stack.
+    for (auto it = m_cargo.stacks.begin(); it != m_cargo.stacks.end(); ++it) {
+        if (it->good != good) continue;
+        if (it->count < count) return false;
+        it->count -= count;
+        if (it->count == 0)
+            m_cargo.stacks.erase(it);
+        return true;
     }
-    // Consume inputs
-    for (const RecipeInput& in : r.inputs) {
-        if (in.type == ItemType::NONE) continue;
-        removeItem(in.type, in.count);
-    }
-    // Produce result; roll back the inputs if there's no room
-    if (!addItem(r.result, r.resultCount)) {
-        for (const RecipeInput& in : r.inputs)
-            if (in.type != ItemType::NONE) addItem(in.type, in.count);
-        return false;
-    }
-    return true;
+    return false;
 }
 
-void GameState::setPlayerPosition(const glm::vec3& pos) {
-    m_player.setPosition(pos);
+bool GameState::canDock() const {
+    if (m_mode != GameMode::Sailing) return false;
+    if (glm::length(m_ship.velocity) > kDockMaxSpeed) return false;
+    for (const Port& p : m_ports)
+        if (glm::length(p.position - m_ship.position) <= p.radius) return true;
+    return false;
+}
+
+void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
+    // --- Map WASD to throttle / rudder demand ---
+    const float throttleInput = (input.moveForward  ? 1.0f : 0.0f)
+                              - (input.moveBackward ? 1.0f : 0.0f);
+    if (throttleInput != 0.0f)
+        m_ship.throttle = std::clamp(m_ship.throttle + throttleInput * kThrottleRate * dt, -1.0f, 1.0f);
+    else
+        m_ship.throttle = approachZero(m_ship.throttle, kThrottleReturn * dt);
+
+    // D = starboard (right), A = port (left).
+    const float rudderInput = (input.moveRight ? 1.0f : 0.0f)
+                            - (input.moveLeft  ? 1.0f : 0.0f);
+    if (rudderInput != 0.0f)
+        m_ship.rudder = std::clamp(m_ship.rudder + rudderInput * kRudderRate * dt, -1.0f, 1.0f);
+    else
+        m_ship.rudder = approachZero(m_ship.rudder, kRudderReturn * dt);
+
+    // --- Integrate hull motion ---
+    const glm::vec2 forward{ std::cos(m_ship.heading), std::sin(m_ship.heading) };
+    const float devMul = std::clamp(input.moveSpeedMultiplier, 0.1f, 12.0f); // dev fast-move; 1.0 in normal play
+
+    // Thrust along the bow, then linear water drag.
+    m_ship.velocity += forward * (m_ship.throttle * kThrust * devMul * dt);
+    m_ship.velocity -= m_ship.velocity * (kLinearDrag * dt);
+
+    // Clamp speed (asymmetric: reverse is much slower than forward), and kill
+    // tiny residual drift so a released ship settles instead of creeping.
+    float speed = glm::length(m_ship.velocity);
+    if (speed > kVelocitySnap) {
+        const float along = glm::dot(m_ship.velocity, forward);
+        const float limit = ((along >= 0.0f) ? kMaxForwardSpeed : kMaxReverseSpeed) * devMul;
+        if (speed > limit) m_ship.velocity *= (limit / speed);
+    } else {
+        m_ship.velocity = glm::vec2{ 0.0f };
+        speed = 0.0f;
+    }
+
+    // Rudder authority grows with speed → no spinning in place when stopped.
+    // Positive rudder (starboard) turns the bow clockwise (heading decreases).
+    const float speedFactor = std::clamp(speed / kSpeedForFullRudder, 0.0f, 1.0f);
+    m_ship.yawRate += (-m_ship.rudder) * kTurnPower * speedFactor * dt;
+    m_ship.yawRate -= m_ship.yawRate * (kYawDamping * dt);
+    if (std::abs(m_ship.yawRate) < kYawSnap) m_ship.yawRate = 0.0f;
+
+    m_ship.heading  += m_ship.yawRate * dt;
+    m_ship.position += m_ship.velocity * dt;
+}
+
+const Port* GameState::nearestPort(float& outDistance, glm::vec2& outDir) const {
+    const Port* best = nullptr;
+    float bestDist = 0.0f;
+    for (const Port& p : m_ports) {
+        const float d = glm::length(p.position - m_ship.position);
+        if (!best || d < bestDist) {
+            best = &p;
+            bestDist = d;
+        }
+    }
+    if (!best) return nullptr;
+    outDistance = bestDist;
+    outDir = (bestDist > 0.001f) ? (best->position - m_ship.position) / bestDist
+                                 : glm::vec2(0.0f);
+    return best;
 }
 
 void GameState::setTime(float t) {
     m_time      = t;
     m_day       = static_cast<int>(m_time / DAY_DURATION);
-    m_prevDay   = m_day; // suppress immediate growthTick on load
+    m_prevDay   = m_day;
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
-}
-
-void GameState::setInventory(const std::array<ItemStack, INV_SLOTS>& inv) {
-    m_inventory = inv;
-}
-
-void GameState::setDrops(const std::vector<DroppedItem>& drops) {
-    m_drops = drops;
 }

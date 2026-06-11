@@ -43,14 +43,12 @@ endif()
 add_executable(engine
     src/main.cpp
     src/game/GameState.cpp
+    src/game/VoyageSave.cpp
     src/platform/Window.cpp
     src/renderer/VulkanContext.cpp
     src/renderer/VulkanContext_Init.cpp
     src/renderer/VulkanContext_Frame.cpp
-    src/renderer/VulkanContext_Chunk.cpp
     src/renderer/VulkanContext_Ocean.cpp
-    src/world/World.cpp
-    src/world/TerrainGen.cpp
  "src/game/Camera.h" "src/platform/InputManager.h" "src/platform/InputManager.cpp")
 
 target_include_directories(engine PRIVATE src third_party/smaa third_party/stb ${Vulkan_INCLUDE_DIRS})
@@ -90,13 +88,8 @@ set(ASSET_SRC_DIR ${CMAKE_SOURCE_DIR}/assets)
 set(ASSET_OUT_DIR $<TARGET_FILE_DIR:engine>/assets)
 
 set(SHADERS
-    ${SHADER_SRC_DIR}/triangle.vert
-    ${SHADER_SRC_DIR}/triangle.frag
-    ${SHADER_SRC_DIR}/chunk.vert
-    ${SHADER_SRC_DIR}/chunk.frag
     ${SHADER_SRC_DIR}/ui.vert
     ${SHADER_SRC_DIR}/ui.frag
-    ${SHADER_SRC_DIR}/object.vert
     ${SHADER_SRC_DIR}/ship.vert
     ${SHADER_SRC_DIR}/ship.frag
     ${SHADER_SRC_DIR}/ocean.vert
@@ -106,15 +99,11 @@ set(SHADERS
     ${SHADER_SRC_DIR}/ocean_fft.comp
     ${SHADER_SRC_DIR}/ocean_assemble.comp
     ${SHADER_SRC_DIR}/ocean_wake.comp
-    ${SHADER_SRC_DIR}/grass.vert
-    ${SHADER_SRC_DIR}/grass.frag
     ${SHADER_SRC_DIR}/shadow.vert
-    ${SHADER_SRC_DIR}/shadow_object.vert
-    ${SHADER_SRC_DIR}/shadow_grass.vert
-    ${SHADER_SRC_DIR}/shadow_grass.frag
     ${SHADER_SRC_DIR}/sky.frag
     ${SHADER_SRC_DIR}/post.vert
     ${SHADER_SRC_DIR}/post.frag
+    ${SHADER_SRC_DIR}/taa.frag
     ${SHADER_SRC_DIR}/smaa_edge.frag
     ${SHADER_SRC_DIR}/smaa_blend.frag
     ${SHADER_SRC_DIR}/smaa_neighborhood.frag
@@ -140,13 +129,8 @@ add_dependencies(engine shaders)
 # Copy compiled shaders next to the executable
 add_custom_command(TARGET engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUT_DIR}
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/triangle.vert.spv ${SHADER_OUT_DIR}/triangle.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/triangle.frag.spv ${SHADER_OUT_DIR}/triangle.frag.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/chunk.vert.spv    ${SHADER_OUT_DIR}/chunk.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/chunk.frag.spv    ${SHADER_OUT_DIR}/chunk.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ui.vert.spv       ${SHADER_OUT_DIR}/ui.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ui.frag.spv       ${SHADER_OUT_DIR}/ui.frag.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/object.vert.spv   ${SHADER_OUT_DIR}/object.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ship.vert.spv     ${SHADER_OUT_DIR}/ship.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ship.frag.spv     ${SHADER_OUT_DIR}/ship.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean.vert.spv    ${SHADER_OUT_DIR}/ocean.vert.spv
@@ -156,15 +140,11 @@ add_custom_command(TARGET engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean_fft.comp.spv ${SHADER_OUT_DIR}/ocean_fft.comp.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean_assemble.comp.spv ${SHADER_OUT_DIR}/ocean_assemble.comp.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean_wake.comp.spv ${SHADER_OUT_DIR}/ocean_wake.comp.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/grass.vert.spv    ${SHADER_OUT_DIR}/grass.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/grass.frag.spv    ${SHADER_OUT_DIR}/grass.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/shadow.vert.spv  ${SHADER_OUT_DIR}/shadow.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/shadow_object.vert.spv ${SHADER_OUT_DIR}/shadow_object.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/shadow_grass.vert.spv ${SHADER_OUT_DIR}/shadow_grass.vert.spv
-    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/shadow_grass.frag.spv ${SHADER_OUT_DIR}/shadow_grass.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/sky.frag.spv ${SHADER_OUT_DIR}/sky.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/post.vert.spv ${SHADER_OUT_DIR}/post.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/post.frag.spv ${SHADER_OUT_DIR}/post.frag.spv
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/taa.frag.spv ${SHADER_OUT_DIR}/taa.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_edge.frag.spv ${SHADER_OUT_DIR}/smaa_edge.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_blend.frag.spv ${SHADER_OUT_DIR}/smaa_blend.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/smaa_neighborhood.frag.spv ${SHADER_OUT_DIR}/smaa_neighborhood.frag.spv

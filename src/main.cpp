@@ -1,18 +1,11 @@
 #include "game/GameState.h"
+#include "game/VoyageSave.h"
 #include "platform/Window.h"
 #include "platform/InputManager.h"
 #include "renderer/VulkanContext.h"
-#include "world/World.h"
-#include "world/Chunk.h"
 #include <iostream>
-#include <array>
-#include <vector>
 #include <cmath>
 #include "game/Camera.h"
-
-static constexpr int LOAD_RADIUS   = 3;
-static constexpr int UNLOAD_RADIUS = 4;
-static constexpr int CHUNK_STREAM_LOADS_PER_FRAME = 2;
 
 enum class AppMode {
     MainMenu,
@@ -27,6 +20,7 @@ struct AppFlow {
     bool prevEsc = false;
     bool prevMenuClick = false;
     bool prevPauseClick = false;
+    bool prevPortClick = false;
     bool prevCtrlS = false;
     AppMode settingsReturnMode = AppMode::MainMenu;
 #ifdef PASTEL_DEV_BUILD
@@ -89,6 +83,30 @@ struct AppFlow {
         return action;
     }
 
+    // Esc closes the market screen (back to the port menu) instead of pausing.
+    bool consumeMarketEscape(bool escPressed, bool marketOpen) {
+        const bool pressed = mode == AppMode::Gameplay && marketOpen && escPressed && !prevEsc;
+        if (pressed)
+            prevEsc = escPressed;
+        return pressed;
+    }
+
+    int consumePortMenuClick(const PlayerInput& input, bool docked) {
+        int action = 0; // 0=none, 1=set sail, 2=trade
+        if (mode == AppMode::Gameplay && docked && input.leftClick && !prevPortClick) {
+            float x, y, w, h;
+            for (int i = 0; i < 2; ++i) {
+                portMenuRowRect(i, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
+                if (input.mouseX >= x && input.mouseX <= x + w &&
+                    input.mouseY >= y && input.mouseY <= y + h) {
+                    action = i + 1;
+                }
+            }
+        }
+        prevPortClick = input.leftClick;
+        return action;
+    }
+
     void enterSettings() {
         if (mode == AppMode::MainMenu || mode == AppMode::Paused) {
             settingsReturnMode = mode;
@@ -133,13 +151,6 @@ struct AppFlow {
         prevEsc = escPressed;
     }
 
-    bool consumeInventoryEscape(bool escPressed, bool inventoryOpen) {
-        const bool pressed = mode == AppMode::Gameplay && inventoryOpen && escPressed && !prevEsc;
-        if (pressed)
-            prevEsc = escPressed;
-        return pressed;
-    }
-
     bool consumeSavePress(bool savePressed) {
         const bool pressed = savePressed && !prevCtrlS;
         prevCtrlS = savePressed;
@@ -157,7 +168,7 @@ struct AppFlow {
 
 struct AppSettings {
     bool vsync = true;
-    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA
+    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA, 3=TAA
     bool prevClick = false;
 
     void syncClickState(const PlayerInput& input) {
@@ -177,7 +188,7 @@ struct AppSettings {
             settingsRowRect(1, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
             if (input.mouseX >= x && input.mouseX <= x + w &&
                 input.mouseY >= y && input.mouseY <= y + h) {
-                aaMode = (aaMode + 1) % 3;
+                aaMode = (aaMode + 1) % 4;
             }
 
             settingsRowRect(2, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
@@ -198,10 +209,13 @@ static void clearGameplayInput(PlayerInput& input) {
     input.moveRight       = false;
     input.leftClick       = false;
     input.rightClick      = false;
-    input.toggleInventory = false;
     input.rotateLeft      = false;
     input.rotateRight     = false;
-    input.selectSlot      = -1;
+    input.dockKey         = false;
+    input.menuUp          = false;
+    input.menuDown        = false;
+    input.buyKey          = false;
+    input.sellKey         = false;
     input.scrollDelta     = 0;
 }
 
@@ -230,9 +244,8 @@ static void applyDevUiInputCapture(PlayerInput& input, const VulkanContext& ctx)
 int main() {
     try {
         Window        window(1280, 720, "OceanVoyage");
-        World         world;
         GameState     gameState;
-        VulkanContext ctx(window, world);
+        VulkanContext ctx(window);
         InputManager  inputManager(window);
         Camera camera(45.0f, 1280.0f / 720.0f, 0.1f, 3000.0f);
 
@@ -240,32 +253,23 @@ int main() {
         AppSettings settings;
         bool worldSessionStarted = false;
         bool pendingWorldStart = false;
-        glm::ivec2 lastPlayerChunk{0, 0};
 
         auto startWorldSession = [&]() {
-            glm::vec3 savedPos;
-            float     savedTime;
-            std::array<ItemStack, INV_SLOTS> savedInv;
-            std::vector<DroppedItem>         savedDrops;
-            if (world.load("save.dat", savedPos, savedTime, savedInv, savedDrops)) {
-                gameState.setPlayerPosition(savedPos);
-                gameState.setTime(savedTime);
-                gameState.setInventory(savedInv);
-                gameState.setDrops(savedDrops);
+            // VoyageSave ("OVYG") restores the sailing state. A legacy farm
+            // "PFRM" save.dat fails the magic check and starts a new game.
+            VoyageSave::Data saved;
+            if (VoyageSave::load("save.dat", saved)) {
+                gameState.setTime(saved.gameTime);
+                gameState.setShipState(saved.ship);
+                gameState.setMoney(saved.money);
+                gameState.setCargo(saved.cargo);
             }
-
-            lastPlayerChunk = World::chunkCoord(
-                (int)gameState.player().position().x,
-                (int)gameState.player().position().y
-            );
-            world.loadChunksAround(lastPlayerChunk.x, lastPlayerChunk.y, LOAD_RADIUS);
             worldSessionStarted = true;
         };
 
-        // Tear down the active world session (quit to title). Drops all chunks so the
-        // renderer frees their buffers, and resets gameplay state for a fresh re-start.
+        // Tear down the active session (quit to title): reset gameplay state for a
+        // fresh re-start.
         auto endWorldSession = [&]() {
-            world.reset();
             gameState = GameState{};
             worldSessionStarted = false;
             pendingWorldStart   = false;
@@ -295,12 +299,10 @@ int main() {
             input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
 #endif
 
-            if (app.consumeInventoryEscape(input.quit, gameState.inventoryOpen())) {
-                gameState.closeInventory();
-                input.quit = false;
-            } else {
+            if (app.consumeMarketEscape(input.quit, gameState.marketOpen()))
+                gameState.closeMarket();
+            else
                 app.updateEscape(input.quit);
-            }
             const bool wasSettings = app.settings();
             const int menuClickAction = app.consumeMainMenuClick(input);
             const int pauseClickAction = app.consumePauseClick(input);
@@ -328,6 +330,15 @@ int main() {
                 clearGameplayInput(input);
             }
 
+            // Port menu (docked): SET SAIL returns to sailing, TRADE opens the
+            // market. Clicks are ignored while the market screen covers the menu.
+            const int portClickAction = app.consumePortMenuClick(
+                input, gameState.mode() == GameMode::Docked && !gameState.marketOpen());
+            if (portClickAction == 1)
+                gameState.setSail();
+            else if (portClickAction == 2)
+                gameState.openMarket();
+
             applyAppModeInputPolicy(input, app.mode);
 
             const float rotSpeed = 90.0f * dt;
@@ -340,50 +351,56 @@ int main() {
 
             // Ctrl+S save (edge-detect)
             if (worldSessionStarted && app.consumeSavePress(input.saveKey))
-                world.save("save.dat", gameState.player().position(), gameState.time(),
-                           gameState.inventory(), gameState.drops());
+                VoyageSave::save("save.dat", VoyageSave::Data{
+                    gameState.time(), gameState.ship(), gameState.money(), gameState.cargo() });
 
             if (input.windowWidth > 0 && input.windowHeight > 0)
                 camera.setAspectRatio((float)input.windowWidth / input.windowHeight);
 
-            const glm::vec3 playerPositionBeforeUpdate = gameState.player().position();
-            camera.update(playerPositionBeforeUpdate, orbitAngle, dt);
+            // Camera chases last frame's ship position; gameplay then advances the ship.
+            camera.update(gameState.shipWorldPosition(), orbitAngle, dt);
             if (app.gameplayActive())
-                gameState.update(dt, input, camera, world);
-            const glm::vec3 playerPosition = gameState.player().position();
-            glm::vec3 playerVelocity{0.0f};
-            if (dt > 0.0001f && app.gameplayActive())
-                playerVelocity = (playerPosition - playerPositionBeforeUpdate) / dt;
+                gameState.update(dt, input);
 
-            // Stream chunks around the player. Generation is capped per frame so a
-            // boundary crossing does not create every new edge chunk in one update.
-            if (worldSessionStarted) {
-                glm::ivec2 playerChunk = World::chunkCoord(
-                    (int)playerPosition.x,
-                    (int)playerPosition.y
-                );
-                if (playerChunk != lastPlayerChunk) {
-                    world.unloadChunksOutside(playerChunk.x, playerChunk.y, UNLOAD_RADIUS);
-                    lastPlayerChunk = playerChunk;
+            const ShipState& ship = gameState.ship();
+            const glm::vec3 shipPosition = gameState.shipWorldPosition();
+            const glm::vec3 shipVelocity{ ship.velocity.x, ship.velocity.y, 0.0f };
+
+            // Voyage HUD values: nearest port (distance/direction) + cargo + money.
+            float portDistance = -1.0f;
+            glm::vec2 portDir{0.0f, 0.0f};
+            const Port* nearestPort = gameState.nearestPort(portDistance, portDir);
+            const bool nearPort = nearestPort && portDistance <= nearestPort->radius;
+            const Port* dockedPort = gameState.dockedPort();
+
+            // Market table display rows (only while the trade screen is open).
+            MarketRowHud marketRows[8];
+            int marketRowCount = 0;
+            const bool marketOpen = gameState.marketOpen() && dockedPort != nullptr;
+            if (marketOpen) {
+                for (const MarketEntry& e : dockedPort->market) {
+                    if (marketRowCount >= 8) break;
+                    marketRows[marketRowCount++] = MarketRowHud{
+                        cargoGoodName(e.good), e.buyPrice, e.sellPrice, e.stock,
+                        gameState.cargoCount(e.good) };
                 }
-                world.loadChunksAroundBudgeted(
-                    playerChunk.x, playerChunk.y, LOAD_RADIUS,
-                    CHUNK_STREAM_LOADS_PER_FRAME);
             }
 
-            const glm::vec2 facing = gameState.player().facingDirection();
-            const float playerHeading = std::atan2(facing.y, facing.x);
-
             ctx.drawFrame(FrameRenderData{
-                camera, playerPosition, playerVelocity, playerHeading, gameState.targetTile(),
-                gameState.selectedSlot(), gameState.inventory(), gameState.timeOfDay(),
-                gameState.time(), gameState.inventoryOpen(), gameState.day(), gameState.drops(), gameState.nearWorkbench(),
-                app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode
+                camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
+                gameState.timeOfDay(), gameState.time(),
+                app.mainMenu(), app.settings(), app.loading(), app.paused(), settings.vsync, settings.aaMode,
+                portDistance, portDir, nearPort,
+                gameState.cargo().used(), gameState.cargo().capacity, gameState.money(),
+                gameState.canDock(), dockedPort != nullptr,
+                dockedPort ? dockedPort->name : nullptr,
+                marketOpen, gameState.marketSelected(), marketRowCount, marketRows,
+                nearestPort ? nearestPort->name : nullptr
             });
 
             if (pendingWorldStart && app.loading()) {
                 startWorldSession();
-                camera.snapToTarget(gameState.player().position(), orbitAngle);
+                camera.snapToTarget(gameState.shipWorldPosition(), orbitAngle);
                 app.enterGameplay();
                 pendingWorldStart = false;
             }

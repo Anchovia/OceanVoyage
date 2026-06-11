@@ -2,9 +2,11 @@
 
 이 문서는 OceanVoyage의 코드 구조와 엔진 / 게임 경계를 정리한다.
 
-현재 저장소는 Pastel-Farm에서 복제된 초기 상태이므로, 아직 농장 게임 전용 코드와 재사용 가능한 엔진 코드가 섞여 있다.
+현재 저장소는 Pastel-Farm에서 복제된 뒤 OceanVoyage로 전환 중이다. 렌더링 코어는 사실적 해양 방향으로 크게 진행됐지만, 게임플레이·월드·UI·저장 계층에는 아직 농장 게임 전용 코드와 재사용 가능한 엔진 코드가 섞여 있다.
 
 이 문서의 목적은 무작정 파일을 삭제하기 전에 각 시스템의 역할을 분류하고, 이후 OceanVoyage 전환 과정에서 어떤 코드를 유지 / 임시 유지 / 제거 / 교체할지 판단하는 기준을 세우는 것이다.
+
+> 코드 *구조*는 이 문서가, *개발 순서*(무엇을 어떤 순서로 만들지)는 `docs/ROADMAP.md`가 단일 출처다. 아래 신규 데이터 구조(`OceanWorld`/`Port`/`Island`/`CargoHold`/`ShipDef`/`VoyageSave` 등)의 세부 필드는 ROADMAP의 해당 Phase에 진입할 때 이 문서에서 확정한다.
 
 ---
 
@@ -86,6 +88,46 @@ engine/Renderer
 
 ---
 
+## 2.5 현재 구현된 렌더 파이프라인 (2026-06-06 기준)
+
+이 문서의 나머지(분류·전환 계획)는 대부분 전환 *방향*을 다루지만, 렌더링은 이미 사실적 해양 스택까지 구현되어 있다. 아래는 실제로 코드에 존재하는 프레임 그래프다(`VulkanContext_Frame.cpp::recordCommandBuffer`).
+
+**프레임당 패스 순서**
+
+```text
+1. FFT 해양 컴퓨트 (월드 가시일 때만)        — 그래픽스 큐, 배리어로 렌더 앞에 직렬화
+   스펙트럼 애니메이션 → butterfly IFFT(2·log2N 패스) → displacement/slope 조립
+   → wake 시뮬 → displacement host 리드백 복사(부력용, 2프레임 지연 읽기)
+2. 그림자 패스                              — CSM 3 캐스케이드 레이어별, 청크/오브젝트/선박 캐스터
+3. 플래너 반사 패스                          — 물 평면 미러 카메라로 씬 1회 재렌더
+4. 불투명 씬 패스(offscreen HDR R16F)        — 하늘 → 청크 → 지면 드레싱 → 풀 → 오브젝트 → 선박(pre-water seed)
+5. scene color/depth 복사                    — 물의 굴절·깊이 샘플용
+6. water 패스(LOAD)                          — 해수면(FFT) → 선택자/드롭 → 선박(최종 가시)
+7. 후처리                                    — SMAA edge/blend(톤매핑 luma 기반 edge) → neighborhood/톤매핑+그레이딩 또는 post FXAA/OFF → UI → (dev ImGui) → 스왑체인
+```
+
+**해양 컴퓨트 체인** (`VulkanContext_Ocean.cpp`, `shaders/ocean_*.comp`)
+
+- 다중 캐스케이드 Tessendorf FFT: 초기 스펙트럼 h0(k) → per-frame 애니메이션 H(k,t) → radix-2 butterfly IFFT → displacement(xyz)+whitecap seed / slope(dH) 조립. 512² × 3 캐스케이드.
+- wake: world-locked 토로이달 마스크에 선박 입력 주입 후 이류·확산·감쇠(ping-pong).
+- displacement는 host로 리드백해 CPU에서 선박 부력(수평 변위 역산 + 파면 높이/기울기)에 사용.
+
+**주요 리소스**
+
+- offscreen HDR(R16G16B16A16_SFLOAT) 색 + depth, scene color/depth 복사본, 플래너 반사 타깃, SMAA edge/blend 타깃 — 전부 frame-in-flight별.
+- 그림자: depth 배열(레이어=캐스케이드), 2048².
+- FFT: h0/spectrum/pong(RGBA32F) + displacement/slope(RGBA16F, 더블버퍼) + wake(RGBA16F) + host 리드백 버퍼.
+
+**동기화·수명 모델**
+
+- frame-in-flight = 2. per-frame in-flight fence + **per-swapchain-image** present 세마포어(이미지 수 변동 대응). 스왑체인 재생성 시 세마포어 재생성.
+- 리소스는 `GpuBuffer`/`TextureResource` move-only RAII + `m_deletionQueue` 지연 해제.
+- 해양 컴퓨트는 전용 compute 큐(async)가 아니라 그래픽스 큐에서 배리어로 직렬화한다 — 안정적이지만 오버랩 여지는 남아 있다.
+
+> 알려진 렌더링 한계와 다음 과제(TAA 미도입, SMAA neighborhood가 아직 HDR scene color를 섞은 뒤 톤매핑하는 구조, 셰이더 상수 중복, 부력 전체 리드백, async compute 미사용 등)는 `docs/ENGINE_TODO.md`에 정리한다.
+
+---
+
 ## 3. 현재 코드 분류 기준
 
 현재 코드베이스는 다음 기준으로 분류한다.
@@ -126,9 +168,10 @@ shaders/smaa*
 
 주의할 점:
 
-- `VulkanContext`는 엔진 코드로 유지하되, 현재는 일부 농장 게임 데이터에 의존할 수 있다.
-- 렌더러가 `TileType`, `ObjectType`, `CropType` 같은 게임 전용 타입에 직접 의존한다면 장기적으로 제거해야 한다.
-- 렌더러는 최종적으로 게임 상태가 아니라 렌더링용 스냅샷 데이터만 받아야 한다.
+- `VulkanContext`는 엔진 코드로 유지하되, 현재는 실제로 `World&`를 생성자에서 받고 `Chunk`/`TileType`/`ObjectType` 기반 렌더 버퍼를 직접 관리한다.
+- `FrameRenderData`도 아직 `inventory`, `hotbar`, `drops`, `nearWorkbench`, `targetTile` 같은 농장/플레이어 상태를 포함한다.
+- 장기 목표는 렌더러가 게임 월드를 직접 읽지 않고, 카메라·조명·메시·머티리얼·UI draw data 같은 순수 렌더링 스냅샷만 받는 구조다.
+- 따라서 다음 구조 작업의 1순위는 폴더 이동이 아니라 `FrameRenderData` 정리와 `World` 직접 참조 제거다.
 
 ---
 
@@ -181,7 +224,7 @@ GameState
 
 OceanVoyage의 목표와 직접 관련이 낮은 Pastel-Farm 전용 코드다.
 
-단, 제거는 최소 테스트 씬이 생긴 뒤에 한다.
+단, 제거는 대체 선박 상태·렌더 데이터 경계·저장 구조가 생긴 뒤에 한다.
 
 제거 후보:
 
@@ -223,6 +266,25 @@ Farm Object            PortObject / ShipObject / IndustryObject
 World Save             Voyage Save
 GameState              VoyageGameState
 ```
+
+### 7.1 신규 데이터 구조 (도입 시 확정)
+
+아래는 ROADMAP Phase 1·3·5·6에서 도입할 새 시스템의 1차 스케치다. 필드는 해당 Phase 진입 시 확정하며, 여기서는 경계와 책임만 잡는다.
+
+```text
+ShipState   (Phase 1) — position, velocity, heading, yawRate, throttle, rudder   // 현재 상태(가변)
+ShipDef     (Phase 6) — cargoCapacity, maxSpeed, accel, turnRate, drag, draft    // 불변 스펙, upgrade는 modifier
+CargoHold   (Phase 3) — capacity, stacks[]                                        // 인벤토리 대체, weight 제약
+Port        (Phase 3) — id, name, position; (Phase 5) type, market
+MarketEntry (Phase 3) — good, buyPrice, sellPrice, stock
+Island      (Phase 5) — center, radiusX, radiusY, rotation                        // 충돌은 ellipse distance
+Wind        (Phase 5) — direction, speed, gust                                    // gameplay 우선, FFT 연동 후순위
+VoyageSave  (Phase 3) — magic "OVYG" + version. v1: gameTime + ShipState
+                        v2: +money/cargo, v3: +ports/market, v4: +upgrades/contracts
+```
+
+- 이 구조들은 농장 `World/Chunk/TileType`/`Player`/`Inventory`를 대체하며, 렌더러는 이들을 직접 읽지 않는다(§9 렌더 스냅샷 경계).
+- `OceanWorld`는 ports/islands/wind/region seed/discovered를 소유하고 렌더러를 모른다. renderer용 mesh 인스턴스는 `OceanWorld → RenderSceneSnapshot` 변환에서 생성한다.
 
 ---
 
@@ -356,39 +418,49 @@ OceanVoyage에서는 최소 세 가지 카메라 모드가 필요할 수 있다.
 
 ---
 
-## 13. OceanVoyage 초기 렌더링 목표
+## 13. OceanVoyage 초기 렌더링 목표 — 렌더링 기준점 달성
 
-초기 테스트 씬은 다음을 목표로 한다.
+초기 테스트 씬 목표(하늘·안개·후처리·수면·선박·디버그 UI·배 추적 궤도 카메라)는 렌더링 기준점 관점에서 **달성됐고, 사실적 해양 스택까지 구현됐다.** 단, 이 씬은 아직 독립적인 OceanVoyage 게임 상태가 아니라 `World`/`Chunk` 기반 해상 테스트 월드 위에서 동작한다.
 
-- 하늘
-- 안개
-- 후처리
-- 단순 수면 (placeholder — 이후 사실적 해수면 스택으로 발전)
-- 임시 선박 (placeholder — 이후 선박 PBR로 발전)
-- 디버그 UI
-- 배 추적 궤도 카메라 (UWO 시점, `DESIGN.md` 참조)
+- 하늘/안개: 시간대·달 연동 procedural sky + 장거리 대기 fog — **구현됨**
+- 후처리: HDR(R16F) + ACES 톤매핑 + 그레이딩 + FXAA/SMAA — **구현됨**
+- 수면: **다중 캐스케이드 Tessendorf FFT + SSR/플래너 반사 + 프레넬 + Jacobian whitecap** (§2.5 참조)
+- 선박: **PBR(Cook-Torrance GGX) 머티리얼 + CSM 그림자 + FFT 부력**
+- wake/foam: **시뮬레이션 마스크 기반**(이류·확산·감쇠) — 원칙대로 셰이더 도색으로 가지 않음
+- 카메라: UWO식 배 추적 궤도 — **구현됨** (`DESIGN.md` 참조)
 
-이 단계에서는 아직 실제 게임 경제, 항구, 교역을 만들지 않는다.
+즉 “이 레포가 더 이상 농장게임이 아니라 바다 게임으로 전환 가능하다”는 **기술적 기준점은 확보됐다.** 다음 본작업은 이 화면 위에 바로 경제/항구를 얹기 전에, `Player`/농장 이동을 `ShipState`/항해 물리로 교체하고 렌더러-게임 데이터 경계를 정리하는 것이다.
 
-먼저 “이 레포가 더 이상 농장게임이 아니라 바다 게임으로 전환 가능하다”는 기술적 기준점을 만든다.
+이 단계에서도 아직 실제 게임 경제·항구·교역은 만들지 않았다.
 
-> 최종 비주얼 목표(사실적 해양 — FFT/Gerstner 바다·SSR·프레넬·거품·선박 PBR·CSM 그림자, RTX 3060급)는 `DESIGN.md`의 Visual North Star를 따른다. 위 “단순 수면 / 임시 선박”은 기준점 검증용 placeholder이며 최종 방향이 아니다.
-
-> 특히 wake/foam/whitecap은 placeholder 셰이더 도색으로 진행하지 않는다. 최종 목표는 별도 시뮬레이션/마스크 기반의 안정적이고 확장 가능한 고품질 구현이다.
+> 비주얼 방향은 `DESIGN.md`의 Visual North Star를 따른다. wake/foam/whitecap은 원칙대로 placeholder 셰이더 도색이 아니라 별도 시뮬레이션/마스크 기반으로 구현됐고, 앞으로의 고도화(스프레이 파티클, 해안 거품 등)도 같은 방향으로 확장한다.
 
 ---
 
-## 14. 작업 순서
+## 14. 현재 권장 작업 순서
 
-권장 작업 순서:
+권장 작업 순서(요약):
 
-1. 문서 정리
-2. 프로젝트 이름 / 타이틀 정리
-3. 엔진 / 게임 경계 주석과 TODO 추가
-4. 최소 테스트 씬 추가
-5. 농장 시스템 제거 시작
-6. OceanVoyage 전용 시스템 추가
-7. 폴더 구조 재정리
+1. `ShipState`/`ShipController` 또는 동등한 항해 상태 모델 도입
+2. 농장 타일-워크 이동을 관성·타각·풍향/추진 입력 기반 선박 이동으로 교체
+3. `FrameRenderData`를 순수 렌더 스냅샷으로 줄이고 `VulkanContext`의 `World&` 직접 의존 제거
+4. 농장 UI/인벤토리/제작/세이브 필드를 화물·선박·회사 상태로 교체하거나 제거
+5. 렌더링 후속 과제(TAA, 리드백 축소, 반사 비용 정책, 셰이더 상수 단일화)를 작은 작업으로 진행
+6. 항구·시장·교역 루프 추가
+7. 기능 교체가 충분히 진행된 뒤 폴더 구조 재정리
+
+> 이 7단계는 `docs/ROADMAP.md`의 Phase 1~9를 압축한 것이다. 단계별 세부 작업·검증·닿는 파일은 ROADMAP을 단일 출처로 본다(1~2 → ROADMAP Phase 1, 3~4 → Phase 2, 6 → Phase 3·5, 5 → Phase 4, 7 → Phase 9).
+
+### 14.1 엔진 구조 안정화 (ROADMAP Phase 9)
+
+기능 교체가 충분히 진행된 뒤, 폴더 이동(§8)과 함께 다음 구조 정리를 진행한다. 세부는 `docs/ENGINE_TODO.md`.
+
+- `VulkanContext_Init.cpp`(4000+줄)를 기능별 cpp(Swapchain/Pipelines/Textures/Shadow/Post/Dev)로 점진 분리 — 기능 변화 없이 작은 diff로.
+- one-shot 커맨드버퍼 boilerplate를 `begin/endSingleTimeCommands`로 통합.
+- descriptor set layout / binding 번호 문서화 + C++↔GLSL desync 위험 제거, 비활성 grass shadow 리소스 정리.
+- shader interface 단일화: UBO alignment(std140/std430) 문서화, common GLSL include, shadow 상수 uniform화.
+- save migration 정책(version table v1~v4 + corruption test), legacy farm code 실행 경로 0.
+- release/dev 빌드 분리 + 품질 tier(High=RTX 3060 기본 / Medium / Low=디버그용). 품질을 싸게 낮추는 게 아니라 비싼 기능을 명시적으로 tier화.
 
 ---
 
