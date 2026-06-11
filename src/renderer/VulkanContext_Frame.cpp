@@ -495,6 +495,29 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     }
 
     vkCmdEndRenderPass(cmd); // end scene pass (offscreen color now SHADER_READ_ONLY)
+
+    if (worldVisible && m_lighthouseBeamPipeline != VK_NULL_HANDLE) {
+        VkRenderPassBeginInfo beamRp = waterRp;
+        vkCmdBeginRenderPass(cmd, &beamRp, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        PostPushConstants beamPc{};
+        beamPc.params = glm::vec4(
+            1.0f / (float)m_swapchainExtent.width,
+            1.0f / (float)m_swapchainExtent.height,
+            0.0f,
+            0.0f);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_lighthouseBeamPipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            m_postPipelineLayout, 0, 1, &m_postDescriptorSets[m_currentFrame], 0, nullptr);
+        vkCmdPushConstants(cmd, m_postPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
+            0, sizeof(PostPushConstants), &beamPc);
+        vkCmdDraw(cmd, 3, 1, 0, 0);
+
+        vkCmdEndRenderPass(cmd);
+    }
 #ifdef PASTEL_DEV_BUILD
     writeDevTimestamp(cmd, 2);
 #endif

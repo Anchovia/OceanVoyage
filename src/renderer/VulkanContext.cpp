@@ -131,6 +131,7 @@ VulkanContext::~VulkanContext() {
     vkDestroyImage      (m_device, m_shadowImage,        nullptr);
     vkFreeMemory        (m_device, m_shadowImageMemory,  nullptr);
     vkDestroyPipeline           (m_device, m_postLdrPipeline,         nullptr);
+    vkDestroyPipeline           (m_device, m_lighthouseBeamPipeline,  nullptr);
     vkDestroyPipeline           (m_device, m_postPipeline,            nullptr);
     vkDestroyPipelineLayout     (m_device, m_postPipelineLayout,      nullptr);
     vkDestroyDescriptorPool     (m_device, m_postDescriptorPool,      nullptr);

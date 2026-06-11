@@ -2180,15 +2180,26 @@ void VulkanContext::createSmaaLookupTextures() {
 }
 
 void VulkanContext::createPostPipeline() {
-    VkDescriptorSetLayoutBinding binding{};
-    binding.binding         = 0;
-    binding.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    binding.descriptorCount = 1;
-    binding.stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutBinding bindings[3]{};
+    bindings[0].binding         = 0;
+    bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[0].descriptorCount = 1;
+    bindings[0].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[1].binding         = 1;
+    bindings[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    bindings[1].descriptorCount = 1;
+    bindings[1].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+    bindings[2].binding         = 2;
+    bindings[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    bindings[2].descriptorCount = 1;
+    bindings[2].stageFlags      = VK_SHADER_STAGE_FRAGMENT_BIT;
+
     VkDescriptorSetLayoutCreateInfo dl{};
     dl.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    dl.bindingCount = 1;
-    dl.pBindings    = &binding;
+    dl.bindingCount = 3;
+    dl.pBindings    = bindings;
     if (vkCreateDescriptorSetLayout(m_device, &dl, nullptr, &m_postDescriptorSetLayout) != VK_SUCCESS)
         throw std::runtime_error("Failed to create post descriptor set layout");
 
@@ -2292,8 +2303,24 @@ void VulkanContext::createPostPipeline() {
     if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_postLdrPipeline) != VK_SUCCESS)
         throw std::runtime_error("Failed to create post LDR pipeline");
 
+    auto beamFragCode = readFile("shaders/lighthouse_beam.frag.spv");
+    VkShaderModule beamFragMod = createShaderModule(beamFragCode);
+    stages[1].module = beamFragMod;
+
+    blendAttach.blendEnable = VK_TRUE;
+    blendAttach.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.colorBlendOp        = VK_BLEND_OP_ADD;
+    blendAttach.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    blendAttach.alphaBlendOp        = VK_BLEND_OP_ADD;
+    pipelineInfo.renderPass = m_sceneLoadRenderPass;
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_lighthouseBeamPipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create lighthouse beam pipeline");
+
     vkDestroyShaderModule(m_device, vertMod, nullptr);
     vkDestroyShaderModule(m_device, fragMod, nullptr);
+    vkDestroyShaderModule(m_device, beamFragMod, nullptr);
 }
 
 void VulkanContext::createSmaaPipelines() {
@@ -2601,25 +2628,53 @@ void VulkanContext::updateTaaDescriptors() {
         resolved.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         resolved.imageView   = m_taaView[i];
         resolved.sampler     = m_postSampler;
-        VkWriteDescriptorSet postWrite{};
-        postWrite.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        postWrite.dstSet          = m_postTaaDescriptorSets[i];
-        postWrite.dstBinding      = 0;
-        postWrite.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        postWrite.descriptorCount = 1;
-        postWrite.pImageInfo      = &resolved;
-        vkUpdateDescriptorSets(m_device, 1, &postWrite, 0, nullptr);
+
+        VkDescriptorImageInfo depth{};
+        depth.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depth.imageView   = m_sceneDepthCopyView[i];
+        depth.sampler     = m_sceneDepthSampler;
+
+        VkDescriptorBufferInfo ubo{};
+        ubo.buffer = m_uniformBuffers[i];
+        ubo.offset = 0;
+        ubo.range  = sizeof(UniformBufferObject);
+
+        VkWriteDescriptorSet postWrites[3]{};
+        postWrites[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        postWrites[0].dstSet          = m_postTaaDescriptorSets[i];
+        postWrites[0].dstBinding      = 0;
+        postWrites[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        postWrites[0].descriptorCount = 1;
+        postWrites[0].pImageInfo      = &resolved;
+
+        postWrites[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        postWrites[1].dstSet          = m_postTaaDescriptorSets[i];
+        postWrites[1].dstBinding      = 1;
+        postWrites[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        postWrites[1].descriptorCount = 1;
+        postWrites[1].pImageInfo      = &depth;
+
+        postWrites[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        postWrites[2].dstSet          = m_postTaaDescriptorSets[i];
+        postWrites[2].dstBinding      = 2;
+        postWrites[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        postWrites[2].descriptorCount = 1;
+        postWrites[2].pBufferInfo     = &ubo;
+
+        vkUpdateDescriptorSets(m_device, 3, postWrites, 0, nullptr);
     }
 }
 
 void VulkanContext::createTaaDescriptors() {
-    VkDescriptorPoolSize ps{};
-    ps.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    ps.descriptorCount = MAX_FRAMES_IN_FLIGHT * 4; // 3 resolve inputs + 1 post input
+    VkDescriptorPoolSize ps[2]{};
+    ps[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 5; // 3 resolve inputs + 2 post images
+    ps[1].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ps[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     VkDescriptorPoolCreateInfo pi{};
     pi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pi.poolSizeCount = 1;
-    pi.pPoolSizes    = &ps;
+    pi.poolSizeCount = 2;
+    pi.pPoolSizes    = ps;
     pi.maxSets       = MAX_FRAMES_IN_FLIGHT * 2;
     if (vkCreateDescriptorPool(m_device, &pi, nullptr, &m_taaDescriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create TAA descriptor pool");
@@ -2669,25 +2724,53 @@ void VulkanContext::updatePostDescriptors() {
         img.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         img.imageView   = m_offscreenView[i];
         img.sampler     = m_postSampler;
-        VkWriteDescriptorSet w{};
-        w.sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        w.dstSet          = m_postDescriptorSets[i];
-        w.dstBinding      = 0;
-        w.descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        w.descriptorCount = 1;
-        w.pImageInfo      = &img;
-        vkUpdateDescriptorSets(m_device, 1, &w, 0, nullptr);
+
+        VkDescriptorImageInfo depth{};
+        depth.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        depth.imageView   = m_sceneDepthCopyView[i];
+        depth.sampler     = m_sceneDepthSampler;
+
+        VkDescriptorBufferInfo ubo{};
+        ubo.buffer = m_uniformBuffers[i];
+        ubo.offset = 0;
+        ubo.range  = sizeof(UniformBufferObject);
+
+        VkWriteDescriptorSet writes[3]{};
+        writes[0].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet          = m_postDescriptorSets[i];
+        writes[0].dstBinding      = 0;
+        writes[0].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[0].descriptorCount = 1;
+        writes[0].pImageInfo      = &img;
+
+        writes[1].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet          = m_postDescriptorSets[i];
+        writes[1].dstBinding      = 1;
+        writes[1].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        writes[1].descriptorCount = 1;
+        writes[1].pImageInfo      = &depth;
+
+        writes[2].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[2].dstSet          = m_postDescriptorSets[i];
+        writes[2].dstBinding      = 2;
+        writes[2].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        writes[2].descriptorCount = 1;
+        writes[2].pBufferInfo     = &ubo;
+
+        vkUpdateDescriptorSets(m_device, 3, writes, 0, nullptr);
     }
 }
 
 void VulkanContext::createPostDescriptors() {
-    VkDescriptorPoolSize ps{};
-    ps.type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    ps.descriptorCount = MAX_FRAMES_IN_FLIGHT;
+    VkDescriptorPoolSize ps[2]{};
+    ps[0].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    ps[0].descriptorCount = MAX_FRAMES_IN_FLIGHT * 2;
+    ps[1].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ps[1].descriptorCount = MAX_FRAMES_IN_FLIGHT;
     VkDescriptorPoolCreateInfo pi{};
     pi.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pi.poolSizeCount = 1;
-    pi.pPoolSizes    = &ps;
+    pi.poolSizeCount = 2;
+    pi.pPoolSizes    = ps;
     pi.maxSets       = MAX_FRAMES_IN_FLIGHT;
     if (vkCreateDescriptorPool(m_device, &pi, nullptr, &m_postDescriptorPool) != VK_SUCCESS)
         throw std::runtime_error("Failed to create post descriptor pool");

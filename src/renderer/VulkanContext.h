@@ -432,6 +432,7 @@ private:
     std::vector<VkFramebuffer> m_sceneLoadFramebuffers;
     VkRenderPass             m_postRenderPass          = VK_NULL_HANDLE;
     VkPipeline               m_postPipeline            = VK_NULL_HANDLE;
+    VkPipeline               m_lighthouseBeamPipeline  = VK_NULL_HANDLE;
     VkPipelineLayout         m_postPipelineLayout      = VK_NULL_HANDLE;
     VkDescriptorSetLayout    m_postDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool         m_postDescriptorPool      = VK_NULL_HANDLE;
