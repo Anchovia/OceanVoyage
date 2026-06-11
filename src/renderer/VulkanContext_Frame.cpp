@@ -963,6 +963,41 @@ glm::mat4 planarReflectionView(const Camera& camera, glm::vec3& outCameraPos) {
     glm::vec3 reflectedUp      = glm::normalize(reflectVectorAcrossWater(up));
     return glm::lookAt(outCameraPos, outCameraPos + reflectedForward, reflectedUp);
 }
+
+glm::vec3 transformPortLocalPoint(const PortRenderInstance& port, glm::vec3 local) {
+    const float scale = std::max(port.scale, 0.01f);
+    const float c = std::cos(port.heading);
+    const float s = std::sin(port.heading);
+    glm::vec2 xy = glm::vec2(local.x, local.y) * scale;
+    glm::vec2 rotated{xy.x * c - xy.y * s, xy.x * s + xy.y * c};
+    return {port.position.x + rotated.x, port.position.y + rotated.y, local.z * scale};
+}
+
+void populatePortLocalLights(UniformBufferObject& ubo,
+                             int portInstanceCount,
+                             const std::array<PortRenderInstance, 16>& portInstances) {
+    for (uint32_t i = 0; i < SHARED_LOCAL_LIGHT_COUNT; i++) {
+        ubo.localLightPosRadius[i] = glm::vec4(0.0f);
+        ubo.localLightColorIntensity[i] = glm::vec4(0.0f);
+    }
+
+    uint32_t lightCount = 0;
+    auto pushLight = [&](glm::vec3 position, float radius, glm::vec3 color, float intensity) {
+        if (lightCount >= SHARED_LOCAL_LIGHT_COUNT) return;
+        ubo.localLightPosRadius[lightCount] = glm::vec4(position, radius);
+        ubo.localLightColorIntensity[lightCount] = glm::vec4(color, intensity);
+        lightCount++;
+    };
+
+    for (int i = 0; i < portInstanceCount; i++) {
+        const PortRenderInstance& port = portInstances[(size_t)i];
+        const float scale = std::max(port.scale, 0.01f);
+        pushLight(transformPortLocalPoint(port, {38.0f, 8.0f, 21.6f}),
+                  180.0f * scale, {1.0f, 0.70f, 0.32f}, 4.8f);
+        pushLight(transformPortLocalPoint(port, {-5.0f, -34.0f, 4.2f}),
+                  85.0f * scale, {1.0f, 0.56f, 0.24f}, 2.1f);
+    }
+}
 } // namespace
 
 void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
@@ -987,6 +1022,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
     ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f,
                                    (float)m_reflectionModeHud, 0.0f, 0.0f);
+    populatePortLocalLights(ubo, m_portInstanceCount, m_portInstances);
     // TAA reprojection: current NDC -> previous clip, shared with the SSR history matrices.
     m_taaReprojection = ubo.prevViewProj * ubo.invViewProj;
     m_prevViewProj = currentViewProj;
@@ -1013,6 +1049,7 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
     ubo.prevViewProj = ubo.proj * ubo.view;
     ubo.temporalParams = glm::vec4(0.0f);
+    populatePortLocalLights(ubo, m_portInstanceCount, m_portInstances);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 

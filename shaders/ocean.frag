@@ -19,6 +19,10 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 invViewProj;
     mat4 prevViewProj;
     vec4 temporalParams;  // x = history valid, y = reflection mode (0 sky/1 SSR/2 planar/3 full)
+    mat4 lightMVPCascade[3];
+    vec4 cascadeSplits;
+    vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];
+    vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
@@ -56,6 +60,38 @@ vec3 fresnelSchlick(float cosTheta, vec3 F0) {
 
 float luminance(vec3 c) {
     return dot(c, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 evaluateLocalLightWater(vec3 worldPos, vec3 normal, vec3 viewDir,
+                             float nightFactor, float distanceRoughness) {
+    vec3 result = vec3(0.0);
+    const vec3 WATER_F0 = vec3(0.02);
+
+    for (int i = 0; i < SHARED_LOCAL_LIGHT_COUNT; i++) {
+        vec4 posRadius = ubo.localLightPosRadius[i];
+        float radius = posRadius.w;
+        if (radius <= 0.0) continue;
+
+        vec3 toLight = posRadius.xyz - worldPos;
+        float distSq = dot(toLight, toLight);
+        float dist = sqrt(max(distSq, 0.0001));
+        float waterRadius = radius * 1.25;
+        float range = saturate(1.0 - dist / max(waterRadius, 0.001));
+        vec3 Lp = toLight / dist;
+        vec3 H = normalize(viewDir + Lp);
+        float NdotL = saturate(dot(normal, Lp));
+        float NdotH = saturate(dot(normal, H));
+        float VdotH = saturate(dot(viewDir, H));
+        vec3 Fs = fresnelSchlick(VdotH, WATER_F0);
+        float tight = pow(NdotH, mix(84.0, 150.0, 1.0 - distanceRoughness));
+        float streak = pow(saturate(dot(reflect(-viewDir, normal), Lp)), 30.0)
+                     * saturate(1.0 - dot(normal, viewDir));
+        vec3 light = ubo.localLightColorIntensity[i].rgb * ubo.localLightColorIntensity[i].w;
+        float attenuation = range * range * (0.28 + 0.72 * nightFactor);
+        result += light * attenuation * (tight * 0.12 + streak * 0.08) * Fs * (0.20 + NdotL * 0.80);
+    }
+
+    return min(result, vec3(1.35));
 }
 
 vec3 reconstructWorldPosition(vec2 uv, float depth) {
@@ -543,6 +579,7 @@ void main() {
     // Daylight modulation (night = dim).
     color *= mix(0.24, 1.0, dayFactor);
     color += moonSpec;
+    color += evaluateLocalLightWater(fragWorldPos, N, V, nightFactor, distanceRoughness);
     color = max(color, water * mix(0.55, 0.92, dayFactor));
     vec3 litFoamColor = foamColor * mix(0.58, 1.0, smoothstep(0.02, 0.85, dayFactor));
     float foamBlend = foamCoverage * mix(0.34, 0.54, dayFactor);

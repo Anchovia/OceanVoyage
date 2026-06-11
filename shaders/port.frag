@@ -18,6 +18,8 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 temporalParams;
     mat4 lightMVPCascade[3];
     vec4 cascadeSplits;
+    vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];
+    vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];
 } ubo;
 
 layout(binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -109,6 +111,32 @@ float sampleShadow(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir, f
     return shadow;
 }
 
+vec3 evaluateLocalLights(vec3 worldPos, vec3 normal, vec3 viewDir, vec3 albedo, float dayFactor) {
+    vec3 result = vec3(0.0);
+    float nightWeight = 1.0 - smoothstep(0.18, 0.58, dayFactor);
+    float visibility = 0.20 + nightWeight * 0.90;
+
+    for (int i = 0; i < SHARED_LOCAL_LIGHT_COUNT; i++) {
+        vec4 posRadius = ubo.localLightPosRadius[i];
+        float radius = posRadius.w;
+        if (radius <= 0.0) continue;
+
+        vec3 toLight = posRadius.xyz - worldPos;
+        float distSq = dot(toLight, toLight);
+        float dist = sqrt(max(distSq, 0.0001));
+        vec3 Lp = toLight / dist;
+        float range = saturate(1.0 - dist / max(radius, 0.001));
+        float attenuation = range * range * (1.0 + range * 0.75);
+        float NdotL = saturate(dot(normal, Lp));
+        vec3 H = normalize(viewDir + Lp);
+        float spec = pow(saturate(dot(normal, H)), 48.0) * NdotL;
+        vec3 light = ubo.localLightColorIntensity[i].rgb * ubo.localLightColorIntensity[i].w;
+        result += light * attenuation * visibility * (albedo * NdotL * 0.72 + vec3(spec * 0.16));
+    }
+
+    return result;
+}
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 L = normalize(ubo.lightDir.xyz);
@@ -135,6 +163,7 @@ void main() {
     float beaconGate = smoothstep(0.1, 0.4, emissive);
     color += vec3(1.0, 0.72, 0.34) * emissive * (0.85 + night * 3.2);
     color += vec3(1.0, 0.55, 0.18) * beaconGate * pow(1.0 - NdotV, 2.0) * (0.55 + night * 1.4);
+    color += evaluateLocalLights(fragWorldPos, N, V, albedo, dayFactor);
 
     const float FOG_START = 140.0;
     const float FOG_END = 760.0;

@@ -21,4 +21,7 @@
 // Cascaded shadow maps
 #define SHARED_SHADOW_MAP_SIZE       2048                   // texels per cascade layer
 
+// Small forward local-light set for ports and water highlights
+#define SHARED_LOCAL_LIGHT_COUNT     8
+
 #endif // SHARED_CONSTANTS_H

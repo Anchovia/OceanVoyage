@@ -27,6 +27,8 @@ struct UniformBufferObject {
     // legacy single `lightMVP` above is left in place for layout stability and holds cascade 0.
     glm::mat4 lightMVPCascade[3]; // per-cascade light-space transforms
     glm::vec4 cascadeSplits;      // xyz = cascade far view-depths (view space); w unused
+    glm::vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];       // xyz = world position, w = radius
+    glm::vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];  // rgb = linear color, w = intensity
 };
 
 struct PostPushConstants {
