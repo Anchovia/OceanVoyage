@@ -368,9 +368,14 @@ private:
     std::vector<VkDeviceMemory> m_oceanDisplacementMemory;
     std::vector<VkImageView>    m_oceanDisplacementView;
     VkSampler             m_oceanDisplacementSampler = VK_NULL_HANDLE; // linear, repeat (shared)
-    // Displacement copied back to host memory each frame so the CPU can float the ship on the
-    // actual FFT surface (one buffer per frame in flight; read with a 2-frame latency).
-    std::vector<GpuBuffer> m_oceanReadbackBuffers;
+    // GPU buoyancy sampling: a 1-thread compute pass solves the inverse displacement at the
+    // ship and writes 5 surface heights into a tiny host-visible buffer (one per frame in
+    // flight; read with a 2-frame latency). Replaces the full displacement host readback.
+    VkPipeline            m_oceanBuoyancyPipeline            = VK_NULL_HANDLE;
+    VkPipelineLayout      m_oceanBuoyancyPipelineLayout      = VK_NULL_HANDLE;
+    VkDescriptorSetLayout m_oceanBuoyancyDescriptorSetLayout = VK_NULL_HANDLE;
+    std::vector<VkDescriptorSet> m_oceanBuoyancyDescriptorSets;
+    std::vector<GpuBuffer>       m_oceanBuoyancyBuffers; // 5 floats each, host-visible mapped
     VkDescriptorSetLayout m_oceanAssembleDescriptorSetLayout = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_oceanAssembleDescriptorSets; // one per frame (write target differs)
     VkPipelineLayout      m_oceanAssemblePipelineLayout      = VK_NULL_HANDLE;

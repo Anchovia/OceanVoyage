@@ -1,0 +1,44 @@
+#version 450
+
+// Ship buoyancy sampling on the GPU: solve the inverse displacement at the
+// ship position and write 5 surface heights (center + 4 neighbors) into a tiny
+// host-visible buffer. Replaces the full displacement-map host readback
+// (512^2 x 3 cascades RGBA16F, ~6 MiB/frame) with 20 bytes.
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+layout(binding = 0) uniform sampler2DArray displacementMap;
+
+layout(binding = 1, std430) writeonly buffer BuoyancyOut {
+    float h[5]; // center, -x, +x, -y, +y wave heights (sea level not included)
+} outBuf;
+
+layout(push_constant) uniform OceanBuoyancyPush {
+    vec4 shipPosStep; // xy = ship world position, z = sample step (finest cascade texel), w unused
+} pc;
+
+const int   CASCADES = 3;
+const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // must match VulkanContext::OCEAN_CASCADE_L
+
+vec3 sampleDisplacement(vec2 worldXY) {
+    vec3 d = vec3(0.0);
+    for (int c = 0; c < CASCADES; ++c)
+        d += textureLod(displacementMap, vec3(worldXY / CASCADE_L[c], float(c)), 0.0).xyz;
+    return d;
+}
+
+void main() {
+    vec2  world = pc.shipPosStep.xy;
+    float dx    = pc.shipPosStep.z;
+
+    // The map is indexed by source position; fixed-point iterate to find the
+    // source whose displaced XY lands on the ship (same solve the CPU did).
+    vec2 src = world;
+    for (int i = 0; i < 3; ++i)
+        src = world - sampleDisplacement(src).xy;
+
+    outBuf.h[0] = sampleDisplacement(src).z;
+    outBuf.h[1] = sampleDisplacement(src - vec2(dx, 0.0)).z;
+    outBuf.h[2] = sampleDisplacement(src + vec2(dx, 0.0)).z;
+    outBuf.h[3] = sampleDisplacement(src - vec2(0.0, dx)).z;
+    outBuf.h[4] = sampleDisplacement(src + vec2(0.0, dx)).z;
+}

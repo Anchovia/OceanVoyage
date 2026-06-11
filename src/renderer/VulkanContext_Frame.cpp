@@ -953,89 +953,24 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 
-namespace {
-// Decode an IEEE-754 half (binary16) to float — reads the R16F displacement readback.
-// Half-subnormals are flushed to zero (negligible at wave-height scale).
-float halfToFloat(uint16_t h) {
-    uint32_t sign = (uint32_t)(h & 0x8000u) << 16;
-    uint32_t exp  = (h >> 10) & 0x1Fu;
-    uint32_t mant = h & 0x3FFu;
-    uint32_t bits;
-    if (exp == 0u)         bits = sign;
-    else if (exp == 0x1Fu) bits = sign | 0x7F800000u | (mant << 13);
-    else                   bits = sign | ((exp + 112u) << 23) | (mant << 13); // 112 = 127 - 15
-    float f;
-    std::memcpy(&f, &bits, sizeof(f));
-    return f;
-}
-
-// Bilinear FFT displacement from one cascade layer of the host readback buffer. The readback
-// holds every cascade tightly packed, so layer c starts at texel offset c·n·n.
-glm::vec3 sampleCascadeLayer(const uint16_t* px, int n, int layer, float patch, float wx, float wy) {
-    float u = wx / patch; u -= std::floor(u);
-    float v = wy / patch; v -= std::floor(v);
-    float gx = u * (float)n - 0.5f;
-    float gy = v * (float)n - 0.5f;
-    int   x0 = (int)std::floor(gx), y0 = (int)std::floor(gy);
-    float tx = gx - (float)x0,      ty = gy - (float)y0;
-    const uint16_t* base = px + (size_t)layer * n * n * 4;
-    auto D = [&](int x, int y) {
-        x = ((x % n) + n) % n; y = ((y % n) + n) % n;
-        const uint16_t* p = &base[((size_t)y * n + x) * 4];
-        return glm::vec3(halfToFloat(p[0]), halfToFloat(p[1]), halfToFloat(p[2]));
-    };
-    glm::vec3 d00 = D(x0, y0),     d10 = D(x0 + 1, y0);
-    glm::vec3 d01 = D(x0, y0 + 1), d11 = D(x0 + 1, y0 + 1);
-    return (d00 * (1.0f - tx) + d10 * tx) * (1.0f - ty)
-         + (d01 * (1.0f - tx) + d11 * tx) * ty;
-}
-
-// Sum every cascade's displacement at a world position (matches the ocean shaders).
-glm::vec3 sampleOceanDisplacement(const uint16_t* px, int n, const float* cascadeL, int cascades,
-                                  float wx, float wy) {
-    glm::vec3 d(0.0f);
-    for (int c = 0; c < cascades; ++c)
-        d += sampleCascadeLayer(px, n, c, cascadeL[c], wx, wy);
-    return d;
-}
-
-glm::vec2 solveOceanSourceXY(const uint16_t* px, int n, const float* cascadeL, int cascades,
-                             glm::vec2 worldXY) {
-    glm::vec2 sourceXY = worldXY;
-    for (int i = 0; i < 3; ++i) {
-        glm::vec3 d = sampleOceanDisplacement(px, n, cascadeL, cascades, sourceXY.x, sourceXY.y);
-        sourceXY = worldXY - glm::vec2(d.x, d.y);
-    }
-    return sourceXY;
-}
-} // namespace
-
 void VulkanContext::updateShipTransform(const glm::vec3& position, float heading, float gameTime) {
-    // Float the hero ship on the actual FFT surface: sample the displacement readback (filled
-    // ~2 frames ago, so already complete) for local wave height + slope, then tilt the hull so
-    // its deck aligns with the surface normal and the bow points toward the heading.
+    // Float the hero ship on the actual FFT surface: the buoyancy compute pass sampled
+    // wave heights around the ship on the GPU (~2 frames ago, so the tiny readback is
+    // already complete), then tilt the hull so its deck aligns with the surface normal
+    // and the bow points toward the heading.
     (void)gameTime; // wave phase now lives entirely in the GPU FFT
     constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
-    const int   n        = (int)OCEAN_FFT_N;
-    const int   cascades = (int)OCEAN_CASCADES;
-    const float* cl      = OCEAN_CASCADE_L;
+    const float step = OCEAN_CASCADE_L[OCEAN_CASCADES - 1] / (float)OCEAN_FFT_N; // finest cascade texel
 
-    const uint16_t* px = m_oceanReadbackBuffers.empty()
-        ? nullptr : (const uint16_t*)m_oceanReadbackBuffers[m_currentFrame].mapped;
+    // 5 heights: center, -x, +x, -y, +y (see ocean_buoyancy.comp).
+    const float* h = m_oceanBuoyancyBuffers.empty()
+        ? nullptr : (const float*)m_oceanBuoyancyBuffers[m_currentFrame].mapped;
 
     float     height = SEA_LEVEL;
     glm::vec3 up(0.0f, 0.0f, 1.0f);
-    if (px) {
-        const float step = cl[cascades - 1] / (float)n; // finest cascade texel
-        glm::vec2 worldXY(position.x, position.y);
-        glm::vec2 srcC = solveOceanSourceXY(px, n, cl, cascades, worldXY);
-        float hC  = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y).z;
-        float hX0 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x - step, srcC.y).z;
-        float hX1 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x + step, srcC.y).z;
-        float hY0 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y - step).z;
-        float hY1 = sampleOceanDisplacement(px, n, cl, cascades, srcC.x, srcC.y + step).z;
-        height = SEA_LEVEL + hC;
-        up = glm::normalize(glm::vec3(hX0 - hX1, hY0 - hY1, 2.0f * step));
+    if (h) {
+        height = SEA_LEVEL + h[0];
+        up = glm::normalize(glm::vec3(h[1] - h[2], h[3] - h[4], 2.0f * step));
     }
 
     glm::vec3 pos  = glm::vec3(position.x, position.y, height - SHIP_VISUAL_DRAFT);

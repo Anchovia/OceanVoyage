@@ -171,7 +171,7 @@ position += velocity * dt
 
 1. **기준 성능 측정** — 대표 장면 3개(낮/석양 grazing/밤), 1080p·1440p, AA·반사 토글별 GPU timing 기록
 2. **TAA 도입** 🔶 — 1차(resolve 패스: reprojection+clamp) 완료(2026-06-12), aaMode 3 옵션·기본은 SMAA. 후속(Halton jitter/Catmull-Rom/적응 블렌드)은 보류 — 이동 중 블러 해소 후 채택 재평가. (`ENGINE_TODO.md` P1)
-3. **SMAA 순서/색공간 정리** — tone-map/grade target 후 perceptual LDR에 AA 적용
+3. **SMAA 순서/색공간 정리** ✅ — tone-map/grade LDR 타겟 후 SMAA 적용(2026-06-12), 그레이드 상수 post.frag 단일화
 4. **부력 리드백 축소** — 전체 512²×3 이미지 복사 제거 → sample point만 GPU compute로 추출하는 작은 버퍼 (`ENGINE_TODO.md` P2)
 5. **반사 비용 정책** — reflection mode(SkyOnly/SSR/Planar/SSR+Planar) + 플래너 해상도/대상 제한 + SSR step 옵션
 6. **셰이더 상수 단일 출처화** — `OCEAN_FFT_N`/`CASCADE_L`/`WAKE_*`/`SEA_LEVEL`/`SHADOW_MAP_SIZE` specialization constant or generated include

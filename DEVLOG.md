@@ -6,6 +6,12 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — SMAA 색공간 정리: 톤매핑 후 SMAA (ROADMAP Phase 4-3)
+
+- SMAA 모드의 패스 순서를 표준으로 교체: `scene(HDR) → SMAA → 톤매핑` → **`scene(HDR) → 톤매핑+그레이딩(LDR R8G8B8A8_SRGB 타겟) → SMAA 3패스(순수 resolve) → 스왑체인`**. **빌드·검증 완료(색감 동일, 고대비 엣지 개선, validation 무경고).**
+- HDR 픽셀을 직접 섞던 neighborhood의 비표준 블렌딩 제거. `smaa_edge`는 자체 ACES 변환 삭제(감마 luma만), `smaa_neighborhood`는 중복 톤매핑/그레이딩/비네팅 삭제 → **그레이드 상수가 `post.frag` 단일 출처**가 됨.
+- 구현: LDR 타겟(frame-in-flight당 1장, 스왑체인과 동일 sRGB 인코딩) + `post.frag` 재사용 LDR 출력 파이프라인(렌더패스만 다름). OFF/FXAA/TAA 경로 무변경.
+
 ### 2026-06-12 — TAA 1차 (HDR resolve 패스) — 옵션으로 동결 (ROADMAP Phase 4-2a)
 
 - aaMode 3 = TAA 추가(기본값은 SMAA 유지). scene(HDR) → TAA resolve → post(톤매핑) 구조. **빌드·동작 검증 완료(윤슬 shimmer 안정화 확인, validation 무경고).**
