@@ -22,7 +22,7 @@ struct UniformBufferObject {
     glm::mat4 reflectionViewProj; // planar water reflection projection for ocean sampling
     glm::mat4 invViewProj; // inverse camera projection-view for full-screen sky reconstruction
     glm::mat4 prevViewProj; // previous main-camera projection-view for temporal reprojection
-    glm::vec4 temporalParams; // x = history valid, yzw reserved
+    glm::vec4 temporalParams; // x = history valid, y = reflection mode (0 sky/1 SSR/2 planar/3 full), zw reserved
     // CSM (appended at the end so shaders that don't sample shadows keep their layout). The
     // legacy single `lightMVP` above is left in place for layout stability and holds cascade 0.
     glm::mat4 lightMVPCascade[3]; // per-cascade light-space transforms

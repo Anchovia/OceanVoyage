@@ -135,6 +135,7 @@ struct FrameRenderData {
     int                                      marketRowCount; // entries in marketRows (≤ 8 used)
     const MarketRowHud*                      marketRows;     // caller-owned; copied during drawFrame
     const char*                              nearestPortName; // for the PRT HUD line; may be null
+    int                                      reflectionMode;  // 0 sky only, 1 SSR, 2 planar, 3 SSR+planar
 };
 
 class VulkanContext {
@@ -533,6 +534,7 @@ private:
     bool                     m_pausedHud       = false;
     bool                     m_vsyncHud        = true;
     int                      m_aaModeHud       = 0;
+    int                      m_reflectionModeHud = 3; // 0 sky only, 1 SSR, 2 planar, 3 full
     float                    m_shipSpeedHud    = 0.0f;
     float                    m_shipHeadingHud  = 0.0f; // radians
     float                    m_shipThrottleHud = 0.0f; // -1..1

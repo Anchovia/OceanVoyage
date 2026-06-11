@@ -18,7 +18,7 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 reflectionViewProj;
     mat4 invViewProj;
     mat4 prevViewProj;
-    vec4 temporalParams;  // x = history valid
+    vec4 temporalParams;  // x = history valid, y = reflection mode (0 sky/1 SSR/2 planar/3 full)
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
@@ -506,6 +506,10 @@ void main() {
                          smoothstep(0.02, 0.85, dayFactor));
     foamColor = mix(foamColor, sunColor, foamSun * 0.18);
 
+    // Reflection cost policy (ubo.temporalParams.y):
+    // 0 = sky only, 1 = SSR, 2 = planar, 3 = SSR + planar (full, default).
+    int reflectionMode = int(ubo.temporalParams.y + 0.5);
+
     vec3 reflProj = fragReflectionClip.xyz / fragReflectionClip.w;
     vec2 reflUV   = reflProj.xy * 0.5 + 0.5;
     reflUV += N.xy * 0.035 * clamp(1.0 - NdotV, 0.0, 1.0);
@@ -513,11 +517,14 @@ void main() {
     float validRefl = step(0.0, reflUV.x) * step(reflUV.x, 1.0)
                     * step(0.0, reflUV.y) * step(reflUV.y, 1.0)
                     * step(0.0, reflProj.z) * step(reflProj.z, 1.0);
+    if (reflectionMode < 2) validRefl = 0.0; // planar contribution off
     vec3 reflection = mix(skyRefl, mix(skyRefl, sceneRefl, 0.68), validRefl);
     float horizonReflection = smoothstep(0.35, 0.98, 1.0 - NdotV);
-    vec4 ssr = screenSpaceReflection(fragWorldPos, N, R, NdotV);
-    float ssrWeight = ssr.a * mix(0.35, 0.82, horizonReflection) * smoothstep(0.04, 0.92, F);
-    reflection = mix(reflection, ssr.rgb, ssrWeight);
+    if (reflectionMode == 1 || reflectionMode == 3) { // SSR raymarch only when enabled
+        vec4 ssr = screenSpaceReflection(fragWorldPos, N, R, NdotV);
+        float ssrWeight = ssr.a * mix(0.35, 0.82, horizonReflection) * smoothstep(0.04, 0.92, F);
+        reflection = mix(reflection, ssr.rgb, ssrWeight);
+    }
     reflection += skyRefl * horizonReflection * 0.10 * smoothstep(0.02, 0.95, dayFactor);
     float reflectance = saturate(F * mix(0.82, 1.0, horizonReflection));
     float sceneDepthEdge = depthResolved * smoothstep(0.0, 0.0025, max(sceneDepthSample - gl_FragCoord.z, 0.0));

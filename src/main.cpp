@@ -168,7 +168,8 @@ struct AppFlow {
 
 struct AppSettings {
     bool vsync = true;
-    int aaMode = 2; // 0=off, 1=FXAA, 2=SMAA, 3=TAA
+    int aaMode = 2;         // 0=off, 1=FXAA, 2=SMAA, 3=TAA
+    int reflectionMode = 3; // 0=sky only, 1=SSR, 2=planar, 3=SSR+planar (full)
     bool prevClick = false;
 
     void syncClickState(const PlayerInput& input) {
@@ -192,6 +193,12 @@ struct AppSettings {
             }
 
             settingsRowRect(2, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
+            if (input.mouseX >= x && input.mouseX <= x + w &&
+                input.mouseY >= y && input.mouseY <= y + h) {
+                reflectionMode = (reflectionMode + 1) % 4;
+            }
+
+            settingsRowRect(3, (float)input.windowWidth, (float)input.windowHeight, x, y, w, h);
             if (input.mouseX >= x && input.mouseX <= x + w &&
                 input.mouseY >= y && input.mouseY <= y + h) {
                 backClicked = true;
@@ -395,7 +402,8 @@ int main() {
                 gameState.canDock(), dockedPort != nullptr,
                 dockedPort ? dockedPort->name : nullptr,
                 marketOpen, gameState.marketSelected(), marketRowCount, marketRows,
-                nearestPort ? nearestPort->name : nullptr
+                nearestPort ? nearestPort->name : nullptr,
+                settings.reflectionMode
             });
 
             if (pendingWorldStart && app.loading()) {

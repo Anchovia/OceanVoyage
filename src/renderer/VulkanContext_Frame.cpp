@@ -337,7 +337,11 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
             m_pipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
 
-        if (m_shipMesh.count > 0) {
+        // Mirrored geometry only when the planar contribution is enabled
+        // (mode 2/3). The pass itself always runs: the clear is the sky color,
+        // which is exactly the "planar off" content, and it keeps the image's
+        // layout cycle intact.
+        if (m_reflectionModeHud >= 2 && m_shipMesh.count > 0) {
             vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_shipPipeline);
             vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 m_shipPipelineLayout, 0, 1, &m_reflectionDescriptorSets[m_currentFrame], 0, nullptr);
@@ -636,6 +640,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_pausedHud        = frame.paused;
     m_vsyncHud         = frame.vsyncEnabled;
     m_aaModeHud        = frame.aaMode;
+    m_reflectionModeHud = frame.reflectionMode;
     m_shipSpeedHud     = glm::length(glm::vec2(frame.shipVelocity.x, frame.shipVelocity.y));
     m_shipHeadingHud   = frame.shipHeading;
     m_shipThrottleHud  = frame.shipThrottle;
@@ -923,7 +928,8 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.invViewProj = glm::inverse(ubo.proj * ubo.view);
     glm::mat4 currentViewProj = ubo.proj * ubo.view;
     ubo.prevViewProj = (m_temporalHistoryFrames > 0) ? m_prevViewProj : currentViewProj;
-    ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+    ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f,
+                                   (float)m_reflectionModeHud, 0.0f, 0.0f);
     // TAA reprojection: current NDC -> previous clip, shared with the SSR history matrices.
     m_taaReprojection = ubo.prevViewProj * ubo.invViewProj;
     m_prevViewProj = currentViewProj;
@@ -1090,9 +1096,14 @@ void VulkanContext::updateHotbar() {
         else if (m_aaModeHud == 2) aaText = "AA SMAA";
         else if (m_aaModeHud == 3) aaText = "AA TAA";
 
+        const char* reflText = "REFL FULL";
+        if (m_reflectionModeHud == 0) reflText = "REFL SKY";
+        else if (m_reflectionModeHud == 1) reflText = "REFL SSR";
+        else if (m_reflectionModeHud == 2) reflText = "REFL PLANAR";
+
         pushCenteredText("SETTINGS", H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 1.0f});
-        const char* rows[] = { m_vsyncHud ? "VSYNC ON" : "VSYNC OFF", aaText, "BACK" };
-        for (int i = 0; i < 3; ++i) {
+        const char* rows[] = { m_vsyncHud ? "VSYNC ON" : "VSYNC OFF", aaText, reflText, "BACK" };
+        for (int i = 0; i < 4; ++i) {
             float rx, ry, rw, rh;
             settingsRowRect(i, W, H, rx, ry, rw, rh);
             pushQuad(rx, ry, rw, rh, {0.12f, 0.14f, 0.13f, 0.85f});

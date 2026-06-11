@@ -6,6 +6,12 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 셰이더 상수 단일 출처화: shared_constants.h (ROADMAP Phase 4-6)
+
+- C++/GLSL 겸용 순수 `#define` 헤더 `shaders/shared_constants.h` 신설 — `OCEAN_FFT_N`(512)/`CASCADE_L`(셰이더 6종 중복이던 최다)/`SEA_LEVEL`/`WAKE_N·WORLD_SIZE`/`SHADOW_MAP_SIZE`의 단일 출처. **빌드·검증 완료(화면 동일).**
+- 배선: glslc `-I` + `GL_GOOGLE_include_directive`, 헤더가 셰이더 커스텀 커맨드 DEPENDS에 포함 → 헤더 수정 시 전 셰이더 재컴파일. C++ 멤버명 유지(호출부 무수정). ship.frag 하드코딩 `1/2048` 제거(ENGINE_TODO P2 그림자 항목 일부 해소).
+- push 기반이라 중복 없던 `ocean_fft.comp`/`ocean_wake.comp`는 제외.
+
 ### 2026-06-12 — 부력 리드백 축소: GPU 5점 샘플 (ROADMAP Phase 4-4)
 
 - 전체 displacement 맵 host 복사(512²×3 RGBA16F ≈ 6MiB/프레임)를 **GPU 컴퓨트 1스레드 5점 샘플 + 20B 리드백**으로 교체. **빌드·검증 완료(부력 동작 동일, validation 무경고).**

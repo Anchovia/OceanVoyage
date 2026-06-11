@@ -23,7 +23,7 @@ inline void pauseMenuRowRect(int i, float screenW, float screenH, float& x, floa
     y = screenH * 0.5f - 12.0f + i * (h + SETTINGS_ROW_GAP);
 }
 
-// Screen-space rect of settings row `i`: 0=VSync, 1=AA, 2=Back.
+// Screen-space rect of settings row `i`: 0=VSync, 1=AA, 2=Reflection, 3=Back.
 inline void settingsRowRect(int i, float screenW, float screenH, float& x, float& y, float& w, float& h) {
     w = SETTINGS_ROW_W;
     h = SETTINGS_ROW_H;
