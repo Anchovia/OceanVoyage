@@ -146,14 +146,14 @@
 
 ---
 
-## 10. 선박 부력 · 항해 물리 (Phase 1 · 6 · 7)
+## 10. 선박 부력 · 항해 물리 (Phase 6 · 7)
 
-게임 물리지만 우리의 다음 핵심 작업(ROADMAP Phase 1)에 직접 쓰인다. 현재 부력은 FFT displacement 리드백으로 파면에 얹는 수준 — 아래는 그 위에 **힘 기반 선체 모델**을 올릴 때의 출처.
+게임 물리지만 향후 선박 성장·항해 심화(ROADMAP Phase 6~7)에 직접 쓰인다. 현재는 `ShipState` 기반 2D 항해 물리와 GPU 5점 FFT 부력 샘플로 선박을 파면에 얹는 수준이며, 아래는 그 위에 **힘 기반 선체 모델**을 올릴 때의 출처다.
 
 - **Jacques Kerner (Avalanche Studios), "Water interaction model for boats in video games"** (Game Developer / Gamasutra, 2015) — <https://www.gamedeveloper.com/programming/water-interaction-model-for-boats-in-video-games> — **게임 보트 물리의 표준 레퍼런스.**
-  - Part 1: **hydrostatic(부력) 힘** — 침수 다각형(submerged triangles) 기반 부력·복원 모멘트. 우리 Phase 1 부력/기울임 고도화에 직접 적용.
+  - Part 1: **hydrostatic(부력) 힘** — 침수 다각형(submerged triangles) 기반 부력·복원 모멘트. 향후 3D 선체 부력/기울임 고도화에 직접 적용.
   - Part 2~3: **동적 힘** — 항력(drag), 양력, slamming, viscous/pressure 힘. Phase 6/7 선체 hydrodynamics(lateral slip, 선회, 속도-항력)와 연결.
-- 보조: 강체 적분(velocity/angular velocity), 관성 텐서 — 일반 게임 물리 교재(`Real-Time Rendering`/`Game Physics` 계열) 참고. 우리 Phase 1은 단순 2D 모델(`docs/ROADMAP.md` Phase 1c)로 시작하고, Kerner 모델은 3D 선체로 확장할 때 도입한다.
+- 보조: 강체 적분(velocity/angular velocity), 관성 텐서 — 일반 게임 물리 교재(`Real-Time Rendering`/`Game Physics` 계열) 참고. 현재 1차 항해는 단순 2D 모델이고, Kerner 모델은 3D 선체로 확장할 때 도입한다.
 
 ---
 

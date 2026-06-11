@@ -47,6 +47,13 @@ struct ShipVertex {
     glm::vec2 uv;
 };
 
+// Procedural material-lite vertex for static port props.
+struct PortVertex {
+    glm::vec3 pos;
+    glm::vec3 normal;
+    glm::vec4 color; // rgb = albedo, a = emissive strength
+};
+
 // UI vertex — screen-space NDC position + RGBA color
 struct UIVertex {
     glm::vec2 pos;

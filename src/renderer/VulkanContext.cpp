@@ -49,6 +49,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
     createSmaaResources();
     createShadowResources();
     createShadowPipeline();
+    createPortPipeline();
     createFramebuffers();
     createCommandPool();
     createSmaaLookupTextures();
@@ -58,6 +59,7 @@ VulkanContext::VulkanContext(Window& window) : m_window(window) {
 #endif
     createUIBuffer();
     loadImportedShipMesh();
+    createPortMesh();
     createOceanMesh();
     createOceanNormalTextures();
     createOceanFFT();
@@ -102,6 +104,7 @@ VulkanContext::~VulkanContext() {
     m_shipNormalTex.destroy();
     m_shipAlbedoTex.destroy();
     m_shipMesh.vbuf.destroy();
+    m_portMesh.vbuf.destroy();
     m_oceanIndexBuffer.destroy();
     m_oceanVertexBuffer.destroy();
     m_uiBuffer.clear();
@@ -109,6 +112,9 @@ VulkanContext::~VulkanContext() {
     vkDestroyPipelineLayout(m_device, m_uiPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_shipPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_shipPipelineLayout, nullptr);
+    vkDestroyPipeline(m_device, m_portShadowPipeline, nullptr);
+    vkDestroyPipeline(m_device, m_portPipeline, nullptr);
+    vkDestroyPipelineLayout(m_device, m_portPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_oceanPipeline, nullptr);
     vkDestroyPipelineLayout(m_device, m_oceanPipelineLayout, nullptr);
     vkDestroyPipeline(m_device, m_skyPipeline, nullptr);

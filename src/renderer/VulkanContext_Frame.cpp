@@ -250,6 +250,53 @@ void VulkanContext::copySceneDepthForWater(VkCommandBuffer cmd) {
     m_sceneDepthCopyReady[m_currentFrame] = true;
 }
 
+void VulkanContext::drawPortInstances(VkCommandBuffer cmd, VkDescriptorSet descriptorSet) {
+    if (m_portMesh.count == 0 || m_portInstanceCount <= 0 || m_portPipeline == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_portPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_portPipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+    VkBuffer     bufs[] = { m_portMesh.vbuf };
+    VkDeviceSize offs[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, bufs, offs);
+
+    for (int i = 0; i < m_portInstanceCount; i++) {
+        const PortRenderInstance& p = m_portInstances[(size_t)i];
+        const float scale = glm::max(p.scale, 0.01f);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, glm::vec3(p.position.x, p.position.y, 0.0f));
+        model = glm::rotate(model, p.heading, glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, glm::vec3(scale));
+        vkCmdPushConstants(cmd, m_portPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &model);
+        vkCmdDraw(cmd, m_portMesh.count, 1, 0, 0);
+    }
+}
+
+void VulkanContext::drawPortShadows(VkCommandBuffer cmd, const glm::mat4& lightMVP) {
+    if (m_portMesh.count == 0 || m_portInstanceCount <= 0 || m_portShadowPipeline == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_portShadowPipeline);
+    VkBuffer     bufs[] = { m_portMesh.vbuf };
+    VkDeviceSize offs[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, bufs, offs);
+
+    for (int i = 0; i < m_portInstanceCount; i++) {
+        const PortRenderInstance& p = m_portInstances[(size_t)i];
+        const float scale = glm::max(p.scale, 0.01f);
+        glm::mat4 model(1.0f);
+        model = glm::translate(model, glm::vec3(p.position.x, p.position.y, 0.0f));
+        model = glm::rotate(model, p.heading, glm::vec3(0.0f, 0.0f, 1.0f));
+        model = glm::scale(model, glm::vec3(scale));
+        glm::mat4 portLightMVP = lightMVP * model;
+        vkCmdPushConstants(cmd, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+            0, sizeof(glm::mat4), &portLightMVP);
+        vkCmdDraw(cmd, m_portMesh.count, 1, 0, 0);
+    }
+}
+
 void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -305,6 +352,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
                 vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
             }
+            drawPortShadows(cmd, lightMVP);
         }
         vkCmdEndRenderPass(cmd);
     }
@@ -352,6 +400,8 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
             vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
         }
+        if (m_reflectionModeHud >= 2)
+            drawPortInstances(cmd, m_reflectionDescriptorSets[m_currentFrame]);
 
         vkCmdEndRenderPass(cmd);
     }
@@ -380,6 +430,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
+
+    if (worldVisible)
+        drawPortInstances(cmd, m_descriptorSets[m_currentFrame]);
 
     // Refraction/depth seed for water. The ship is drawn again after the ocean for final
     // visibility, but including it in the pre-water buffers gives the water shader real
@@ -661,6 +714,10 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
         ? std::min(frame.marketRowCount, (int)m_marketRowsHud.size()) : 0;
     for (int i = 0; i < m_marketRowsHudCount; i++)
         m_marketRowsHud[(size_t)i] = frame.marketRows[i];
+    m_portInstanceCount = frame.portInstances
+        ? std::min(frame.portInstanceCount, (int)m_portInstances.size()) : 0;
+    for (int i = 0; i < m_portInstanceCount; i++)
+        m_portInstances[(size_t)i] = frame.portInstances[i];
 
     if (frame.vsyncEnabled != m_vsyncEnabled) {
         m_vsyncEnabled = frame.vsyncEnabled;

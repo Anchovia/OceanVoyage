@@ -50,9 +50,9 @@ OceanVoyage의 핵심 기반이다.
 
 주의:
 
-- 현재 렌더러는 실제로 `World&`를 직접 보유하고, `Chunk`/`TileType`/`ObjectType` 기반 청크·오브젝트·grass/dressing 버퍼를 관리한다. 이 의존은 장기적으로 분리해야 한다.
-- `FrameRenderData`도 아직 inventory/hotbar/drops/workbench/targetTile 등 농장 상태를 포함한다. 최종적으로는 게임 월드를 직접 읽지 않고 순수 렌더링 스냅샷만 받아야 한다.
-- ✅ sRGB, mipmap, anisotropic filtering, HDR scene target, shadow(CSM) 설정 정리는 **완료됐고 바다 렌더 스택(FFT·SSR·PBR)도 추가됐다**(`docs/ARCHITECTURE.md` §2.5).
+- ✅ `World&` 직접 의존, `Chunk`/`TileType`/`ObjectType` 기반 렌더 경로, inventory/hotbar/drops/workbench/targetTile 전달은 제거됐다.
+- 현재 `FrameRenderData`는 카메라·선박·앱 상태·HUD 표시값을 전달한다. 렌더러가 교역 가격 계산이나 세이브 스키마를 직접 알지는 않지만, UI 그리기까지 `VulkanContext`에 있어 장기적으로는 UI/렌더 데이터 경계를 더 정리할 여지가 있다.
+- ✅ sRGB, mipmap, anisotropic filtering, HDR scene target, shadow(CSM), FFT ocean, SSR/플래너 반사, PBR 선박, wake simulation, TAA 1차, SMAA 색공간 정리까지 구현됐다(`docs/ARCHITECTURE.md` §2.5, `DEVLOG.md`).
 
 ---
 
@@ -106,22 +106,19 @@ OceanVoyage의 핵심 기반이다.
 
 ---
 
-## 2. 임시 유지할 코드
+## 2. 임시 유지하거나 참고할 코드
 
-농장 게임 전용 성격이 있지만, OceanVoyage 시스템을 만들 때 참고 가치가 있는 코드다.
+농장 게임 전용 코드는 소스에서 대부분 제거됐다. 아래 항목은 현재 코드에 남아 있는 실행 경로와, 과거 구현에서 참고할 수 있는 개념을 분리해 본다.
 
 ### `src/world/`
 
-분류: 임시 유지
+분류: 제거 완료 / 기록 참고
 
-현재 역할:
+현재 상태:
 
-- 청크 관리
-- 물 타일 기반 해상 테스트 월드 생성
-- 타일 상태
-- 오브젝트 상태
-- 저장 / 로드
-- 작물 성장 일부
+- `src/world/` 디렉터리는 제거됐다.
+- `World`/`Chunk`/`TerrainGen`/`TileType` 실행 경로는 현재 소스에 없다.
+- 청크 스트리밍·저장 검증 패턴은 `DEVLOG.md`와 git 이력에서만 참고한다.
 
 OceanVoyage 대응 개념:
 
@@ -132,7 +129,7 @@ OceanVoyage 대응 개념:
 - Harbor
 - PortArea
 
-유지 이유:
+기록 참고 이유:
 
 - 청크 기반 월드 관리 구조는 바다 / 섬 / 항구 스트리밍에도 참고할 수 있다.
 - 저장 / 로드 검증 구조도 참고 가치가 있다.
@@ -140,9 +137,8 @@ OceanVoyage 대응 개념:
 
 주의:
 
-- 현재 `World`는 기본 생성은 물 타일만 채우지만, 구조 자체는 여전히 농장 타일 중심이다.
-- 그대로 OceanVoyage에 쓰기보다는 새 `OceanWorld`를 만들 때 참고하는 쪽이 맞다.
-- 작물, 밭, 물주기, TileType 중심 구조는 나중에 제거 또는 교체한다.
+- Phase 5에서 새 `OceanWorld`를 만들 때 과거 `World`를 되살리는 방식은 피한다.
+- 항구·섬·풍향·항로는 새 OceanVoyage 데이터 모델로 도입한다.
 
 ---
 
@@ -152,13 +148,13 @@ OceanVoyage 대응 개념:
 
 현재 역할:
 
-- 플레이어 상태
-- 입력 처리
-- 이동
-- 상호작용
-- 인벤토리
-- UI 상태
-- 월드와 렌더러 사이의 게임 진행 흐름
+- 선박 상태(`ShipState`)
+- WASD → throttle/rudder 입력 해석
+- 1차 항해 물리
+- 항구/정박/시장 상태
+- 화물창과 money
+- 시간 진행
+- 렌더러에 넘길 게임 표시값 구성의 기준 데이터
 
 OceanVoyage 대응 개념:
 
@@ -176,11 +172,9 @@ OceanVoyage 대응 개념:
 
 주의:
 
-- 농장 게임플레이 행동(작물 성장 틱·농기구·타일 상호작용)은 **이미 비활성화/제거**됐고 시작 인벤토리도 비웠다.
-- 단, **이동 모델은 여전히 농장 컨트롤러 잔재**다 — 복셀 타일 격자에 충돌하는 축분리 걷기이며, heading은 이동 방향. 관성·풍향·타각 기반 선박 이동으로 교체해야 한다(전환의 핵심 남은 작업).
-- 제작 함수와 inventory/hotbar 상태, drops, workbench 근처 판정 등은 아직 남아 있다.
-- 장기적으로는 `ShipState`/`SailingState`를 먼저 세우고, 이후 새 `VoyageGameState`로 교체하는 것이 맞다.
-- 인벤토리는 화물창 / 창고 / 회사 재고로 대체된다.
+- 농장 게임플레이 행동, 제작, inventory/hotbar, drops, workbench 판정은 제거됐다.
+- 현재 `GameState`가 선박 물리·항구·시장·화물·money를 모두 품고 있으므로, Phase 5~6에서 `OceanWorld`/`ShipDef`/경제 데이터가 커질 때 책임 분리를 검토한다.
+- `PlayerInput`이라는 이름은 남아 있지만 의미는 선박/앱 입력이다. 이름 정리는 기능 변화 없는 별도 작업으로 다루는 편이 안전하다.
 
 ---
 
@@ -208,8 +202,8 @@ OceanVoyage 대응 개념:
 
 주의:
 
-- 카메라는 이미 선박 스케일의 낮은 궤도 추적 파라미터로 조정돼 있다.
-- 남은 작업은 카메라 자체 교체보다, 추적 대상이 농장 `Player`가 아니라 진짜 선박 상태가 되도록 연결하는 것이다.
+- 카메라는 이미 선박 스케일의 낮은 궤도 추적 파라미터로 조정돼 있고, 추적 대상도 `ShipState` 기반 `shipWorldPosition()`이다.
+- 다음 카메라 작업은 자유 카메라/항구 뷰/전략 뷰 같은 새 모드가 필요해질 때 별도 설계한다.
 
 ---
 
@@ -219,10 +213,9 @@ OceanVoyage 대응 개념:
 
 현재 역할:
 
-- 농장 게임 UI
-- 인벤토리
-- 핫바 선택
-- 제작 패널
+- 선박 HUD
+- 항구/시장 UI
+- 메뉴/설정/일시정지 UI
 - 디버그 표시
 
 OceanVoyage 대응 개념:
@@ -240,16 +233,14 @@ OceanVoyage 대응 개념:
 
 주의:
 
-- 농장 전용 UI 내용(핫바, 제작, workbench 조건, item 색상)은 제거 또는 화물/선박 UI로 교체 대상이다.
-- UI 렌더링 시스템과 UI 내용물을 분리해야 한다.
+- UI 내용은 현재 `VulkanContext`의 벡터 폰트/quad 생성 코드에 직접 들어 있다.
+- 장기적으로는 UI draw data 생성과 Vulkan 렌더링을 분리할 여지가 있지만, Phase 5의 우선순위는 항구·섬·풍향 같은 게임 세계 표현이다.
 
 ---
 
-## 3. 나중에 제거할 코드
+## 3. 제거 완료된 코드와 남은 잔재
 
-OceanVoyage의 목표와 직접 관련이 낮은 농장 전용 시스템이다.
-
-단, 대체 `ShipState`/렌더 스냅샷/저장 구조가 생기기 전까지는 대규모 삭제하지 않는다.
+OceanVoyage의 목표와 직접 관련이 낮은 농장 전용 시스템은 소스 실행 경로에서 제거됐다.
 
 제거 후보:
 
@@ -265,13 +256,11 @@ OceanVoyage의 목표와 직접 관련이 낮은 농장 전용 시스템이다.
 - 농장 전용 UI 패널
 - 농장 전용 save field
 
-제거 조건:
+남은 잔재:
 
-1. `ShipState`/항해 입력/기본 항해 물리가 존재할 것
-2. 빌드 가능한 대체 GameState 또는 SailingState가 있을 것
-3. 렌더러가 농장 월드에 직접 의존하지 않을 것
-4. 저장/로드가 Voyage save schema 또는 명시적 임시 저장 구조로 교체될 것
-5. 삭제 후에도 창이 뜨고 종료가 정상 동작할 것
+- 미사용 농장 에셋(`assets/textures/terrain`, `assets/textures/vegetation`) 확인 및 정리 후보
+- 이름 잔재(`PlayerInput`, `PASTEL_DEV_BUILD`)
+- 일부 주석의 `legacy`/`farm` 언급
 
 ---
 
@@ -293,55 +282,48 @@ OceanVoyage의 목표와 직접 관련이 낮은 농장 전용 시스템이다.
 
 ---
 
-## 5. 아직 삭제하지 말아야 할 것
+## 5. 아직 임의로 삭제하지 말아야 할 것
 
-다음은 이름만 농장스럽더라도 당장 삭제하지 않는다.
+다음은 현재 실행 경로에 필요하거나, 다음 단계의 기준점이므로 별도 작업 없이 삭제하지 않는다.
 
-- `World`
-- `Chunk`
 - `GameState`
-- `Inventory`
-- `Object`
-- `UI`
-- `Save`
+- `VoyageSave`
 - `FrameRenderData`
 - `VulkanContext`
+- 선박 모델/텍스처(`assets/models/ships/lsv018`)
+- SMAA lookup texture 소스(`third_party/smaa`)
 
 이유:
 
 - 지금은 이 코드들이 실행 가능한 프로그램을 구성하고 있다.
-- OceanVoyage용 대체 시스템이 생기기 전까지는 삭제하면 빌드가 깨질 가능성이 높다.
-- 일부는 새 시스템의 참고 자료로 유용하다.
+- Phase 5 이후 새 `OceanWorld`/항구·섬 렌더 경로가 생기기 전에는 대체 없이 제거하면 기준 화면이 깨진다.
 
 ---
 
 ## 6. 다음 실제 코드 작업 후보
 
-문서 작업 이후 첫 코드 작업은 삭제가 아니라 선박 상태와 데이터 경계 교체 작업이어야 한다.
+문서 정합성 정리 이후 첫 코드 작업은 삭제가 아니라 `docs/ROADMAP.md` Phase 5의 세계 표현 작업이어야 한다.
 
-> 아래 추천 순서는 `docs/ROADMAP.md` Phase 1~2를 압축한 것이다. 티켓 단위 세부와 검증은 ROADMAP을 본다.
+> 아래 추천 순서는 `docs/ROADMAP.md` Phase 5의 첫 작업 후보를 압축한 것이다. 티켓 단위 세부와 검증은 ROADMAP을 본다.
 
 추천 순서:
 
-1. 현재 실행 상태 빌드 확인
-2. `ShipState`/기본 선박 입력 모델 추가
-3. `GameState`의 농장 이동을 항해 물리로 교체
-4. wake/부력/카메라/렌더러 입력을 `ShipState` 기준으로 통일
-5. `FrameRenderData`에서 농장 UI/인벤토리/드롭/타일 선택 상태 분리
-6. `VulkanContext`의 `World&` 직접 의존 제거 준비
-7. 이후 농장 UI·아이템·세이브 필드 제거
+1. 현재 실행 상태를 사용자 빌드로 확인
+2. Phase 5 데이터 경계 확정: `OceanWorld`/`Port` 확장/`Island`/`Wind`/route target 중 첫 슬라이스 선택
+3. 항구 시각 1차 또는 섬·풍향 1차를 작은 단위로 구현
+4. 렌더러에는 게임 객체가 아니라 렌더 스냅샷/표시값만 넘기는 현재 방향 유지
+5. 별도 정리 작업으로 미사용 농장 에셋과 이름 잔재 처리
 
 ---
 
 ## 7. 현재 결론
 
-현재 코드는 삭제 대상이 아니라 분류 대상이다.
+현재 코드는 더 이상 농장 코드 삭제가 핵심인 단계가 아니다.
 
 OceanVoyage로 전환하려면 먼저 현재 코드의 역할을 정확히 구분해야 한다.
 
 지금 단계의 핵심은 다음과 같다.
 
 - 렌더러와 플랫폼 계층은 최대한 유지한다.
-- 월드와 게임 상태는 임시 유지하면서 참고한다.
-- 농장 전용 규칙은 대체 선박/항해/렌더 데이터 구조가 생긴 뒤 단계적으로 제거한다.
-- 새 해상 게임 시스템은 기존 코드를 무작정 고치는 방식이 아니라, 대체 시스템을 만든 뒤 연결 지점을 옮기는 방식으로 교체한다.
+- `GameState`는 현재 프로토타입의 기준점으로 유지하되, Phase 5~6에서 커지는 책임은 새 데이터 구조로 분리한다.
+- 새 해상 게임 시스템은 기존 코드를 무작정 고치는 방식이 아니라, `OceanWorld`/렌더 스냅샷 같은 대체 경계를 만든 뒤 연결 지점을 옮기는 방식으로 확장한다.

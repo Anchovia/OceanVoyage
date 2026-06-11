@@ -2,13 +2,13 @@
 
 이 문서는 OceanVoyage 엔진 수준의 작업을 추적한다. 농장 게임 전용 문제가 아니라, Vulkan 기반 자체 엔진의 공통 기반 품질·안정성·성능과 관련된 항목이다.
 
-> 갱신: 2026-06-11. 초기 P0/P1 항목 대부분은 바다 전환 과정에서 완료됐다. 아래는 완료분과 남은 과제, 그리고 현재 코드 리뷰에서 확인한 한계를 분리해 정리한다. 2026-06-11 농장 레거시 완전 제거(`World`/`Chunk`/grass/`Player` 소멸)로 stale해진 항목들을 현행화했다.
+> 갱신: 2026-06-12. 초기 P0/P1 항목 대부분은 바다 전환 과정에서 완료됐다. 아래는 완료분과 남은 과제, 그리고 현재 코드 리뷰에서 확인한 한계를 분리해 정리한다. 2026-06-11 농장 레거시 완전 제거(`World`/`Chunk`/grass/`Player` 소멸), 2026-06-12 Phase 4 핵심 렌더 작업(TAA 1차, SMAA 색공간, 부력 리드백 축소, 반사 모드, shared constants)을 반영했다.
 >
 > 이 문서는 엔진/렌더 기술 과제의 단일 출처다. 이 과제들이 전체 개발 순서 어디에 들어가는지는 `docs/ROADMAP.md` Phase 4(렌더링 후속)·Phase 9(기술 부채/구조 안정화)를 본다.
 
 ---
 
-## 완료됨 (2026-06-06 기준)
+## 완료됨 (2026-06-12 기준)
 
 **안정성**
 - ✅ 공통 `vkCheck` 헬퍼 + 주요 경로(커맨드버퍼/큐 submit/fence/memory map/리소스 생성) 반환값 검사
@@ -22,6 +22,9 @@
 - ✅ anisotropic 필터링(디바이스 feature 확인 후 활성, 한도 클램프)
 - ✅ 기본 AA를 SMAA로 변경 (OFF/FXAA/SMAA 선택)
 - ✅ HDR scene color target(`R16G16B16A16_SFLOAT`) + ACES 톤매핑 + 그레이딩
+- ✅ TAA 1차(resolve 패스, aaMode 3 opt-in) 구현. 기본 AA는 SMAA 유지
+- ✅ SMAA 순서/색공간 정리: 톤매핑+그레이딩 LDR 타겟 이후 SMAA 적용
+- ✅ 셰이더 상수 단일 출처화: `shaders/shared_constants.h`
 
 **해양 렌더링** (구 P3 "향후 요구사항" — 전부 구현됨)
 - ✅ ocean material/pass (전용 water 패스, depth/color 분리)
@@ -31,6 +34,8 @@
 - ✅ fog / horizon blending (장거리 대기 fog)
 - ✅ ship wake rendering (시뮬레이션 마스크 기반)
 - ✅ CSM 3 캐스케이드 + Poisson PCF, grass 캐스터는 비활성 결정
+- ✅ 부력 리드백 축소: 전체 displacement 복사 대신 GPU 5점 샘플 + 20B host-visible 버퍼
+- ✅ 반사 모드 4종(SKY/SSR/PLANAR/FULL)과 셰이더/패스 게이트
 
 ---
 
@@ -39,20 +44,17 @@
 ### P1: 렌더링 품질 후속
 
 - **TAA 후속(보류 중).** 1차 resolve 패스는 구현됨(2026-06-12, aaMode 3 옵션 — 재투영+neighborhood clamp, 윤슬 shimmer 안정화 확인). **남은 것**: Halton 지터, Catmull-Rom 히스토리 샘플링, 모션 적응 블렌드(+샤프닝) — 이동 중 bilinear 재샘플 블러 해결용 표준 3종. 사용자 결정(2026-06-12)으로 보류; 기본 AA는 SMAA, TAA는 opt-in. 재개 기준: "정지 화면이 SMAA보다 선명 + 이동 중 블러 대폭 감소" 달성 여부로 채택 재평가.
-- **SMAA 순서/색공간 정리.** 현재 `smaa_edge.frag`는 HDR scene color를 ACES 톤매핑 + 감마 luma로 변환해 edge를 검출하므로 "HDR-linear edge 검출" 상태는 아니다. 그러나 neighborhood pass는 여전히 HDR scene color를 먼저 섞은 뒤 톤매핑/그레이딩한다. 더 표준적인 구조는 별도 tone-map/grade target을 만든 뒤 그 perceptual LDR 입력에 SMAA를 적용하는 것이다.
-- **셰이더 상수 단일 출처화.** `CASCADE_L`, `N=512`, `LOG2N=9`, `WAKE_N`/`WAKE_WORLD_SIZE`, `SEA_LEVEL`이 CPU 헤더 + 4개 이상 셰이더에 "must match" 주석과 함께 리터럴로 중복된다. specialization constant 또는 생성 헤더로 통합.
+- **물/선박 temporal 품질 재평가.** TAA는 opt-in 상태라 기본 경로는 SMAA다. TAA 2차를 재개한다면 reactive mask/샤프닝/모션 적응까지 묶어 "움직일 때도 선명한가"를 기준으로 본다.
 
 ### P2: 성능 (RTX 3060 예산에선 여유 있으나 정공법 아님)
 
 - **async compute 검토.** 해양 FFT(스펙트럼 업데이트 + 18 IFFT 패스 + assemble + wake)가 그래픽스 큐에서 배리어로 직렬화된다. 현재 큐 모델은 graphics/present만 관리하므로, 전용 compute 큐 도입은 queue family 선택·command pool·ownership/sync까지 함께 설계해야 한다.
-- **부력 리드백 축소.** 선박 1척을 띄우기 위해 displacement 전체(512²×3 RGBA16F = 6,291,456 bytes, 약 6.0 MiB/프레임)를 host 복사한다. 필요한 작은 영역/소수 텍셀만 복사하거나 GPU 측 샘플링/축약 버퍼를 검토한다.
-- **플래너 반사 + SSR 비용 재검토.** 둘 다 매 프레임 항상 켜져 있다(현재 플래너 대상은 ship+sky뿐이라 비용은 낮음). 비용 정책 없이 항상 켜진 구조는 항구/섬 콘텐츠가 늘면 부담 — reflection mode enum + 대상/해상도 제한은 ROADMAP Phase 4-5에서.
+- **반사 세부 비용 정책.** REFL 모드 4종은 구현됐지만, 플래너 반해상도/대상 제한, SSR step 품질 옵션은 아직 사용자 결정이 필요한 시각 트레이드오프다. 항구/섬 콘텐츠가 늘면 실제 비용을 측정한 뒤 조정한다.
 - **바다 메시 재검토.** 고정 약 60만 삼각형 방사형 팬(512 섹터 고정, 통째 draw). projected-grid/clipmap 계열이 더 표준적·확장적이며, ocean vertex/index buffer도 DEVICE_LOCAL + staging 업로드 대상으로 본다.
 
 ### P2: 그림자
 
-- 셰이더에 하드코딩된 shadow map size 제거 (`ship.frag`의 `SHADOW_MAP_TEXEL = 1/2048` 등) → uniform/push constant로 전달
-- 그림자 품질 옵션(Low 1024 / Medium 2048 / High 4096)
+- shadow map size 하드코딩은 `shared_constants.h`로 통합됐다. 남은 과제는 런타임 그림자 품질 옵션(Low 1024 / Medium 2048 / High 4096)과 옵션 변경 시 리소스 재생성 정책이다.
 - ~~비활성화된 grass shadow 파이프라인/리소스 정리~~ ✅ 2d-1b에서 제거 완료(2026-06-09)
 
 ### P2: GPU 리소스 관리
@@ -90,4 +92,4 @@
 - wake 스프레이 파티클, 해안선 거품(shore distance + wave energy, mask/advection 기반 — 단순 노이즈 띠 금지)
 - port lighting(등대 beacon, point light 수 제한, emissive 발광)
 - weather / 동적 시간대 연동 강화(wind→roughness/whitecap/wave detail, storm visibility)
-- reflection mode enum(SkyOnly/SSR/Planar/SSR+Planar) + 플래너 해상도·대상 제한 + SSR step 옵션
+- 플래너 해상도·대상 제한 + SSR step 옵션(REFL 모드 4종은 구현됨)

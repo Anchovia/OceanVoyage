@@ -103,6 +103,12 @@ struct MarketRowHud {
     int held;
 };
 
+struct PortRenderInstance {
+    glm::vec2 position;
+    float     heading;
+    float     scale;
+};
+
 // Per-frame snapshot the renderer consumes. Mirrors the previous drawFrame
 // argument list (by-ref for heavy data, by-value for scalars).
 struct FrameRenderData {
@@ -136,6 +142,8 @@ struct FrameRenderData {
     const MarketRowHud*                      marketRows;     // caller-owned; copied during drawFrame
     const char*                              nearestPortName; // for the PRT HUD line; may be null
     int                                      reflectionMode;  // 0 sky only, 1 SSR, 2 planar, 3 SSR+planar
+    int                                      portInstanceCount;
+    const PortRenderInstance*                portInstances;   // caller-owned; copied during drawFrame
 };
 
 class VulkanContext {
@@ -200,6 +208,8 @@ private:
     void createOceanDescriptorSetLayout();
     void createOceanPipeline();
     void createOceanMesh();
+    void createPortPipeline();
+    void createPortMesh();
     void createShipPipeline();
     void createPostRenderPass();
     void createOffscreenResources();
@@ -265,6 +275,8 @@ private:
     void recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex);
     void cleanupSwapchain();
     void recreateSwapchain();
+    void drawPortInstances(VkCommandBuffer cmd, VkDescriptorSet descriptorSet);
+    void drawPortShadows(VkCommandBuffer cmd, const glm::mat4& lightMVP);
 
     void deferDestroy(GpuBuffer&& buf);
 
@@ -411,6 +423,9 @@ private:
 
     VkPipeline               m_shipPipeline       = VK_NULL_HANDLE; // Hero ship (push-constant model matrix)
     VkPipelineLayout         m_shipPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline               m_portPipeline       = VK_NULL_HANDLE; // Port props (dock/warehouse/lighthouse)
+    VkPipeline               m_portShadowPipeline = VK_NULL_HANDLE;
+    VkPipelineLayout         m_portPipelineLayout = VK_NULL_HANDLE;
 
     // Post-process: scene → offscreen color, then fullscreen pass → swapchain
     VkRenderPass             m_sceneLoadRenderPass      = VK_NULL_HANDLE;
@@ -501,6 +516,7 @@ private:
         uint32_t       count = 0;
     };
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
+    ObjectMesh m_portMesh;   // Procedural port silhouette mesh (dock, warehouses, lighthouse)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     struct ShipHullProfile {
         glm::vec3 localBoundsMin{0.0f};
@@ -553,6 +569,8 @@ private:
     const char*              m_nearestPortNameHud = nullptr; // points at static port name literals
     int                      m_marketRowsHudCount = 0;
     std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
+    int                      m_portInstanceCount = 0;
+    std::array<PortRenderInstance, 16> m_portInstances{};
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;

@@ -393,6 +393,15 @@ int main() {
                 }
             }
 
+            PortRenderInstance portInstances[16];
+            int portInstanceCount = 0;
+            for (const Port& p : gameState.ports()) {
+                if (portInstanceCount >= 16) break;
+                portInstances[portInstanceCount++] = PortRenderInstance{
+                    p.position, 0.0f, 1.0f
+                };
+            }
+
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(),
@@ -403,7 +412,8 @@ int main() {
                 dockedPort ? dockedPort->name : nullptr,
                 marketOpen, gameState.marketSelected(), marketRowCount, marketRows,
                 nearestPort ? nearestPort->name : nullptr,
-                settings.reflectionMode
+                settings.reflectionMode,
+                portInstanceCount, portInstances
             });
 
             if (pendingWorldStart && app.loading()) {

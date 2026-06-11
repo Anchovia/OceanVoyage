@@ -92,6 +92,8 @@ set(SHADERS
     ${SHADER_SRC_DIR}/ui.frag
     ${SHADER_SRC_DIR}/ship.vert
     ${SHADER_SRC_DIR}/ship.frag
+    ${SHADER_SRC_DIR}/port.vert
+    ${SHADER_SRC_DIR}/port.frag
     ${SHADER_SRC_DIR}/ocean.vert
     ${SHADER_SRC_DIR}/ocean.frag
     ${SHADER_SRC_DIR}/ocean_spectrum.comp
@@ -134,6 +136,8 @@ add_custom_command(TARGET engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ui.frag.spv       ${SHADER_OUT_DIR}/ui.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ship.vert.spv     ${SHADER_OUT_DIR}/ship.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ship.frag.spv     ${SHADER_OUT_DIR}/ship.frag.spv
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/port.vert.spv     ${SHADER_OUT_DIR}/port.vert.spv
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/port.frag.spv     ${SHADER_OUT_DIR}/port.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean.vert.spv    ${SHADER_OUT_DIR}/ocean.vert.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean.frag.spv    ${SHADER_OUT_DIR}/ocean.frag.spv
     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/spirv/ocean_spectrum.comp.spv ${SHADER_OUT_DIR}/ocean_spectrum.comp.spv

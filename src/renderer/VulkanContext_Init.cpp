@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <initializer_list>
 
 #define GLM_FORCE_RADIANS
 #include <glm/glm.hpp>
@@ -974,6 +975,229 @@ void VulkanContext::createShipPipeline() {
     cfg.alphaBlend = false;
     cfg.layout     = m_shipPipelineLayout;
     m_shipPipeline = createPipeline(cfg);
+}
+
+void VulkanContext::createPortPipeline() {
+    VkPushConstantRange pcRange{};
+    pcRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    pcRange.offset     = 0;
+    pcRange.size       = sizeof(glm::mat4);
+
+    VkPipelineLayoutCreateInfo layoutInfo{};
+    layoutInfo.sType                  = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    layoutInfo.setLayoutCount         = 1;
+    layoutInfo.pSetLayouts            = &m_descriptorSetLayout;
+    layoutInfo.pushConstantRangeCount = 1;
+    layoutInfo.pPushConstantRanges    = &pcRange;
+    if (vkCreatePipelineLayout(m_device, &layoutInfo, nullptr, &m_portPipelineLayout) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create port pipeline layout");
+
+    PipelineConfig cfg;
+    cfg.vertPath   = "shaders/port.vert.spv";
+    cfg.fragPath   = "shaders/port.frag.spv";
+    cfg.bindings   = {
+        { 0, sizeof(PortVertex), VK_VERTEX_INPUT_RATE_VERTEX },
+    };
+    cfg.attributes = {
+        { 0, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(PortVertex, pos)    },
+        { 1, 0, VK_FORMAT_R32G32B32_SFLOAT,    offsetof(PortVertex, normal) },
+        { 2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(PortVertex, color)  },
+    };
+    cfg.cullMode   = VK_CULL_MODE_NONE;
+    cfg.depthTest  = true;
+    cfg.alphaBlend = false;
+    cfg.layout     = m_portPipelineLayout;
+    m_portPipeline = createPipeline(cfg);
+
+    auto vert = readFile("shaders/shadow.vert.spv");
+    VkShaderModule vertMod = createShaderModule(vert);
+
+    VkPipelineShaderStageCreateInfo vertStage{};
+    vertStage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertStage.stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    vertStage.module = vertMod;
+    vertStage.pName  = "main";
+
+    VkVertexInputBindingDescription binding{};
+    binding.binding   = 0;
+    binding.stride    = sizeof(PortVertex);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attr{};
+    attr.binding  = 0;
+    attr.location = 0;
+    attr.format   = VK_FORMAT_R32G32B32_SFLOAT;
+    attr.offset   = offsetof(PortVertex, pos);
+
+    VkPipelineVertexInputStateCreateInfo vertInput{};
+    vertInput.sType                           = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertInput.vertexBindingDescriptionCount   = 1;
+    vertInput.pVertexBindingDescriptions      = &binding;
+    vertInput.vertexAttributeDescriptionCount = 1;
+    vertInput.pVertexAttributeDescriptions    = &attr;
+
+    VkPipelineInputAssemblyStateCreateInfo inputAssembly{};
+    inputAssembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport viewport{0.0f, 0.0f, (float)SHADOW_MAP_SIZE, (float)SHADOW_MAP_SIZE, 0.0f, 1.0f};
+    VkRect2D   scissor{{0, 0}, {SHADOW_MAP_SIZE, SHADOW_MAP_SIZE}};
+
+    VkPipelineViewportStateCreateInfo viewportState{};
+    viewportState.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportState.viewportCount = 1;
+    viewportState.pViewports    = &viewport;
+    viewportState.scissorCount  = 1;
+    viewportState.pScissors     = &scissor;
+
+    VkPipelineRasterizationStateCreateInfo rasterizer{};
+    rasterizer.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizer.polygonMode             = VK_POLYGON_MODE_FILL;
+    rasterizer.cullMode                = VK_CULL_MODE_NONE;
+    rasterizer.frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rasterizer.depthBiasEnable         = VK_TRUE;
+    rasterizer.depthBiasConstantFactor = 0.0f;
+    rasterizer.depthBiasSlopeFactor    = 0.0f;
+    rasterizer.lineWidth               = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo multisampling{};
+    multisampling.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depthStencil{};
+    depthStencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depthStencil.depthTestEnable  = VK_TRUE;
+    depthStencil.depthWriteEnable = VK_TRUE;
+    depthStencil.depthCompareOp   = VK_COMPARE_OP_LESS_OR_EQUAL;
+
+    VkPipelineColorBlendStateCreateInfo colorBlend{};
+    colorBlend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+
+    VkGraphicsPipelineCreateInfo pipelineInfo{};
+    pipelineInfo.sType               = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineInfo.stageCount          = 1;
+    pipelineInfo.pStages             = &vertStage;
+    pipelineInfo.pVertexInputState   = &vertInput;
+    pipelineInfo.pInputAssemblyState = &inputAssembly;
+    pipelineInfo.pViewportState      = &viewportState;
+    pipelineInfo.pRasterizationState = &rasterizer;
+    pipelineInfo.pMultisampleState   = &multisampling;
+    pipelineInfo.pDepthStencilState  = &depthStencil;
+    pipelineInfo.pColorBlendState    = &colorBlend;
+    pipelineInfo.layout              = m_shadowPipelineLayout;
+    pipelineInfo.renderPass          = m_shadowRenderPass;
+    if (vkCreateGraphicsPipelines(m_device, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &m_portShadowPipeline) != VK_SUCCESS)
+        throw std::runtime_error("Failed to create port shadow pipeline");
+
+    vkDestroyShaderModule(m_device, vertMod, nullptr);
+}
+
+void VulkanContext::createPortMesh() {
+    std::vector<PortVertex> verts;
+    verts.reserve(4096);
+
+    auto pushTri = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec4 color) {
+        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
+        verts.push_back({a, n, color});
+        verts.push_back({b, n, color});
+        verts.push_back({c, n, color});
+    };
+    auto pushQuad = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d, glm::vec4 color) {
+        pushTri(a, b, c, color);
+        pushTri(a, c, d, color);
+    };
+    auto addBox = [&](glm::vec3 mn, glm::vec3 mx, glm::vec4 color) {
+        glm::vec3 p000{mn.x, mn.y, mn.z};
+        glm::vec3 p100{mx.x, mn.y, mn.z};
+        glm::vec3 p110{mx.x, mx.y, mn.z};
+        glm::vec3 p010{mn.x, mx.y, mn.z};
+        glm::vec3 p001{mn.x, mn.y, mx.z};
+        glm::vec3 p101{mx.x, mn.y, mx.z};
+        glm::vec3 p111{mx.x, mx.y, mx.z};
+        glm::vec3 p011{mn.x, mx.y, mx.z};
+        pushQuad(p001, p101, p111, p011, color); // top
+        pushQuad(p100, p000, p010, p110, color); // bottom
+        pushQuad(p000, p001, p011, p010, color); // -x
+        pushQuad(p101, p100, p110, p111, color); // +x
+        pushQuad(p000, p100, p101, p001, color); // -y
+        pushQuad(p110, p010, p011, p111, color); // +y
+    };
+    auto addGableRoof = [&](float x0, float x1, float y0, float y1, float z0, float ridgeZ, glm::vec4 color) {
+        glm::vec3 a{x0, y0, z0};
+        glm::vec3 b{x1, y0, z0};
+        glm::vec3 c{x1, y1, z0};
+        glm::vec3 d{x0, y1, z0};
+        glm::vec3 r0{(x0 + x1) * 0.5f, y0, ridgeZ};
+        glm::vec3 r1{(x0 + x1) * 0.5f, y1, ridgeZ};
+        pushTri(a, b, r0, color);
+        pushTri(d, r1, c, color);
+        pushQuad(a, r0, r1, d, color);
+        pushQuad(b, c, r1, r0, color);
+    };
+    auto addCylinder = [&](glm::vec2 center, float radius, float z0, float z1, uint32_t segments, glm::vec4 color) {
+        for (uint32_t i = 0; i < segments; i++) {
+            float a0 = 6.28318530f * (float)i / (float)segments;
+            float a1 = 6.28318530f * (float)(i + 1) / (float)segments;
+            glm::vec3 p0{center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, z0};
+            glm::vec3 p1{center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, z0};
+            glm::vec3 p2{center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, z1};
+            glm::vec3 p3{center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, z1};
+            pushQuad(p0, p1, p2, p3, color);
+        }
+    };
+    auto addCone = [&](glm::vec2 center, float radius, float z0, float z1, uint32_t segments, glm::vec4 color) {
+        glm::vec3 tip{center.x, center.y, z1};
+        for (uint32_t i = 0; i < segments; i++) {
+            float a0 = 6.28318530f * (float)i / (float)segments;
+            float a1 = 6.28318530f * (float)(i + 1) / (float)segments;
+            glm::vec3 p0{center.x + std::cos(a0) * radius, center.y + std::sin(a0) * radius, z0};
+            glm::vec3 p1{center.x + std::cos(a1) * radius, center.y + std::sin(a1) * radius, z0};
+            pushTri(p0, p1, tip, color);
+        }
+    };
+
+    const glm::vec4 dockWood{0.36f, 0.23f, 0.13f, 0.0f};
+    const glm::vec4 darkWood{0.20f, 0.14f, 0.09f, 0.0f};
+    const glm::vec4 brick{0.42f, 0.19f, 0.12f, 0.0f};
+    const glm::vec4 stone{0.52f, 0.49f, 0.40f, 0.0f};
+    const glm::vec4 roof{0.075f, 0.085f, 0.090f, 0.0f};
+    const glm::vec4 plaster{0.70f, 0.66f, 0.52f, 0.0f};
+    const glm::vec4 beacon{1.0f, 0.72f, 0.34f, 4.5f};
+
+    // Dock deck and an offshore pier, both above the rest sea level.
+    addBox({-30.0f, -7.0f, 0.50f}, { 30.0f,  7.0f, 1.15f}, dockWood);
+    addBox({ -5.2f,-46.0f, 0.52f}, {  5.2f, -4.0f, 1.12f}, dockWood);
+    addBox({-34.0f,  7.0f, 0.55f}, { 34.0f, 10.0f, 1.25f}, darkWood);
+
+    for (float x : {-24.0f, -12.0f, 0.0f, 12.0f, 24.0f}) {
+        for (float y : {-41.0f, -25.0f, -9.0f, 4.0f}) {
+            addBox({x - 0.55f, y - 0.55f, -2.2f}, {x + 0.55f, y + 0.55f, 0.75f}, darkWood);
+        }
+    }
+
+    // Warehouses give the port a readable industrial-era silhouette.
+    addBox({-28.0f, 12.0f, 0.50f}, {-8.0f, 28.0f, 8.6f}, brick);
+    addGableRoof(-29.5f, -6.5f, 10.5f, 29.5f, 8.6f, 12.3f, roof);
+    addBox({  8.0f, 13.0f, 0.50f}, {27.0f, 26.0f, 7.2f}, stone);
+    addGableRoof(6.5f, 28.5f, 11.5f, 27.5f, 7.2f, 10.4f, roof);
+
+    // Lighthouse tower, lantern room, and roof.
+    addCylinder({38.0f, 8.0f}, 3.4f, 0.50f, 19.0f, 18, plaster);
+    addCylinder({38.0f, 8.0f}, 4.2f, 18.2f, 20.1f, 18, stone);
+    addCylinder({38.0f, 8.0f}, 3.4f, 20.1f, 22.5f, 18, beacon);
+    addBox({34.2f, 7.1f, 20.7f}, {41.8f, 8.9f, 22.0f}, beacon);
+    addBox({37.1f, 4.2f, 20.7f}, {38.9f, 11.8f, 22.0f}, beacon);
+    addCone({38.0f, 8.0f}, 4.6f, 22.2f, 25.4f, 18, roof);
+
+    m_portMesh.count = (uint32_t)verts.size();
+    VkDeviceSize size = sizeof(PortVertex) * verts.size();
+    m_portMesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped = nullptr;
+    vkCheck(vkMapMemory(m_device, m_portMesh.vbuf.memory, 0, size, 0, &mapped),
+        "Failed to map port vertex buffer");
+    memcpy(mapped, verts.data(), size);
+    vkUnmapMemory(m_device, m_portMesh.vbuf.memory);
 }
 
 // ============================================================

@@ -2,7 +2,7 @@
 
 이 문서는 OceanVoyage 전환 작업 중 프로젝트가 계속 정상 실행되는지 확인하기 위한 수동 점검표다.
 
-현재 저장소는 Pastel-Farm에서 복제된 뒤 OceanVoyage로 전환 중이다. 해양 렌더링 기준점은 구현됐지만, 게임플레이·월드·UI·저장 계층에는 아직 농장 게임 구조가 남아 있다.
+현재 저장소는 Pastel-Farm에서 복제된 뒤 OceanVoyage로 전환 중이다. 해양 렌더링 기준점, 1차 항해 물리, `VoyageSave`, 항구/교역 루프는 구현됐고, 농장 게임 실행 경로는 제거됐다. 남은 큰 전환 과제는 OceanVoyage 전용 세계 표현(항구 시각·섬·풍향·항로)이다.
 
 따라서 이 점검표는 “현재 기준으로 정상 동작하는지”를 확인하기 위한 임시 기준이다.
 
@@ -114,7 +114,7 @@ cmake --build build --config Debug
 
 확인 항목:
 
-- [ ] 이동 키가 동작한다. 현재는 항해 물리가 아니라 농장 컨트롤러 잔재라는 점을 감안한다.
+- [ ] 이동 키가 동작한다. W/S는 throttle, A/D는 rudder로 동작하고 관성·선회반경이 느껴진다.
 - [ ] 카메라 회전 / 줌 입력이 동작한다.
 - [ ] 마우스 입력이 UI와 충돌하지 않는다.
 - [ ] UI 조작이 동작한다.
@@ -171,10 +171,10 @@ cmake --build build --config Debug
 - VulkanContext 생성 / 파괴 코드 변경
 - GameState 변경
 - ShipState / 항해 물리 변경
-- World / Chunk 변경
+- OceanWorld / Port / Island / Wind 변경
 - save/load 변경
-- 농장 시스템 제거
-- 렌더러와 World/Chunk 의존성 분리
+- 미사용 농장 에셋 또는 이름 잔재 정리
+- 렌더러와 게임 세계 데이터 경계 변경
 
 ---
 
