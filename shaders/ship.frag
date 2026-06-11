@@ -18,6 +18,11 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 temporalParams;
     mat4 lightMVPCascade[3]; // CSM per-cascade transforms
     vec4 cascadeSplits;      // xyz = cascade far view-depths
+    vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];
+    vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];
+    vec4 spotLightPosRadius[SHARED_SPOT_LIGHT_COUNT];
+    vec4 spotLightDirAngle[SHARED_SPOT_LIGHT_COUNT];
+    vec4 spotLightColorIntensity[SHARED_SPOT_LIGHT_COUNT];
 } ubo;
 
 layout(binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -195,6 +200,42 @@ float sampleShadow(vec3 worldPos, float viewDepth, vec3 normal, vec3 lightDir, f
     return shadow;
 }
 
+vec3 evaluateSpotLights(vec3 worldPos, vec3 normal, vec3 viewDir, vec3 albedo,
+                        vec3 kD, vec3 F0, float roughness, float dayFactor) {
+    vec3 result = vec3(0.0);
+    float nightWeight = 1.0 - smoothstep(0.16, 0.55, dayFactor);
+    float visibility = 0.08 + nightWeight * 0.92;
+    float NdotV = saturate(dot(normal, viewDir));
+
+    for (int i = 0; i < SHARED_SPOT_LIGHT_COUNT; i++) {
+        vec4 posRadius = ubo.spotLightPosRadius[i];
+        float radius = posRadius.w;
+        if (radius <= 0.0) continue;
+
+        vec3 fromLight = worldPos - posRadius.xyz;
+        float dist = length(fromLight);
+        vec3 lightToFrag = fromLight / max(dist, 0.0001);
+        vec3 fragToLight = -lightToFrag;
+        vec3 spotDir = normalize(ubo.spotLightDirAngle[i].xyz);
+        float cone = smoothstep(ubo.spotLightDirAngle[i].w, min(0.998, ubo.spotLightDirAngle[i].w + 0.040),
+                                dot(lightToFrag, spotDir));
+        float range = saturate(1.0 - dist / max(radius, 0.001));
+        float attenuation = cone * range * range;
+        float NdotL = saturate(dot(normal, fragToLight));
+        vec3 H = normalize(fragToLight + viewDir + vec3(0.0, 0.0, 0.0001));
+        float NdotH = saturate(dot(normal, H));
+        float VdotH = saturate(dot(viewDir, H));
+        vec3 F = fresnelSchlick(VdotH, F0);
+        float D = distributionGGX(NdotH, roughness);
+        float G = geometrySmith(NdotV, NdotL, roughness);
+        vec3 specular = (D * G * F) / max(4.0 * NdotV * NdotL, 0.0001);
+        vec3 light = ubo.spotLightColorIntensity[i].rgb * ubo.spotLightColorIntensity[i].w;
+        result += (kD * albedo / PI + specular) * light * attenuation * visibility * NdotL;
+    }
+
+    return result;
+}
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 T = normalize(fragTangent - N * dot(N, fragTangent));
@@ -265,6 +306,7 @@ void main() {
     vec3 ambientSpec = skyRefl * viewFresnel * (0.16 + specMask * 0.34 + wetSpec * 0.38);
 
     vec3 color = albedo * ambient + direct + moonDirect + ambientSpec;
+    color += evaluateSpotLights(fragWorldPos, N, V, albedo, kD, F0, roughness, dayFactor);
     color = mix(color, color * vec3(0.58, 0.72, 0.78) + skyRefl * 0.10, wetLine * 0.28);
 
     float rim = pow(1.0 - NdotV, 3.0) * (0.16 + 0.24 * smoothstep(0.02, 0.55, dayFactor));

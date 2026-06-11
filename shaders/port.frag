@@ -20,6 +20,9 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 cascadeSplits;
     vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];
     vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];
+    vec4 spotLightPosRadius[SHARED_SPOT_LIGHT_COUNT];
+    vec4 spotLightDirAngle[SHARED_SPOT_LIGHT_COUNT];
+    vec4 spotLightColorIntensity[SHARED_SPOT_LIGHT_COUNT];
 } ubo;
 
 layout(binding = 1) uniform sampler2DArrayShadow shadowMap;
@@ -137,6 +140,35 @@ vec3 evaluateLocalLights(vec3 worldPos, vec3 normal, vec3 viewDir, vec3 albedo, 
     return result;
 }
 
+vec3 evaluateSpotLights(vec3 worldPos, vec3 normal, vec3 viewDir, vec3 albedo, float dayFactor) {
+    vec3 result = vec3(0.0);
+    float nightWeight = 1.0 - smoothstep(0.16, 0.55, dayFactor);
+    float visibility = 0.10 + nightWeight * 1.05;
+
+    for (int i = 0; i < SHARED_SPOT_LIGHT_COUNT; i++) {
+        vec4 posRadius = ubo.spotLightPosRadius[i];
+        float radius = posRadius.w;
+        if (radius <= 0.0) continue;
+
+        vec3 fromLight = worldPos - posRadius.xyz;
+        float dist = length(fromLight);
+        vec3 lightToFrag = fromLight / max(dist, 0.0001);
+        vec3 fragToLight = -lightToFrag;
+        vec3 spotDir = normalize(ubo.spotLightDirAngle[i].xyz);
+        float cone = smoothstep(ubo.spotLightDirAngle[i].w, min(0.998, ubo.spotLightDirAngle[i].w + 0.040),
+                                dot(lightToFrag, spotDir));
+        float range = saturate(1.0 - dist / max(radius, 0.001));
+        float attenuation = cone * range * range;
+        float NdotL = saturate(dot(normal, fragToLight));
+        vec3 H = normalize(viewDir + fragToLight);
+        float spec = pow(saturate(dot(normal, H)), 72.0) * NdotL;
+        vec3 light = ubo.spotLightColorIntensity[i].rgb * ubo.spotLightColorIntensity[i].w;
+        result += light * attenuation * visibility * (albedo * NdotL * 0.90 + vec3(spec * 0.22));
+    }
+
+    return result;
+}
+
 void main() {
     vec3 N = normalize(fragNormal);
     vec3 L = normalize(ubo.lightDir.xyz);
@@ -164,6 +196,7 @@ void main() {
     color += vec3(1.0, 0.72, 0.34) * emissive * (0.85 + night * 3.2);
     color += vec3(1.0, 0.55, 0.18) * beaconGate * pow(1.0 - NdotV, 2.0) * (0.55 + night * 1.4);
     color += evaluateLocalLights(fragWorldPos, N, V, albedo, dayFactor);
+    color += evaluateSpotLights(fragWorldPos, N, V, albedo, dayFactor);
 
     const float FOG_START = 140.0;
     const float FOG_END = 760.0;

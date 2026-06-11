@@ -29,6 +29,9 @@ struct UniformBufferObject {
     glm::vec4 cascadeSplits;      // xyz = cascade far view-depths (view space); w unused
     glm::vec4 localLightPosRadius[SHARED_LOCAL_LIGHT_COUNT];       // xyz = world position, w = radius
     glm::vec4 localLightColorIntensity[SHARED_LOCAL_LIGHT_COUNT];  // rgb = linear color, w = intensity
+    glm::vec4 spotLightPosRadius[SHARED_SPOT_LIGHT_COUNT];         // xyz = world position, w = radius
+    glm::vec4 spotLightDirAngle[SHARED_SPOT_LIGHT_COUNT];          // xyz = world direction, w = outer cone cosine
+    glm::vec4 spotLightColorIntensity[SHARED_SPOT_LIGHT_COUNT];    // rgb = linear color, w = intensity
 };
 
 struct PostPushConstants {

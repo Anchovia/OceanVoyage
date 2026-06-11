@@ -23,5 +23,6 @@
 
 // Small forward local-light set for ports and water highlights
 #define SHARED_LOCAL_LIGHT_COUNT     8
+#define SHARED_SPOT_LIGHT_COUNT      4
 
 #endif // SHARED_CONSTANTS_H
