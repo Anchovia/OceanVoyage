@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 // FFT (Tessendorf) ocean surface. A camera-centred concentric mesh is displaced by the
 // GPU-simulated FFT displacement map (height + horizontal choppiness). The map is a stack
@@ -27,12 +29,12 @@ layout(location = 0) out vec3  fragWorldPos;
 layout(location = 1) out float fragViewDepth;
 layout(location = 2) out vec4  fragReflectionClip;
 
-const float SEA_LEVEL = 0.5;
+const float SEA_LEVEL = SHARED_SEA_LEVEL;
 const float GRID_SNAP = 0.5;
-const int   CASCADES  = 3;
-const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // must match the compute shaders
-const float WAKE_WORLD_SIZE = 1024.0; // must match VulkanContext::OCEAN_WAKE_WORLD_SIZE
-const float WAKE_TEXEL_UV = 1.0 / 1024.0; // must match VulkanContext::OCEAN_WAKE_N
+const int   CASCADES  = SHARED_OCEAN_CASCADES;
+const float CASCADE_L[CASCADES] = float[](SHARED_OCEAN_CASCADE_L);
+const float WAKE_WORLD_SIZE = SHARED_OCEAN_WAKE_WORLD_SIZE;
+const float WAKE_TEXEL_UV = 1.0 / float(SHARED_OCEAN_WAKE_N);
 const float WAKE_TEXEL_WORLD = WAKE_WORLD_SIZE * WAKE_TEXEL_UV;
 
 void main() {

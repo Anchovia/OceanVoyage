@@ -880,7 +880,7 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
 //  Per-frame update functions
 // ============================================================
 namespace {
-constexpr float WATER_REFLECTION_PLANE_Z = 0.5f;
+constexpr float WATER_REFLECTION_PLANE_Z = (float)SHARED_SEA_LEVEL; // mirror across the rest water plane
 
 glm::vec3 reflectPointAcrossWater(const glm::vec3& p) {
     return { p.x, p.y, 2.0f * WATER_REFLECTION_PLANE_Z - p.z };
@@ -959,7 +959,7 @@ void VulkanContext::updateShipTransform(const glm::vec3& position, float heading
     // already complete), then tilt the hull so its deck aligns with the surface normal
     // and the bow points toward the heading.
     (void)gameTime; // wave phase now lives entirely in the GPU FFT
-    constexpr float SEA_LEVEL = 0.5f; // matches ocean.vert
+    constexpr float SEA_LEVEL = (float)SHARED_SEA_LEVEL;
     const float step = OCEAN_CASCADE_L[OCEAN_CASCADES - 1] / (float)OCEAN_FFT_N; // finest cascade texel
 
     // 5 heights: center, -x, +x, -y, +y (see ocean_buoyancy.comp).

@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -30,10 +32,10 @@ layout(location = 4)      in vec2 fragUV;
 layout(location = 5)      in vec3 fragWorldPos;
 layout(location = 0) out vec4 outColor;
 
-const float SHADOW_MAP_TEXEL = 1.0 / 2048.0;
+const float SHADOW_MAP_TEXEL = 1.0 / float(SHARED_SHADOW_MAP_SIZE);
 const float SHADOW_NEAR_DEPTH = 0.5;
 const float PI = 3.14159265;
-const float SEA_LEVEL = 0.5;
+const float SEA_LEVEL = SHARED_SEA_LEVEL;
 const vec2 POISSON_DISK[16] = vec2[](
     vec2(-0.9420, -0.3991), vec2( 0.9456, -0.7689),
     vec2(-0.0942, -0.9294), vec2( 0.3449,  0.2939),

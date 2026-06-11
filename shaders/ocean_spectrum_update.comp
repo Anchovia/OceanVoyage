@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 // Tessendorf FFT ocean — per-frame spectrum h(k,t), multi-cascade.
 // Animates the static spectrum h0(k) to the current time, and packs the height and
@@ -15,9 +17,9 @@ layout(binding = 1, rgba32f) uniform writeonly image2DArray spectrumTex; // rg =
 
 layout(push_constant) uniform Push { float time; } pc;
 
-const int   N        = 512;
-const int   CASCADES = 3;
-const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0);
+const int   N        = SHARED_OCEAN_FFT_N;
+const int   CASCADES = SHARED_OCEAN_CASCADES;
+const float CASCADE_L[CASCADES] = float[](SHARED_OCEAN_CASCADE_L);
 const float GRAVITY  = 9.81;
 const float TWO_PI   = 6.28318530718;
 

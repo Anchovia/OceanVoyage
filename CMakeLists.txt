@@ -51,7 +51,7 @@ add_executable(engine
     src/renderer/VulkanContext_Ocean.cpp
  "src/game/Camera.h" "src/platform/InputManager.h" "src/platform/InputManager.cpp")
 
-target_include_directories(engine PRIVATE src third_party/smaa third_party/stb ${Vulkan_INCLUDE_DIRS})
+target_include_directories(engine PRIVATE src shaders third_party/smaa third_party/stb ${Vulkan_INCLUDE_DIRS})
 target_link_libraries(engine PRIVATE Vulkan::Vulkan glfw glm::glm)
 target_compile_definitions(engine PRIVATE GLM_FORCE_DEPTH_ZERO_TO_ONE)
 
@@ -117,8 +117,8 @@ foreach(SHADER ${SHADERS})
     add_custom_command(
         OUTPUT ${OUT}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/spirv
-        COMMAND ${GLSLC} ${SHADER} -o ${OUT}
-        DEPENDS ${SHADER}
+        COMMAND ${GLSLC} -I${SHADER_SRC_DIR} ${SHADER} -o ${OUT}
+        DEPENDS ${SHADER} ${SHADER_SRC_DIR}/shared_constants.h
         COMMENT "Compiling ${NAME}"
     )
     list(APPEND SPIRV_OUTPUTS ${OUT})

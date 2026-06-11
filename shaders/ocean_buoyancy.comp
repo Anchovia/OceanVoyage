@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 // Ship buoyancy sampling on the GPU: solve the inverse displacement at the
 // ship position and write 5 surface heights (center + 4 neighbors) into a tiny
@@ -16,8 +18,8 @@ layout(push_constant) uniform OceanBuoyancyPush {
     vec4 shipPosStep; // xy = ship world position, z = sample step (finest cascade texel), w unused
 } pc;
 
-const int   CASCADES = 3;
-const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // must match VulkanContext::OCEAN_CASCADE_L
+const int   CASCADES = SHARED_OCEAN_CASCADES;
+const float CASCADE_L[CASCADES] = float[](SHARED_OCEAN_CASCADE_L);
 
 vec3 sampleDisplacement(vec2 worldXY) {
     vec3 d = vec3(0.0);

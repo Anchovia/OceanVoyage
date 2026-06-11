@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 // Tessendorf FFT ocean — initial spectrum h0(k), multi-cascade.
 // Generates the time-independent ocean wave spectrum from a Phillips spectrum seeded
@@ -11,9 +13,9 @@ layout(local_size_x = 16, local_size_y = 16) in;
 
 layout(binding = 0, rgba32f) uniform writeonly image2DArray h0Tex;
 
-const int   N         = 512;        // FFT resolution per axis (power of two)
-const int   CASCADES  = 3;
-const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0); // world size (m) of each cascade tile
+const int   N         = SHARED_OCEAN_FFT_N;
+const int   CASCADES  = SHARED_OCEAN_CASCADES;
+const float CASCADE_L[CASCADES] = float[](SHARED_OCEAN_CASCADE_L);
 const float GRAVITY    = 9.81;
 const float WIND_SPEED = 11.0;       // m/s, drives the dominant wavelength (Phillips peak ≈ 2π·(U²/g)·√2)
 const float AMPLITUDE  = 2.0e-6;     // Phillips amplitude (wave height scales with sqrt(AMPLITUDE))

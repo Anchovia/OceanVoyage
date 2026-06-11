@@ -6,6 +6,14 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 부력 리드백 축소: GPU 5점 샘플 (ROADMAP Phase 4-4)
+
+- 전체 displacement 맵 host 복사(512²×3 RGBA16F ≈ 6MiB/프레임)를 **GPU 컴퓨트 1스레드 5점 샘플 + 20B 리드백**으로 교체. **빌드·검증 완료(부력 동작 동일, validation 무경고).**
+- `ocean_buoyancy.comp` 신규: 역변위 고정점 솔브 3회 + 중심/±x/±y 높이 5개 → host-visible SSBO(frame-in-flight당 20B). CPU 수동 bilinear와 하드웨어 `textureLod`(linear·repeat 공유 샘플러)는 동일 수식. 2프레임 지연 리드백 타이밍 동일.
+- 제거: `vkCmdCopyImageToBuffer` 6MiB 복사, displacement `TRANSFER_SRC` usage, CPU half-float 디코드/bilinear/솔브 헬퍼 4개(~55줄). FFT 디스크립터 풀 확장(8→10 sets).
+- 미세 차이(명시): 샘플 위치가 기록 시점(2프레임 전) 배 위치 — 최고속 기준 ~0.3m, 파장 대비 무시 가능.
+- 부작용: `CASCADE_L` must-match 리터럴 중복이 셰이더 5곳으로 증가 → Phase 4-6(상수 단일 출처화)의 우선순위 상승.
+
 ### 2026-06-12 — SMAA 색공간 정리: 톤매핑 후 SMAA (ROADMAP Phase 4-3)
 
 - SMAA 모드의 패스 순서를 표준으로 교체: `scene(HDR) → SMAA → 톤매핑` → **`scene(HDR) → 톤매핑+그레이딩(LDR R8G8B8A8_SRGB 타겟) → SMAA 3패스(순수 resolve) → 스왑체인`**. **빌드·검증 완료(색감 동일, 고대비 엣지 개선, validation 무경고).**

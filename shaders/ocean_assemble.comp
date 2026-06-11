@@ -1,4 +1,6 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
+#include "shared_constants.h"
 
 // Tessendorf FFT ocean — assemble the IFFT output into a world-space displacement map.
 // The IFFT result packs the height and horizontal displacement (.r = Dy height, .g = Dx,
@@ -13,9 +15,9 @@ layout(binding = 0, rgba32f) uniform readonly  image2DArray fftResult;    // .r=
 layout(binding = 1, rgba16f) uniform writeonly image2DArray displacement; // xyz = world displacement, a = whitecap seed
 layout(binding = 2, rgba16f) uniform writeonly image2DArray slope;        // rg = world height gradient (dH/dx, dH/dy)
 
-const int   N          = 512;
-const int   CASCADES   = 3;
-const float CASCADE_L[3] = float[](2048.0, 512.0, 128.0);
+const int   N          = SHARED_OCEAN_FFT_N;
+const int   CASCADES   = SHARED_OCEAN_CASCADES;
+const float CASCADE_L[CASCADES] = float[](SHARED_OCEAN_CASCADE_L);
 const float CHOPPINESS  = 1.3; // horizontal displacement scale (crest sharpness)
 
 float saturate(float v) {

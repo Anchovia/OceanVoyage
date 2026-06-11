@@ -9,6 +9,7 @@
 #include <array>
 #include <stdexcept>
 #include "renderer/Types.h"
+#include "shared_constants.h" // single source for CPU<->shader constants (shaders/ dir)
 
 class Window;
 class Camera;
@@ -323,11 +324,11 @@ private:
     VkDescriptorPool         m_oceanDescriptorPool      = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> m_oceanDescriptorSets;
 
-    // FFT ocean (Tessendorf) compute resources. Phase 0: initial spectrum h0(k) only.
-    static constexpr uint32_t OCEAN_FFT_N = 512;  // FFT resolution per axis (power of two)
-    static constexpr uint32_t OCEAN_CASCADES = 3;  // multi-scale FFT cascades (array layers)
-    // World size (m) of each cascade tile, largest → smallest. Must match the ocean shaders.
-    static constexpr float    OCEAN_CASCADE_L[OCEAN_CASCADES] = { 2048.0f, 512.0f, 128.0f };
+    // FFT ocean (Tessendorf) compute resources. Values come from shared_constants.h,
+    // the single source the ocean shaders also include.
+    static constexpr uint32_t OCEAN_FFT_N    = SHARED_OCEAN_FFT_N;
+    static constexpr uint32_t OCEAN_CASCADES = SHARED_OCEAN_CASCADES;
+    static constexpr float    OCEAN_CASCADE_L[OCEAN_CASCADES] = { SHARED_OCEAN_CASCADE_L };
     VkImage               m_oceanH0Image  = VK_NULL_HANDLE; // rg = h0(k), ba = conj(h0(-k))
     VkDeviceMemory        m_oceanH0Memory = VK_NULL_HANDLE;
     VkImageView           m_oceanH0View   = VK_NULL_HANDLE;
@@ -391,8 +392,8 @@ private:
 
     // Ship wake mask, ping-ponged per frame so wake foam/turbulence persists through
     // decay/diffusion/advection instead of being painted directly in the water shader.
-    static constexpr uint32_t OCEAN_WAKE_N = 1024;
-    static constexpr float    OCEAN_WAKE_WORLD_SIZE = 1024.0f;
+    static constexpr uint32_t OCEAN_WAKE_N          = SHARED_OCEAN_WAKE_N;
+    static constexpr float    OCEAN_WAKE_WORLD_SIZE = (float)SHARED_OCEAN_WAKE_WORLD_SIZE;
     std::vector<VkImage>        m_oceanWakeImage;
     std::vector<VkDeviceMemory> m_oceanWakeMemory;
     std::vector<VkImageView>    m_oceanWakeView;
@@ -560,7 +561,7 @@ private:
     std::vector<VkImageView>     m_sceneDepthCopyView;
     std::vector<bool>            m_sceneDepthCopyReady;
 
-    static constexpr uint32_t    SHADOW_MAP_SIZE        = 2048;
+    static constexpr uint32_t    SHADOW_MAP_SIZE        = SHARED_SHADOW_MAP_SIZE;
     static constexpr uint32_t    CSM_CASCADES           = 3; // cascaded shadow map slices
     VkImage                      m_shadowImage          = VK_NULL_HANDLE; // depth array, one layer per cascade
     VkDeviceMemory               m_shadowImageMemory    = VK_NULL_HANDLE;
