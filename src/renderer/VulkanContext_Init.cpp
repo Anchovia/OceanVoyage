@@ -1201,6 +1201,124 @@ void VulkanContext::createPortMesh() {
 }
 
 // ============================================================
+//  Island mesh (Phase 5-2)
+// ============================================================
+// Bakes every island into one world-space vertex buffer drawn with the port
+// pipeline and an identity model. Baking the ellipse radii/rotation into the
+// geometry keeps the shader's mat3(model) normal path correct (no non-uniform
+// scale at draw time) and renders all islands in a single call. The
+// elevation-banded vertex colors (sand/grass/rock) are the same material-lite
+// placeholder tier as the port mesh — authored materials arrive in Phase 8.
+void VulkanContext::setIslands(const IslandRenderInstance* islands, int count) {
+    if (!islands || count <= 0)
+        return;
+
+    constexpr int   kSectors   = 48;
+    constexpr int   kDomeRings = 7;            // rho 0..1 (waterline at rho = 1)
+    constexpr float kTwoPi     = 6.28318530f;
+    constexpr float kSeaLevel  = (float)SHARED_SEA_LEVEL;
+    // Underwater skirt: two extra rings past the waterline so the FFT water
+    // surface intersects a sloping beach instead of an open mesh edge.
+    constexpr float kSkirtRho[2] = { 1.09f, 1.20f };
+    constexpr float kSkirtZ[2]   = { -1.3f, -3.6f };
+
+    std::vector<PortVertex> verts;
+    verts.reserve((size_t)count * (size_t)kSectors * (size_t)(kDomeRings + 2) * 6);
+
+    auto pushTri = [&](const glm::vec3& a, const glm::vec3& b, const glm::vec3& c,
+                       const glm::vec4& ca, const glm::vec4& cb, const glm::vec4& cc) {
+        glm::vec3 n = glm::normalize(glm::cross(b - a, c - a));
+        verts.push_back({a, n, ca});
+        verts.push_back({b, n, cb});
+        verts.push_back({c, n, cc});
+    };
+
+    const glm::vec4 sand   {0.58f, 0.52f, 0.38f, 0.0f};
+    const glm::vec4 wetSand{0.40f, 0.36f, 0.27f, 0.0f};
+    const glm::vec4 grass  {0.21f, 0.33f, 0.15f, 0.0f};
+    const glm::vec4 rock   {0.45f, 0.43f, 0.40f, 0.0f};
+
+    const int ringCount = kDomeRings + 2; // dome stations + 2 skirt stations
+
+    for (int i = 0; i < count; i++) {
+        const IslandRenderInstance& isl = islands[i];
+        const float cosR = std::cos(isl.rotation);
+        const float sinR = std::sin(isl.rotation);
+        const float peak = 0.16f * std::min(isl.radiusX, isl.radiusY) + 2.5f;
+        // Per-island outline noise phases so no two islands share a shape.
+        const float p1 = (float)i * 2.39996f;
+        const float p2 = (float)i * 5.13077f + 1.3f;
+        const float p3 = (float)i * 8.02123f + 2.6f;
+
+        // Radial station rho/z: dome from the peak down to the waterline,
+        // then the underwater skirt. The waterline sits exactly at rho = 1 so
+        // the visible shore matches the gameplay collision ellipse.
+        auto stationRho = [&](int ring) {
+            if (ring <= kDomeRings) return (float)ring / (float)kDomeRings;
+            return kSkirtRho[ring - kDomeRings - 1];
+        };
+        auto stationZ = [&](float rho, int ring) -> float {
+            if (ring <= kDomeRings) {
+                const float dome = std::pow(std::max(1.0f - rho * rho, 0.0f), 1.3f);
+                return kSeaLevel + (peak - kSeaLevel) * dome;
+            }
+            return kSkirtZ[ring - kDomeRings - 1];
+        };
+
+        auto point = [&](int ring, int sector, glm::vec3& outPos, glm::vec4& outColor) {
+            const float theta = kTwoPi * (float)(sector % kSectors) / (float)kSectors;
+            // Smooth periodic outline perturbation (continuous across the
+            // wrap; total amplitude stays under the hull clearance margin).
+            const float outline = 1.0f
+                + 0.030f * std::sin(3.0f * theta + p1)
+                + 0.018f * std::sin(5.0f * theta + p2)
+                + 0.012f * std::sin(8.0f * theta + p3);
+            const float rho = stationRho(ring) * outline;
+            const float z   = stationZ(stationRho(ring), ring);
+            const glm::vec2 local{ std::cos(theta) * rho * isl.radiusX,
+                                   std::sin(theta) * rho * isl.radiusY };
+            outPos = { isl.position.x + local.x * cosR - local.y * sinR,
+                       isl.position.y + local.x * sinR + local.y * cosR,
+                       z };
+            // Elevation bands: wet sand under water, beach near the
+            // waterline, grass above, rock toward the dome top.
+            const float toGrass = glm::clamp((z - (kSeaLevel + 1.6f)) / 1.4f, 0.0f, 1.0f);
+            const float toRock  = glm::clamp((z - peak * 0.62f) / glm::max(peak * 0.30f, 0.001f), 0.0f, 1.0f);
+            const float toWet   = glm::clamp((kSeaLevel - z) / 1.5f, 0.0f, 1.0f);
+            outColor = glm::mix(glm::mix(glm::mix(sand, grass, toGrass), rock, toRock), wetSand, toWet);
+        };
+
+        for (int r = 0; r < ringCount; r++) {
+            for (int s = 0; s < kSectors; s++) {
+                glm::vec3 pa, pb, pc, pd;
+                glm::vec4 ca, cb, cc, cd;
+                point(r,     s,     pa, ca);
+                point(r + 1, s,     pb, cb);
+                point(r + 1, s + 1, pc, cc);
+                point(r,     s + 1, pd, cd);
+                if (r == 0) {
+                    // Ring 0 collapses to the dome apex: a single fan triangle.
+                    pushTri(pa, pb, pc, ca, cb, cc);
+                } else {
+                    pushTri(pa, pb, pc, ca, cb, cc);
+                    pushTri(pa, pc, pd, ca, cc, cd);
+                }
+            }
+        }
+    }
+
+    m_islandMesh.count = (uint32_t)verts.size();
+    VkDeviceSize size = sizeof(PortVertex) * verts.size();
+    m_islandMesh.vbuf = createBuffer(size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    void* mapped = nullptr;
+    vkCheck(vkMapMemory(m_device, m_islandMesh.vbuf.memory, 0, size, 0, &mapped),
+        "Failed to map island vertex buffer");
+    memcpy(mapped, verts.data(), size);
+    vkUnmapMemory(m_device, m_islandMesh.vbuf.memory);
+}
+
+// ============================================================
 //  UI buffer
 // ============================================================
 // Capacity: hotbar + inventory overlay + number/digit quads (counts, day HUD) + margin

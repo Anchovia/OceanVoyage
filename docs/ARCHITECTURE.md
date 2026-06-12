@@ -98,9 +98,9 @@ engine/Renderer
 1. FFT 해양 컴퓨트 (월드 가시일 때만)        — 그래픽스 큐, 배리어로 렌더 앞에 직렬화
    스펙트럼 애니메이션 → butterfly IFFT(2·log2N 패스) → displacement/slope 조립
    → wake 시뮬 → GPU 5점 부력 샘플(20B host-visible 버퍼, 2프레임 지연 읽기)
-2. 그림자 패스                              — CSM 3 캐스케이드 레이어별, 선박·항구 캐스터
-3. 플래너 반사 패스                          — 물 평면 미러 카메라로 씬 1회 재렌더(항구는 REFL PLANAR/FULL에서만)
-4. 불투명 씬 패스(offscreen HDR R16F)        — 하늘 → 항구(절차 메시) → 선박(pre-water refraction/depth seed)
+2. 그림자 패스                              — CSM 3 캐스케이드 레이어별, 선박·항구·섬 캐스터
+3. 플래너 반사 패스                          — 물 평면 미러 카메라로 씬 1회 재렌더(항구·섬은 REFL PLANAR/FULL에서만)
+4. 불투명 씬 패스(offscreen HDR R16F)        — 하늘 → 항구·섬(절차 메시) → 선박(pre-water refraction/depth seed)
 5. scene color/depth 복사                    — 물의 굴절·깊이 샘플용
 6. water 패스(LOAD)                          — 해수면(FFT) → 선박(최종 가시)
 6.5 등대 볼류메트릭 빔 패스(LOAD, additive)  — scene depth 기반 풀스크린 레이마치, 밤 게이트
@@ -119,6 +119,7 @@ engine/Renderer
 - 그림자: depth 배열(레이어=캐스케이드), 2048².
 - FFT: h0/spectrum/pong(RGBA32F) + displacement/slope(RGBA16F, 더블버퍼) + wake(RGBA16F) + 5점 부력 리드백 버퍼.
 - 항구: 절차 port 메시(단일 vertex 버퍼, 인스턴스별 push constant model) + 공유 UBO의 로컬 라이트 8/스폿 4 배열(`shared_constants.h`, 등대 랜턴·부두 램프·스윕 빔).
+- 섬: 시작 시 `setIslands()` 1회로 월드 좌표 베이크된 단일 vertex 버퍼(identity model, port 파이프라인 재사용) — 비균등 ellipse 스케일을 지오메트리에 베이크해 normal 경로 보존.
 
 **동기화·수명 모델**
 
@@ -283,6 +284,8 @@ VoyageSave  (Phase 3) — magic "OVYG" + version. v1: gameTime + ShipState
 
 - 이 구조들은 농장 `World/Chunk/TileType`/`Player`/`Inventory`를 대체하며, 렌더러는 이들을 직접 읽지 않는다(§9 렌더 스냅샷 경계).
 - `OceanWorld`는 ports/islands/wind/region seed/discovered를 소유하고 렌더러를 모른다. renderer용 mesh 인스턴스는 `OceanWorld → RenderSceneSnapshot` 변환에서 생성한다.
+- **확정(2026-06-12, Phase 5-1):** `src/game/OceanWorld.{h,cpp}` 도입 — `Port`/`MarketEntry`/`CargoGoodId`와 항구 데이터가 `GameState.h`에서 이주, `GameState`가 `OceanWorld m_world`를 소유하고 `ports()/nearestPort()` 위임으로 호출부를 보존한다. islands/wind/discovered 필드는 각 슬라이스 구현 시점에 추가한다(선행 빈 필드 없음). 현재 인스턴스 변환은 `main.cpp`의 `PortRenderInstance` 빌드가 담당하며, 종류가 늘면 별도 변환 단계로 승격한다.
+- **확정(2026-06-12, Phase 5-2):** `Island { center, radiusX, radiusY, rotation }` — 워터라인 ellipse가 충돌(inflated ellipse push-out + 해안 슬라이드, `GameState::resolveIslandCollision`)과 렌더 베이크(`main.cpp` → `VulkanContext::setIslands`, 시작 시 1회)의 공통 단일 출처. 섬은 정적 지리이므로 per-frame 스냅샷이 아니라 1회 업로드 경로를 쓴다.
 
 ---
 

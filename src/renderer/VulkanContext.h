@@ -109,6 +109,15 @@ struct PortRenderInstance {
     float     scale;
 };
 
+// Static island placement (waterline ellipse) for the renderer-side baked
+// island mesh. Passed once at startup via setIslands, not per frame.
+struct IslandRenderInstance {
+    glm::vec2 position;
+    float     radiusX;
+    float     radiusY;
+    float     rotation; // radians around +Z
+};
+
 // Per-frame snapshot the renderer consumes. Mirrors the previous drawFrame
 // argument list (by-ref for heavy data, by-value for scalars).
 struct FrameRenderData {
@@ -153,6 +162,10 @@ public:
 
     void drawFrame(const FrameRenderData& frame);
     void waitIdle();
+
+    // Bakes every island into one world-space vertex buffer (drawn with the
+    // port pipeline, identity model). Call once before the first drawFrame.
+    void setIslands(const IslandRenderInstance* islands, int count);
 
 #ifdef PASTEL_DEV_BUILD
     void beginDevFrame();
@@ -277,6 +290,8 @@ private:
     void recreateSwapchain();
     void drawPortInstances(VkCommandBuffer cmd, VkDescriptorSet descriptorSet);
     void drawPortShadows(VkCommandBuffer cmd, const glm::mat4& lightMVP);
+    void drawIslandMesh(VkCommandBuffer cmd, VkDescriptorSet descriptorSet);
+    void drawIslandShadows(VkCommandBuffer cmd, const glm::mat4& lightMVP);
 
     void deferDestroy(GpuBuffer&& buf);
 
@@ -518,6 +533,7 @@ private:
     };
     ObjectMesh m_shipMesh;   // Imported hero ship hull (drawn via the ship pipeline)
     ObjectMesh m_portMesh;   // Procedural port silhouette mesh (dock, warehouses, lighthouse)
+    ObjectMesh m_islandMesh; // World-space baked island terrain (drawn via the port pipeline)
     glm::mat4  m_shipModel = glm::mat4(1.0f); // ship world transform (bob + wave tilt + heading)
     struct ShipHullProfile {
         glm::vec3 localBoundsMin{0.0f};

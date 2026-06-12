@@ -6,6 +6,21 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 섬·해안선 1차 + ellipse 충돌 (ROADMAP Phase 5-2)
+
+- `OceanWorld`에 `Island { center, radiusX, radiusY, rotation }`(워터라인 ellipse) + 섬 3개 입주 — BRISTOL→LIVERPOOL 항로(y=-185)를 가로지르는 해협 페어(통과 폭 ~50m) + BRISTOL 남쪽 풍경 섬. **빌드·동작 검증 완료(충돌 슬라이드·워터라인·그림자/플래너/등대 조명 정상).**
+- 충돌: 물리 적분 직후 `resolveIslandCollision()` — inflated ellipse(선체 여유 6m) 내부면 중심 레이를 따라 경계로 push-out + ellipse gradient 법선으로 안쪽 속도 성분 제거 → 해안을 따라 미끄러짐. 타일 충돌 회귀 없음(ROADMAP 원칙).
+- 렌더: 새 셰이더/파이프라인 0 — port 파이프라인 재사용. 섬은 시작 시 1회 `setIslands()`로 **월드 좌표 베이크 단일 버퍼**(identity model → 비균등 스케일 normal matrix 문제 회피, 전 섬 1드로우). 돔 7링×48섹터 + 수면 아래 스커트 2링(워터라인 z=SEA_LEVEL이 충돌 ellipse와 정확히 일치, 파도가 경사 해변과 교차), 섬별 위상 주기 사인 노이즈 윤곽(진폭 ≤ 충돌 여유), 고도 밴드 정점색(젖은모래→모래→풀→암석) — material-lite는 항구 메시와 동일한 placeholder 등급(Phase 8 에셋 교체 대상).
+- 드로우 위치: CSM 캐스터 · 불투명 씬 패스 · 플래너 반사(REFL≥2 게이트). 클립 플레인/안개/로컬·스폿 조명은 port.frag 경로라 자동 적용(밤 등대 스윕이 섬 표면을 쓺).
+- 한계(의도): 얕은 물 틴트·shoreline foam은 다음 슬라이스(5-2c, island distance field 기반 — 단순 노이즈 띠 금지).
+
+### 2026-06-12 — OceanWorld 경계 도입 (ROADMAP Phase 5-1)
+
+- 세계 지리의 단일 소유 경계 `src/game/OceanWorld.{h,cpp}` 신설 — `Port`/`MarketEntry`/`CargoGoodId`(+`cargoGoodName`)와 BRISTOL/LIVERPOOL 데이터를 `GameState.h`에서 이동. **빌드·동작 검증 완료(동작 변화 0 — 입항/시장 매매/PRT HUD/항구 렌더/저장 동일).**
+- `GameState`는 `OceanWorld m_world`를 소유. `ports()/nearestPort()/dockedPort()`는 위임으로 유지 → `main.cpp`·렌더러·`VoyageSave` 무수정. 입항 루프·시장 매매·`canDock`만 `m_world` 사용으로 교체, `nearestPort`는 위치 파라미터를 받는 형태로 OceanWorld로 이동.
+- 의도: 섬·풍향·항로(후속 Phase 5 슬라이스)가 쌓일 집. 필드는 입주 시점에 추가(선행 빈 필드 없음). 렌더러는 여전히 게임 무지 — mesh 인스턴스 변환(`main.cpp`의 `PortRenderInstance`)은 그대로.
+- `CargoGoodId`는 `MarketEntry`가 참조해 동행 이동(GameState→OceanWorld 단방향 include 유지). Phase 6 `TradeGoodDef` 도입 시 교역 데이터로 재이동 예정.
+
 ### 2026-06-12 — 등대 볼류메트릭 빔 기반 추가 (ROADMAP Phase 5 항구 시각)
 
 - `lighthouse_beam.frag` 신규 — water 패스 직후 풀스크린 레이마치 패스로 등대 스폿 빔의 대기 산란을 적분. scene depth로 월드 위치 재구성 → 카메라 레이 28스텝(픽셀 지터) × 스폿 원뿔 평가, Henyey-Greenstein phase(g=0.38), 높이·축거리·뷰거리 페이드 + 상한 클램프.

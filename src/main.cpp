@@ -256,6 +256,19 @@ int main() {
         InputManager  inputManager(window);
         Camera camera(45.0f, 1280.0f / 720.0f, 0.1f, 3000.0f);
 
+        // Islands are static geography: bake OceanWorld -> renderer instances
+        // once instead of passing them through the per-frame snapshot.
+        {
+            IslandRenderInstance islandInstances[8];
+            int islandCount = 0;
+            for (const Island& isl : gameState.islands()) {
+                if (islandCount >= 8) break;
+                islandInstances[islandCount++] = IslandRenderInstance{
+                    isl.center, isl.radiusX, isl.radiusY, isl.rotation };
+            }
+            ctx.setIslands(islandInstances, islandCount);
+        }
+
         AppFlow app;
         AppSettings settings;
         bool worldSessionStarted = false;

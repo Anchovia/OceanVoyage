@@ -297,6 +297,39 @@ void VulkanContext::drawPortShadows(VkCommandBuffer cmd, const glm::mat4& lightM
     }
 }
 
+// Islands share the port pipeline; the mesh is baked in world space so the
+// model matrix is identity (one draw for all islands).
+void VulkanContext::drawIslandMesh(VkCommandBuffer cmd, VkDescriptorSet descriptorSet) {
+    if (m_islandMesh.count == 0 || m_portPipeline == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_portPipeline);
+    vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        m_portPipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+    VkBuffer     bufs[] = { m_islandMesh.vbuf };
+    VkDeviceSize offs[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, bufs, offs);
+
+    const glm::mat4 model(1.0f);
+    vkCmdPushConstants(cmd, m_portPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+        0, sizeof(glm::mat4), &model);
+    vkCmdDraw(cmd, m_islandMesh.count, 1, 0, 0);
+}
+
+void VulkanContext::drawIslandShadows(VkCommandBuffer cmd, const glm::mat4& lightMVP) {
+    if (m_islandMesh.count == 0 || m_portShadowPipeline == VK_NULL_HANDLE)
+        return;
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_portShadowPipeline);
+    VkBuffer     bufs[] = { m_islandMesh.vbuf };
+    VkDeviceSize offs[] = { 0 };
+    vkCmdBindVertexBuffers(cmd, 0, 1, bufs, offs);
+
+    vkCmdPushConstants(cmd, m_shadowPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT,
+        0, sizeof(glm::mat4), &lightMVP);
+    vkCmdDraw(cmd, m_islandMesh.count, 1, 0, 0);
+}
+
 void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex) {
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
@@ -353,6 +386,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
                 vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
             }
             drawPortShadows(cmd, lightMVP);
+            drawIslandShadows(cmd, lightMVP);
         }
         vkCmdEndRenderPass(cmd);
     }
@@ -400,8 +434,10 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             vkCmdBindVertexBuffers(cmd, 0, 1, sBufs, sOffs);
             vkCmdDraw(cmd, m_shipMesh.count, 1, 0, 0);
         }
-        if (m_reflectionModeHud >= 2)
+        if (m_reflectionModeHud >= 2) {
             drawPortInstances(cmd, m_reflectionDescriptorSets[m_currentFrame]);
+            drawIslandMesh(cmd, m_reflectionDescriptorSets[m_currentFrame]);
+        }
 
         vkCmdEndRenderPass(cmd);
     }
@@ -431,8 +467,10 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_skyPipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
-    if (worldVisible)
+    if (worldVisible) {
         drawPortInstances(cmd, m_descriptorSets[m_currentFrame]);
+        drawIslandMesh(cmd, m_descriptorSets[m_currentFrame]);
+    }
 
     // Refraction/depth seed for water. The ship is drawn again after the ocean for final
     // visibility, but including it in the pre-water buffers gives the water shader real

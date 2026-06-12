@@ -24,6 +24,7 @@ constexpr float kThrottleReturn     = 0.5f;  // throttle ease-back per second wi
 constexpr float kRudderRate         = 2.5f;  // rudder change per second while keyed
 constexpr float kRudderReturn       = 3.0f;  // rudder centering per second with no input
 constexpr float kDockMaxSpeed       = 2.0f;  // ship must be this slow (units/s) to dock
+constexpr float kIslandClearance    = 6.0f;  // hull keep-out margin beyond the island waterline ellipse
 
 // Move v toward 0 by at most `amount`.
 float approachZero(float v, float amount) {
@@ -44,8 +45,9 @@ void GameState::update(float dt, const PlayerInput& input) {
     const bool dockPressed = input.dockKey && !m_prevDockKey;
     m_prevDockKey = input.dockKey;
     if (m_mode == GameMode::Sailing && dockPressed && canDock()) {
-        for (size_t i = 0; i < m_ports.size(); i++) {
-            if (glm::length(m_ports[i].position - m_ship.position) <= m_ports[i].radius) {
+        const std::vector<Port>& ports = m_world.ports();
+        for (size_t i = 0; i < ports.size(); i++) {
+            if (glm::length(ports[i].position - m_ship.position) <= ports[i].radius) {
                 m_mode            = GameMode::Docked;
                 m_dockedPortIndex = (int)i;
                 m_ship.velocity   = glm::vec2(0.0f);
@@ -80,7 +82,7 @@ void GameState::updateMarket(const PlayerInput& input) {
 
     if (!m_marketOpen || m_dockedPortIndex < 0)
         return;
-    Port& port = m_ports[(size_t)m_dockedPortIndex];
+    Port& port = m_world.portAt((size_t)m_dockedPortIndex);
     if (port.market.empty())
         return;
 
@@ -135,7 +137,7 @@ bool GameState::cargoRemove(CargoGoodId good, int count) {
 bool GameState::canDock() const {
     if (m_mode != GameMode::Sailing) return false;
     if (glm::length(m_ship.velocity) > kDockMaxSpeed) return false;
-    for (const Port& p : m_ports)
+    for (const Port& p : m_world.ports())
         if (glm::length(p.position - m_ship.position) <= p.radius) return true;
     return false;
 }
@@ -186,23 +188,39 @@ void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
 
     m_ship.heading  += m_ship.yawRate * dt;
     m_ship.position += m_ship.velocity * dt;
+
+    resolveIslandCollision();
 }
 
-const Port* GameState::nearestPort(float& outDistance, glm::vec2& outDir) const {
-    const Port* best = nullptr;
-    float bestDist = 0.0f;
-    for (const Port& p : m_ports) {
-        const float d = glm::length(p.position - m_ship.position);
-        if (!best || d < bestDist) {
-            best = &p;
-            bestDist = d;
-        }
+// Ellipse-distance collision (ROADMAP Phase 5: no tile grid): if the hull is
+// inside an island's inflated waterline ellipse, push it back to the boundary
+// and remove the inward velocity component so the ship slides along the shore
+// instead of sticking.
+void GameState::resolveIslandCollision() {
+    for (const Island& isl : m_world.islands()) {
+        const float c = std::cos(isl.rotation);
+        const float s = std::sin(isl.rotation);
+        const glm::vec2 rel = m_ship.position - isl.center;
+        // World -> island-local frame (inverse rotation).
+        const glm::vec2 local{ rel.x * c + rel.y * s, -rel.x * s + rel.y * c };
+        const float rx = isl.radiusX + kIslandClearance;
+        const float ry = isl.radiusY + kIslandClearance;
+        const glm::vec2 e{ local.x / rx, local.y / ry };
+        const float d2 = glm::dot(e, e);
+        if (d2 >= 1.0f || d2 < 1.0e-6f) continue;
+
+        // Exact push-out along the center ray (the ellipse scales linearly),
+        // with the outward normal from the ellipse gradient at that point.
+        const glm::vec2 boundaryLocal = local / std::sqrt(d2);
+        const glm::vec2 nLocal = glm::normalize(
+            glm::vec2{ boundaryLocal.x / (rx * rx), boundaryLocal.y / (ry * ry) });
+        const glm::vec2 nWorld{ nLocal.x * c - nLocal.y * s,
+                                nLocal.x * s + nLocal.y * c };
+        m_ship.position = isl.center + glm::vec2{ boundaryLocal.x * c - boundaryLocal.y * s,
+                                                  boundaryLocal.x * s + boundaryLocal.y * c };
+        const float vn = glm::dot(m_ship.velocity, nWorld);
+        if (vn < 0.0f) m_ship.velocity -= nWorld * vn;
     }
-    if (!best) return nullptr;
-    outDistance = bestDist;
-    outDir = (bestDist > 0.001f) ? (best->position - m_ship.position) / bestDist
-                                 : glm::vec2(0.0f);
-    return best;
 }
 
 void GameState::setTime(float t) {
