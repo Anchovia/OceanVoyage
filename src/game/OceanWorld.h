@@ -28,12 +28,27 @@ struct MarketEntry {
     int         stock;     // port-side inventory available to buy
 };
 
-// A trade port on the open sea. First-pass data (ROADMAP 3b/3c): hardcoded
-// list with a static market. Port types and per-type markets arrive with the
-// Phase 5 port expansion.
+// Port character: drives the market profile for now (a Coal port mines cheap
+// coal, a Shipyard pays well for steel). Facilities (repair, ship purchase)
+// attach to these types in Phase 6.
+enum class PortType : uint8_t { Trade = 0, Industrial, Coal, Shipyard };
+
+inline const char* portTypeName(PortType t) {
+    switch (t) {
+        case PortType::Trade:      return "TRADE PORT";
+        case PortType::Industrial: return "INDUSTRIAL PORT";
+        case PortType::Coal:       return "COAL PORT";
+        case PortType::Shipyard:   return "SHIPYARD";
+        default:                   return "";
+    }
+}
+
+// A trade port on the open sea. Hardcoded list with a static market;
+// dynamic demand/supply pricing arrives in Phase 6.
 struct Port {
     int         id;
     const char* name;   // uppercase A-Z (the vector-font HUD has no lowercase)
+    PortType    type;
     glm::vec2   position;
     float       radius = 30.0f; // "near port" / docking range in world metres
     std::vector<MarketEntry> market;
@@ -51,9 +66,17 @@ struct Island {
     float     rotation; // radians around +Z
 };
 
+// Global wind state at a moment in time. direction is the normalized world
+// vector the wind blows TOWARD (the HUD displays the nautical "from"
+// direction). speed is in m/s.
+struct Wind {
+    glm::vec2 direction;
+    float     speed;
+};
+
 // World state for the open sea: the home of the geography the ship sails
-// through. Residents so far: ports and islands; wind and routes join in
-// later Phase 5 slices. Knows nothing about the renderer — mesh instances are
+// through. Residents so far: ports, islands, and wind; routes join in a
+// later Phase 5 slice. Knows nothing about the renderer — mesh instances are
 // produced in a separate transform step (main.cpp builds PortRenderInstance
 // from ports()).
 class OceanWorld {
@@ -65,6 +88,11 @@ public:
     Port& portAt(size_t index) { return m_ports[index]; }
 
     const std::vector<Island>& islands() const { return m_islands; }
+
+    // Deterministic global wind: a slow minutes-scale drift computed purely
+    // from gameTime, so saves reproduce it for free and Phase 7 sail physics
+    // can promote it without a format change.
+    Wind windAt(float gameTime) const;
 
     // Nearest port to `position`, with distance and a normalized world-space
     // direction toward it. Returns nullptr only if no ports exist.

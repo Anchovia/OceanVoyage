@@ -6,6 +6,29 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 항구 확장: PortType + 4항구 시장 차별화 (ROADMAP Phase 5-4b, **Phase 5 종결**)
+
+- `PortType { Trade, Industrial, Coal, Shipyard }` + `Port.type` 도입(이번 슬라이스에선 시장 프로필 근거 + 정박 메뉴 타이틀 표기 — `CARDIFF  COAL PORT`. 조선소 기능 등은 Phase 6). **빌드·동작 검증 완료.**
+- 항구 4개: 기존 BRISTOL(Trade)·LIVERPOOL(Industrial) + **CARDIFF**(Coal, {340,-430} 섬 해협 남쪽 너머, Coal 5/4·재고 400) + **GLASGOW**(Shipyard, {380,120} 북쪽 외해, Steel 34·Coal 13 고가 매입, Grain 산지). 섬·기존 항구와 90m+ 이격 확인.
+- 항로 설계(소스 주석 표기): Coal CARDIFF→GLASGOW +8(최장), Steel LIVERPOOL→GLASGOW +8, Machinery LIVERPOOL→CARDIFF +8, 보조 +2~6. 동일 항구 매매 손해 유지. 항구 메시/등대/조명/PRT/DST/T 순환은 데이터 주도라 무수정 적용.
+- **주의(기록)**: 라이트 예산 정확히 만석 — 포인트 8/8, 스폿 4/4. 5번째 항구부터 조용히 잘림 → 항구 추가 전 거리 기반 라이트 컬링 필요(`ENGINE_TODO.md` 라이트 정책 항목).
+- **Phase 5 종결**: OceanWorld 경계 + 항구 시각/조명 + 섬·해안선 + 얕은 물/거품 + 풍향 + 항로/목적지 + 4항구. 바다가 "기억 가능한 공간"의 1차 기준을 충족. 다음 갈림길: Phase 6(경제 심화) 또는 기준 성능 측정(Phase 4-1).
+
+### 2026-06-12 — 항로/목적지 1차: T 키 목적지 + DST HUD + 도착 판정 (ROADMAP Phase 5-4a)
+
+- **T 키**로 목적지 순환(없음 → 각 항구 → 없음, edge-detect). 정박 중에도 선택 가능(다음 항로 계획), 시장 화면에선 무시. 목적지 항구 입항 시 자동 해제(도착 완료). **빌드·동작 검증 완료.**
+- `GameState::m_routeTargetPortId`(-1=없음) + `routeTarget()` — id 조회라 항구 확장(5-4b)에 안전. **세이브 미저장(의도)**: 항법 보조 상태, 로드 후 재선택. save v3 범위로 이연.
+- HUD `DST` 라인(청록 톤, WND 아래): `DST LIVERPOOL E 580` → 반경 진입 시 `DST LIVERPOOL HERE`. PRT(최근접 자동)와 역할 분리. PRT/WND/DST 공용 `compassOctant` 람다.
+- `FrameRenderData` 끝에 routePortName/routeDistance/routeDir/routeArrived 추가 — main.cpp이 계산, 렌더러는 표시값만(게임 무지 유지).
+- 효과: WND(풍향)와 DST(목적지 방위)를 함께 보는 첫 항해 의사결정 루프 성립.
+
+### 2026-06-12 — 풍향 1차: 전역 바람 + WND HUD + 항해 보정 (ROADMAP Phase 5-3)
+
+- `OceanWorld`에 `Wind { direction(부는 방향), speed }` + `windAt(gameTime)` — 비공약수 주기 사인 합의 **결정적 함수**(방향 10~25분 주기 선회, 풍속 3~10m/s). 상태 없음 → 세이브 무변경 재현, Phase 7 돛 물리로 무손실 승격 가능. **빌드·동작 검증 완료(순풍/역풍 최고속 분화, 완만한 변화, 결정성).**
+- 항해 물리: 추진력·전진 최고속에 `windFactor` = 1 + dot(wind, forward)×(speed/10)×0.15, [0.82, 1.18] 클램프 — 순풍 ~+15%/역풍 ~-15%. 후진 상한 무영향. sail efficiency curve/no-go zone/tacking은 Phase 7.
+- HUD: PRT 아래 `WND` 라인 — 항해 관례대로 **불어오는** 8방위 + m/s(`WND SW 7`). PRT 방위 계산을 `compassOctant` 람다로 공유. `FrameRenderData` 끝에 windDir/windSpeed 추가(표시값만, 렌더러 게임 무지 유지).
+- 의도된 게임플레이 영향: 항로 방향별 소요시간 차이 발생(교역 밸런스 미세 변화).
+
 ### 2026-06-12 — 얕은 물 틴트 + shoreline foam + 안개 통일 (ROADMAP Phase 5-2c)
 
 - 공유 UBO 끝에 섬 워터라인 ellipse 배열 추가(`SHARED_ISLAND_COUNT`=4, posRadius/rotation — 뒤에 붙여 기존 셰이더 prefix 레이아웃 불변). `setIslands()`가 미러링하고 메인/반사 UBO에 채움(라이트 배열처럼 반경 0 = 빈 슬롯). **빌드·동작 검증 완료.**

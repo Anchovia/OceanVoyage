@@ -25,6 +25,7 @@ struct PlayerInput {
     bool menuDown        = false;  // Down arrow
     bool buyKey          = false;  // B (market buy 1)
     bool sellKey         = false;  // S without Ctrl (market sell 1; harmless while docked)
+    bool routeKey        = false;  // T (cycle route destination; GameState edge-detects)
     bool toggleDevUi     = false;  // F3 (dev builds; main edge-detects)
     int  scrollDelta = 0;   // scroll wheel steps (camera zoom)
     int windowWidth = 1280;
@@ -83,10 +84,20 @@ public:
 
     const std::vector<Port>& ports() const { return m_world.ports(); }
     const std::vector<Island>& islands() const { return m_world.islands(); }
+    Wind wind() const { return m_world.windAt(m_time); }
     // Nearest port to the ship, with distance and a normalized world-space
     // direction toward it. Returns nullptr only if no ports exist.
     const Port* nearestPort(float& outDistance, glm::vec2& outDir) const {
         return m_world.nearestPort(m_ship.position, outDistance, outDir);
+    }
+
+    // Route destination selected with the T key (nullptr = none). Not saved:
+    // it is a navigation aid, re-picked after load.
+    const Port* routeTarget() const {
+        if (m_routeTargetPortId < 0) return nullptr;
+        for (const Port& p : m_world.ports())
+            if (p.id == m_routeTargetPortId) return &p;
+        return nullptr;
     }
 
     GameMode mode() const { return m_mode; }
@@ -141,6 +152,9 @@ private:
     GameMode m_mode            = GameMode::Sailing;
     int      m_dockedPortIndex = -1;
     bool     m_prevDockKey     = false; // edge-detect for the dock key
+
+    int  m_routeTargetPortId = -1;    // route destination port id (-1 = none)
+    bool m_prevRouteKey      = false; // edge-detect for the route cycle key
 
     bool m_marketOpen     = false;
     int  m_marketSelected = 0;

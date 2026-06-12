@@ -771,6 +771,13 @@ void VulkanContext::drawFrame(const FrameRenderData& frame) {
     m_marketOpenHud    = frame.marketOpen;
     m_marketSelHud     = frame.marketSelected;
     m_nearestPortNameHud = frame.nearestPortName;
+    m_windDirHud       = frame.windDir;
+    m_windSpeedHud     = frame.windSpeed;
+    m_routePortNameHud = frame.routePortName;
+    m_routeDistanceHud = frame.routeDistance;
+    m_routeDirHud      = frame.routeDir;
+    m_routeArrivedHud  = frame.routeArrived;
+    m_portTypeNameHud  = frame.portTypeName;
     m_marketRowsHudCount = frame.marketRows
         ? std::min(frame.marketRowCount, (int)m_marketRowsHud.size()) : 0;
     for (int i = 0; i < m_marketRowsHudCount; i++)
@@ -1361,18 +1368,50 @@ void VulkanContext::updateHotbar() {
         pushNumber(rud < 0 ? -rud : rud, vx + 4.0f * gpx, hy, gpx, col);
         hy += lh;
 
+        static const char* kCompass8[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+        auto compassOctant = [](glm::vec2 dir) {
+            const float bearing = std::atan2(dir.x, dir.y); // 0 = +Y (N), clockwise
+            int octant = (int)std::floor(bearing * (4.0f / 3.14159265f) + 0.5f);
+            return ((octant % 8) + 8) % 8;
+        };
+
         // Nearest port: name + 8-way compass letters (+Y = north) + distance (m).
         if (m_portDistanceHud >= 0.0f) {
-            static const char* kCompass8[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-            const float bearing = std::atan2(m_portDirHud.x, m_portDirHud.y); // 0 = +Y (N), clockwise
-            int octant = (int)std::floor(bearing * (4.0f / 3.14159265f) + 0.5f);
-            octant = ((octant % 8) + 8) % 8;
             char portLine[32];
             std::snprintf(portLine, sizeof(portLine), "%s %s %d",
                           m_nearestPortNameHud ? m_nearestPortNameHud : "",
-                          kCompass8[octant], (int)(m_portDistanceHud + 0.5f));
+                          kCompass8[compassOctant(m_portDirHud)], (int)(m_portDistanceHud + 0.5f));
             pushText("PRT", lx, hy, gpx, col);
             pushText(portLine, vx, hy, gpx, col);
+            hy += lh;
+        }
+
+        // Wind: nautical convention — the compass point it blows FROM + m/s.
+        if (m_windSpeedHud > 0.0f) {
+            char windLine[16];
+            std::snprintf(windLine, sizeof(windLine), "%s %d",
+                          kCompass8[compassOctant(-m_windDirHud)],
+                          (int)(m_windSpeedHud + 0.5f));
+            pushText("WND", lx, hy, gpx, col);
+            pushText(windLine, vx, hy, gpx, col);
+            hy += lh;
+        }
+
+        // Route destination (T to cycle): name + bearing + distance, or HERE
+        // once the ship is inside the destination radius.
+        if (m_routeDistanceHud >= 0.0f) {
+            const glm::vec4 routeCol = {0.65f, 0.88f, 0.95f, 0.95f};
+            char routeLine[32];
+            if (m_routeArrivedHud)
+                std::snprintf(routeLine, sizeof(routeLine), "%s HERE",
+                              m_routePortNameHud ? m_routePortNameHud : "");
+            else
+                std::snprintf(routeLine, sizeof(routeLine), "%s %s %d",
+                              m_routePortNameHud ? m_routePortNameHud : "",
+                              kCompass8[compassOctant(m_routeDirHud)],
+                              (int)(m_routeDistanceHud + 0.5f));
+            pushText("DST", lx, hy, gpx, routeCol);
+            pushText(routeLine, vx, hy, gpx, routeCol);
             hy += lh;
         }
 
@@ -1397,8 +1436,12 @@ void VulkanContext::updateHotbar() {
     // Port menu (docked): port name + actions. Drawn under the pause overlay so
     // pausing while docked still dims the menu. Hidden while the market is open.
     if (m_dockedHud && !m_marketOpenHud && !m_pausedHud) {
-        pushCenteredText(m_portNameHud ? m_portNameHud : "PORT",
-                         H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 0.95f});
+        // Title: "CARDIFF  COAL PORT" — name plus the port-type label.
+        char title[48];
+        std::snprintf(title, sizeof(title), "%s  %s",
+                      m_portNameHud ? m_portNameHud : "PORT",
+                      m_portTypeNameHud ? m_portTypeNameHud : "");
+        pushCenteredText(title, H * 0.5f - 72.0f, 8.0f, {0.95f, 0.92f, 0.82f, 0.95f});
         const char* rows[] = { "SET SAIL", "TRADE" };
         for (int i = 0; i < 2; ++i) {
             float rx, ry, rw, rh;

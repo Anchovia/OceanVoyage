@@ -223,6 +223,7 @@ static void clearGameplayInput(PlayerInput& input) {
     input.menuDown        = false;
     input.buyKey          = false;
     input.sellKey         = false;
+    input.routeKey        = false;
     input.scrollDelta     = 0;
 }
 
@@ -415,6 +416,20 @@ int main() {
                 };
             }
 
+            const Wind wind = gameState.wind();
+
+            // Route destination HUD values (DST line).
+            const Port* routePort = gameState.routeTarget();
+            float routeDistance = -1.0f;
+            glm::vec2 routeDir{0.0f, 0.0f};
+            bool routeArrived = false;
+            if (routePort) {
+                const glm::vec2 toPort = routePort->position - ship.position;
+                routeDistance = glm::length(toPort);
+                if (routeDistance > 0.001f) routeDir = toPort / routeDistance;
+                routeArrived = routeDistance <= routePort->radius;
+            }
+
             ctx.drawFrame(FrameRenderData{
                 camera, shipPosition, shipVelocity, ship.heading, ship.throttle, ship.rudder,
                 gameState.timeOfDay(), gameState.time(),
@@ -426,7 +441,11 @@ int main() {
                 marketOpen, gameState.marketSelected(), marketRowCount, marketRows,
                 nearestPort ? nearestPort->name : nullptr,
                 settings.reflectionMode,
-                portInstanceCount, portInstances
+                portInstanceCount, portInstances,
+                wind.direction, wind.speed,
+                routePort ? routePort->name : nullptr,
+                routeDistance, routeDir, routeArrived,
+                dockedPort ? portTypeName(dockedPort->type) : nullptr
             });
 
             if (pendingWorldStart && app.loading()) {

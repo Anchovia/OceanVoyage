@@ -46,6 +46,7 @@ PlayerInput InputManager::pollInput() {
     input.menuDown = glfwGetKey(win, GLFW_KEY_DOWN) == GLFW_PRESS;
     input.buyKey   = glfwGetKey(win, GLFW_KEY_B)    == GLFW_PRESS;
     input.sellKey  = !ctrlHeld && glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS;
+    input.routeKey = glfwGetKey(win, GLFW_KEY_T)    == GLFW_PRESS;
     input.toggleDevUi = glfwGetKey(win, GLFW_KEY_F3)     == GLFW_PRESS;
 
     return input;

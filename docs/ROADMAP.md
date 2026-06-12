@@ -21,14 +21,14 @@
 | **2** | 농장 구조 제거 + 렌더 데이터 경계 | 🔶 핵심 완료 | `MIGRATION_PLAN.md` Phase 4 |
 | **3** | VoyageSave + 항구/화물/교역 1차 | ✅ | `MIGRATION_PLAN.md` Phase 5 |
 | **4** | 렌더링 후속 (TAA·리드백·반사·상수) | 🔶 | `ENGINE_TODO.md` P1/P2 |
-| **5** | 세계 표현: 항구·섬·풍향·항로 | 🔶 진입(항구 시각) | `ARCHITECTURE.md` (OceanWorld) |
+| **5** | 세계 표현: 항구·섬·풍향·항로 | ✅ | `ARCHITECTURE.md` (OceanWorld) |
 | **6** | 경제·선박 성장·회사 진행 | 🔴 | `DESIGN.md` |
 | **7** | 항해 심화: 풍향·돛·날씨·해상 위험 | 🔴 | `DESIGN.md` |
 | **8** | 비주얼 고도화 + 에셋 파이프라인 | 🔴 | `DESIGN.md` Visual / `ENGINE_TODO.md` |
 | **9** | 기술 부채 정리·엔진 구조 안정화 | 🔴 | `ENGINE_TODO.md` P3 / `ARCHITECTURE.md` |
 | **10** | 게임 완성도: UX·튜토리얼·진행 목표 | 🔴 | `DESIGN.md` |
 
-현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3 완료**(2026-06-11): VoyageSave(OVYG v2) + 농장 레거시 완전 소멸 + 항구 2개·화물·money·입항/정박/시장 매매 — **첫 교역 루프 성립**. **Phase 4 핵심 완료**(2026-06-12): TAA 1차(옵션 동결)·SMAA 색공간 정리·부력 리드백 축소·반사 모드·상수 단일화. 잔여: 기준 성능 측정(4-1, 사용자 측정 대기)·ocean mesh 정리(4-7)·TAA 2차(보류). **Phase 5 진입**(2026-06-12): 항구 시각 1차 — 부두/창고/등대 절차 메시 + CSM 캐스터 + 항구 로컬 조명(포인트 8) + 등대 스폿 스윕 + 볼류메트릭 빔. **OceanWorld 경계 도입 완료**(2026-06-12): 세계 지리 단일 소유, 항구/시장 데이터 입주(동작 변화 0). **섬·해안선 1차 완료**(2026-06-12): 섬 3개 + ellipse 충돌(해안 슬라이드) + 월드 베이크 절차 메시(port 파이프라인 재사용). **얕은 물/shoreline foam 완료**(2026-06-12): 해석적 섬 거리 기반 shallow tint + FFT 연동 거품선, 항구/섬 안개 장거리 통일. 남은 Phase 5: **풍향 → 항로/목적지·항구 확장**.
+현재 위치: 렌더링 기준점(화질) 달성, **Phase 1 항해 물리 1차 완료**(2026-06-09), **Phase 2 렌더러-World 분리 핵심 완료**(2026-06-09) — 렌더러가 `World`/`TileType`/inventory를 모르고, `FrameRenderData`는 `camera`+`ship*`+app 상태만 받는다. 농장 HUD/상호작용/청크·dressing·오브젝트 렌더는 제거됐고, 죽은 셰이더·청크 TU도 CMake에서 정리됨. 공유 디스크립터의 죽은 grass/terrain 텍스처도 제거됨(2d-5b, 2026-06-10). **Phase 3 완료**(2026-06-11): VoyageSave(OVYG v2) + 농장 레거시 완전 소멸 + 항구 2개·화물·money·입항/정박/시장 매매 — **첫 교역 루프 성립**. **Phase 4 핵심 완료**(2026-06-12): TAA 1차(옵션 동결)·SMAA 색공간 정리·부력 리드백 축소·반사 모드·상수 단일화. 잔여: 기준 성능 측정(4-1, 사용자 측정 대기)·ocean mesh 정리(4-7)·TAA 2차(보류). **Phase 5 진입**(2026-06-12): 항구 시각 1차 — 부두/창고/등대 절차 메시 + CSM 캐스터 + 항구 로컬 조명(포인트 8) + 등대 스폿 스윕 + 볼류메트릭 빔. **OceanWorld 경계 도입 완료**(2026-06-12): 세계 지리 단일 소유, 항구/시장 데이터 입주(동작 변화 0). **섬·해안선 1차 완료**(2026-06-12): 섬 3개 + ellipse 충돌(해안 슬라이드) + 월드 베이크 절차 메시(port 파이프라인 재사용). **얕은 물/shoreline foam 완료**(2026-06-12): 해석적 섬 거리 기반 shallow tint + FFT 연동 거품선, 항구/섬 안개 장거리 통일. **풍향 1차 완료**(2026-06-12): 결정적 전역 바람 + WND HUD + ±15% 항해 보정. **항로/목적지 완료**(2026-06-12): T 키 목적지 + DST HUD + 도착 판정. **항구 확장 완료**(2026-06-12): 4항구 PortType 시장 차별화 — **Phase 5 종결**. 다음 갈림길: **Phase 6(경제·선박 성장)** 또는 기준 성능 측정(4-1, 콘텐츠가 쌓인 지금이 적기).
 
 ---
 
@@ -182,17 +182,17 @@ position += velocity * dt
 
 ## Phase 5 — 세계 표현: 항구·섬·풍향·항로
 
-> **상태(2026-06-12): 진행 — 항구 시각 1차 + OceanWorld 경계 + 섬·해안선 1차 + 얕은 물/shoreline foam 완료.** 부두/창고/등대 절차 메시 + 항구 조명/등대 빔, 세계 지리 경계 `OceanWorld`(항구·섬 입주), 섬 3개 + ellipse 충돌 + 베이크 메시 렌더, 해안 틴트/FFT 연동 거품선까지 구현(DEVLOG 참고). 남은 항목: 풍향 → 항로/목적지·항구 확장.
+> **상태(2026-06-12): ✅ 완료.** 항구 시각 1차(부두/창고/등대 + 조명/볼류메트릭 빔) + OceanWorld 경계 + 섬·해안선 1차(ellipse 충돌·베이크 메시) + 얕은 물/shoreline foam + 풍향 1차(WND·±15% 보정) + 항로/목적지(T·DST) + 4항구 PortType 시장 차별화까지 전부 구현·검증(DEVLOG 참고). 장기 방향: 실세계 지도 1:100(`DESIGN.md` 세계 스케일, Phase 9 항목).
 
 **목표:** "무한 바다 위 UI 항구"에서 벗어나 바다를 기억 가능한 공간으로 만든다.
 
 - ✅ **OceanWorld 경계 도입**(2026-06-12) — `src/game/OceanWorld.{h,cpp}`가 세계 지리 단일 소유(`Port`/`MarketEntry`/항구 데이터 이주, `GameState`는 위임 유지로 호출부 무수정). islands/wind/discovered 필드는 해당 슬라이스 입주 시점에 추가. 렌더러를 모르고, mesh 인스턴스는 별도 변환 단계에서 생성(현재 `main.cpp`의 `PortRenderInstance` 변환).
-- **항구 확장** — 3개 이상(Trade/Industrial/Coal/Shipyard 타입), 항구별 시장 차별화, nearest-port 거리·bearing HUD(`PORT: Ironhaven 1.2km NE`).
+- ✅ **항구 확장**(2026-06-12) — 4항구(BRISTOL=Trade/LIVERPOOL=Industrial/CARDIFF=Coal/GLASGOW=Shipyard), `PortType` 기반 시장 차별화(다각 이익 항로 +2~8), 정박 메뉴 타입 표기, nearest-port HUD는 3b부터 동작. 라이트 예산 만석(8/8·4/4) — 5항구째부터 컬링 필요.
 - ✅ **항구 시각 1차**(2026-06-12) — dock/warehouse/lighthouse 절차 메시 + 항구 조명(포인트/스폿/볼류메트릭 빔). **단순 컬러 큐브·flat marker 금지** 원칙 준수, 실루엣 수준 material-lite는 Phase 8 에셋 교체 전 placeholder로 명시. buoy는 후속.
 - ✅ **섬·해안선 1차**(2026-06-12) — `Island` 워터라인 ellipse 3개 + ellipse distance 충돌(push-out+해안 슬라이드, 선체 여유 6m) + 월드 베이크 절차 메시(port 파이프라인 재사용, 주기 노이즈 윤곽, 고도 밴드 정점색, 수중 스커트). voxel/타일 회귀 없음. 불규칙 shoreline 고도화·머티리얼은 Phase 8.
 - ✅ **해안/얕은 물**(2026-06-12) — 섬 ellipse를 공유 UBO로 전달, 해석적 거리 기반 shallow tint(30m) + FFT 파도 연동 shoreline foam(거리 밴드 × 크레스트/whitecap 시드 × 이류 브레이크업 — 노이즈 띠 아님). 항구/섬 안개를 바다와 동일한 장거리 지수로 통일.
-- **풍향 1차** — 전역 `windDirection/windSpeed`, 느린 변화, HUD 표시. 항해 물리에 sail assist factor로 약하게 연결(FFT spectrum 연동은 후순위).
-- **항로/목적지** — selectedPortId, 거리·방향·도착 판정.
+- ✅ **풍향 1차**(2026-06-12) — `OceanWorld::windAt(gameTime)` 결정적 전역 바람(세이브 무변경), `WND` HUD(불어오는 8방위+m/s), 추진/최고속에 ±15% sail assist 클램프 연결. FFT spectrum 연동·돛 물리는 Phase 7~8.
+- ✅ **항로/목적지**(2026-06-12) — T 키 목적지 순환(`m_routeTargetPortId`), DST HUD(이름+방위+거리, 반경 내 HERE), 입항 시 자동 해제. 세이브 미저장(항법 보조, save v3로 이연).
 
 상세 데이터 구조(Port/Island/Wind/RouteTarget)는 진입 시 `ARCHITECTURE.md`에 확정.
 
@@ -263,6 +263,7 @@ position += velocity * dt
 - **legacy farm code 최종 제거** — `ItemType`/`TileType`/`World` 실행 경로 0, farm asset 정리. legacy는 기록/별도 reference로만.
 - **폴더 구조 재정리** — `src/engine`·`src/game`·`src/app`로(의존성 방향 `game → engine`). **기능 안정 후에만** 대규모 이동.
 - **데이터 주도화 준비** — trade goods/ports/ship defs/upgrades 외부화 검토(과한 data engine 금지).
+- **실세계 지도 기반 세계(1:100, 결정 2026-06-12)** — `DESIGN.md` "세계 스케일" 참고. 해안선/수심 베이크 도구, floating origin, 해안 SDF, 지형 스트리밍이 선행 과제. 영국 주변 지역 프로토타입부터.
 - **release/dev 빌드 + 품질 tier** — dev-only(ImGui/labels/profiler) 분리, settings persistence, High(RTX 3060 기본)/Medium/Low(디버그용) tier. **품질을 싸게 낮추는 게 아니라 비싼 기능을 명시적으로 tier화.**
 
 ---

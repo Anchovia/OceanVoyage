@@ -40,6 +40,15 @@ void GameState::update(float dt, const PlayerInput& input) {
     m_day = static_cast<int>(m_time / DAY_DURATION);
     m_timeOfDay = std::fmod(m_time, DAY_DURATION) / DAY_DURATION;
 
+    // Route destination (T, edge-detected): cycle none -> each port -> none.
+    // Works while docked too, so the next leg can be planned in harbor.
+    const bool routePressed = input.routeKey && !m_prevRouteKey;
+    m_prevRouteKey = input.routeKey;
+    if (routePressed && !m_marketOpen) {
+        const int count = (int)m_world.ports().size();
+        m_routeTargetPortId = (m_routeTargetPortId + 2) % (count + 1) - 1;
+    }
+
     // Docking (Enter, edge-detected): anchor at the nearby port and open the
     // port menu. Undocking happens through the menu (setSail).
     const bool dockPressed = input.dockKey && !m_prevDockKey;
@@ -54,6 +63,9 @@ void GameState::update(float dt, const PlayerInput& input) {
                 m_ship.yawRate    = 0.0f;
                 m_ship.throttle   = 0.0f;
                 m_ship.rudder     = 0.0f;
+                // Arriving at the route destination completes the route.
+                if (ports[i].id == m_routeTargetPortId)
+                    m_routeTargetPortId = -1;
                 break;
             }
         }
@@ -163,16 +175,26 @@ void GameState::updateShipPhysics(float dt, const PlayerInput& input) {
     const glm::vec2 forward{ std::cos(m_ship.heading), std::sin(m_ship.heading) };
     const float devMul = std::clamp(input.moveSpeedMultiplier, 0.1f, 12.0f); // dev fast-move; 1.0 in normal play
 
+    // Wind assist (Phase 5 first pass): a gentle scalar from the relative
+    // wind — tailwind helps, headwind hinders, capped at roughly ±15%. The
+    // real sail model (efficiency curve, no-go zone, tacking) is Phase 7.
+    const Wind wind = m_world.windAt(m_time);
+    const float windAlong = glm::dot(wind.direction, forward);
+    const float windFactor = std::clamp(
+        1.0f + windAlong * (wind.speed / 10.0f) * 0.15f, 0.82f, 1.18f);
+
     // Thrust along the bow, then linear water drag.
-    m_ship.velocity += forward * (m_ship.throttle * kThrust * devMul * dt);
+    m_ship.velocity += forward * (m_ship.throttle * kThrust * windFactor * devMul * dt);
     m_ship.velocity -= m_ship.velocity * (kLinearDrag * dt);
 
     // Clamp speed (asymmetric: reverse is much slower than forward), and kill
     // tiny residual drift so a released ship settles instead of creeping.
+    // Tailwind also lifts the forward top speed a little.
     float speed = glm::length(m_ship.velocity);
     if (speed > kVelocitySnap) {
         const float along = glm::dot(m_ship.velocity, forward);
-        const float limit = ((along >= 0.0f) ? kMaxForwardSpeed : kMaxReverseSpeed) * devMul;
+        const float limit = ((along >= 0.0f) ? kMaxForwardSpeed * windFactor
+                                             : kMaxReverseSpeed) * devMul;
         if (speed > limit) m_ship.velocity *= (limit / speed);
     } else {
         m_ship.velocity = glm::vec2{ 0.0f };

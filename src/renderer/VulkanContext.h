@@ -153,6 +153,13 @@ struct FrameRenderData {
     int                                      reflectionMode;  // 0 sky only, 1 SSR, 2 planar, 3 SSR+planar
     int                                      portInstanceCount;
     const PortRenderInstance*                portInstances;   // caller-owned; copied during drawFrame
+    glm::vec2                                windDir;         // normalized world direction the wind blows toward
+    float                                    windSpeed;       // m/s (WND HUD line)
+    const char*                              routePortName;   // route destination name (DST HUD); may be null
+    float                                    routeDistance;   // metres to the destination; < 0 = no route
+    glm::vec2                                routeDir;        // normalized world-space direction toward it
+    bool                                     routeArrived;    // ship is inside the destination radius
+    const char*                              portTypeName;    // docked port type label; may be null
 };
 
 class VulkanContext {
@@ -584,6 +591,13 @@ private:
     bool                     m_marketOpenHud   = false;
     int                      m_marketSelHud    = 0;
     const char*              m_nearestPortNameHud = nullptr; // points at static port name literals
+    glm::vec2                m_windDirHud   = {0.0f, 0.0f};  // blows-toward direction
+    float                    m_windSpeedHud = 0.0f;          // m/s
+    const char*              m_routePortNameHud = nullptr;   // points at static port name literals
+    float                    m_routeDistanceHud = -1.0f;     // metres; < 0 = no route
+    glm::vec2                m_routeDirHud      = {0.0f, 0.0f};
+    bool                     m_routeArrivedHud  = false;
+    const char*              m_portTypeNameHud  = nullptr;   // points at static type literals
     int                      m_marketRowsHudCount = 0;
     std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
     int                      m_portInstanceCount = 0;
