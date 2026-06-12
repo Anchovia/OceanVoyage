@@ -98,11 +98,12 @@ engine/Renderer
 1. FFT 해양 컴퓨트 (월드 가시일 때만)        — 그래픽스 큐, 배리어로 렌더 앞에 직렬화
    스펙트럼 애니메이션 → butterfly IFFT(2·log2N 패스) → displacement/slope 조립
    → wake 시뮬 → GPU 5점 부력 샘플(20B host-visible 버퍼, 2프레임 지연 읽기)
-2. 그림자 패스                              — CSM 3 캐스케이드 레이어별, 선박 캐스터
-3. 플래너 반사 패스                          — 물 평면 미러 카메라로 씬 1회 재렌더
-4. 불투명 씬 패스(offscreen HDR R16F)        — 하늘 → 선박(pre-water refraction/depth seed)
+2. 그림자 패스                              — CSM 3 캐스케이드 레이어별, 선박·항구 캐스터
+3. 플래너 반사 패스                          — 물 평면 미러 카메라로 씬 1회 재렌더(항구는 REFL PLANAR/FULL에서만)
+4. 불투명 씬 패스(offscreen HDR R16F)        — 하늘 → 항구(절차 메시) → 선박(pre-water refraction/depth seed)
 5. scene color/depth 복사                    — 물의 굴절·깊이 샘플용
 6. water 패스(LOAD)                          — 해수면(FFT) → 선박(최종 가시)
+6.5 등대 볼류메트릭 빔 패스(LOAD, additive)  — scene depth 기반 풀스크린 레이마치, 밤 게이트
 7. 후처리                                    — TAA 옵션(HDR resolve) 또는 SMAA(LDR 톤매핑 후 edge/blend/neighborhood) 또는 post FXAA/OFF → UI → (dev ImGui) → 스왑체인
 ```
 
@@ -117,6 +118,7 @@ engine/Renderer
 - offscreen HDR(R16G16B16A16_SFLOAT) 색 + depth, scene color/depth 복사본, 플래너 반사 타깃, TAA resolve 타깃, SMAA edge/blend/LDR 타깃 — 전부 frame-in-flight별.
 - 그림자: depth 배열(레이어=캐스케이드), 2048².
 - FFT: h0/spectrum/pong(RGBA32F) + displacement/slope(RGBA16F, 더블버퍼) + wake(RGBA16F) + 5점 부력 리드백 버퍼.
+- 항구: 절차 port 메시(단일 vertex 버퍼, 인스턴스별 push constant model) + 공유 UBO의 로컬 라이트 8/스폿 4 배열(`shared_constants.h`, 등대 랜턴·부두 램프·스윕 빔).
 
 **동기화·수명 모델**
 

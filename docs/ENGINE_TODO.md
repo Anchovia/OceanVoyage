@@ -90,6 +90,6 @@
 ### P3: 향후 해양/대기 고도화
 
 - wake 스프레이 파티클, 해안선 거품(shore distance + wave energy, mask/advection 기반 — 단순 노이즈 띠 금지)
-- port lighting(등대 beacon, point light 수 제한, emissive 발광)
+- ~~port lighting(등대 beacon, point light 수 제한, emissive 발광)~~ ✅ 1차 구현(2026-06-12): 포인트 라이트 8 + 스폿 4 제한(`shared_constants.h`), 등대 스폿 스윕 + 볼류메트릭 빔 + emissive beacon. 남은 것: 항구/콘텐츠 증가 시 라이트 수·컬링 정책 재검토
 - weather / 동적 시간대 연동 강화(wind→roughness/whitecap/wave detail, storm visibility)
 - 플래너 해상도·대상 제한 + SSR step 옵션(REFL 모드 4종은 구현됨)

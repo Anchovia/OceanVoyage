@@ -6,6 +6,30 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 등대 볼류메트릭 빔 기반 추가 (ROADMAP Phase 5 항구 시각)
+
+- `lighthouse_beam.frag` 신규 — water 패스 직후 풀스크린 레이마치 패스로 등대 스폿 빔의 대기 산란을 적분. scene depth로 월드 위치 재구성 → 카메라 레이 28스텝(픽셀 지터) × 스폿 원뿔 평가, Henyey-Greenstein phase(g=0.38), 높이·축거리·뷰거리 페이드 + 상한 클램프.
+- 파이프라인: post 레이아웃/디스크립터 재사용, scene-load 렌더패스에 additive(ONE/ONE) 블렌드, depth test/write 없음. 밤 게이트(dayFactor)로 주간엔 0 기여.
+- 의도: 빌보드 글로우가 아니라 깊이 인지 볼류메트릭 — 지오메트리가 빔을 가로지르면 그 앞에서 산란이 잘린다.
+
+### 2026-06-12 — 등대 스폿라이트 스윕 조명 추가 (ROADMAP Phase 5 항구 시각)
+
+- 공유 UBO에 스폿라이트 배열 추가(`SHARED_SPOT_LIGHT_COUNT`=4, `shared_constants.h`). CPU(`populatePortLighting`)가 등대 랜턴 위치에서 gameTime 기반 회전 빔을 채움 — 0.42rad/s, 인스턴스별 위상차, cos(16.25°) 원뿔, 반경 520m.
+- 평가 추가: `port.frag`(간이 블린 스펙), `ship.frag`(기존 PBR과 동일한 Cook-Torrance GGX 정식 평가), `ocean.frag`(수면 스폿 하이라이트). 전부 밤 가중치로 주간 기여 억제.
+
+### 2026-06-12 — 항구 로컬 조명과 수면 하이라이트 추가 (ROADMAP Phase 5 항구 시각)
+
+- 공유 UBO에 포인트 라이트 배열 추가(`SHARED_LOCAL_LIGHT_COUNT`=8, `shared_constants.h`). 항구 인스턴스당 2개 — 등대 랜턴(반경 180m)·부두 램프(85m), 따뜻한 색, 밤 가중.
+- `port.frag` `evaluateLocalLights`(디퓨즈+스펙), `ocean.frag` `evaluateLocalLightWater` — 프레넬(F0=0.02) 기반 tight spec + 시선 반사 streak로 수면 등불 반짝임, 출력 클램프로 HDR 폭주 방지.
+
+### 2026-06-12 — 항구 시각 1차 렌더 경로 추가 (ROADMAP Phase 5 진입)
+
+- "UI로만 존재하던 항구"에 첫 시각 표현. `PortRenderInstance{position, heading, scale}` 경계 신설 — `main.cpp`이 Port 목록을 인스턴스로 변환해 `FrameRenderData`로 전달(≤16, drawFrame에서 복사), 렌더러는 게임 무지 유지.
+- `createPortMesh()` 절차 메시(단일 버퍼 + 인스턴스별 push constant model): 부두 데크·잔교·말뚝 그리드, 창고 2동(벽돌/석재 + 박공지붕), 등대(원기둥 타워 + emissive 랜턴룸 + 원뿔 지붕). `PortVertex{pos, normal, color(rgb albedo, a emissive)}` material-lite — Phase 8 에셋 교체 전 placeholder로 명시, 컬러 큐브/flat marker 금지 원칙은 준수(실루엣 수준).
+- `port.vert/frag` 포워드 셰이딩: CSM 3캐스케이드 Poisson PCF 그림자 수신 + 전용 그림자 캐스터 파이프라인, 반구 앰비언트(하늘/바다 바운스), 거리 안개, beacon emissive 밤 강화.
+- 드로우 위치: 그림자 패스 · 불투명 씬 패스(하늘 직후 — pre-water depth/refraction에 포함) · 플래너 반사 패스는 REFL PLANAR/FULL에서만(비용 게이트).
+- 문서 동기화 동반: README/ARCHITECTURE/CODE_CLASSIFICATION/MIGRATION_PLAN 등을 Phase 3~4 완료 상태로 일괄 갱신.
+
 ### 2026-06-12 — 반사 비용 정책: REFL 모드 4종 (ROADMAP Phase 4-5)
 
 - 설정에 `REFL` 행 추가: SKY(0)/SSR(1)/PLANAR(2)/FULL(3, 기본 — 기존과 동일). **빌드·검증 완료(기본 모드 화면 동일, 모드 전환 즉시 반영).**
