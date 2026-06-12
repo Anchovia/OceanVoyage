@@ -32,6 +32,8 @@ struct UniformBufferObject {
     glm::vec4 spotLightPosRadius[SHARED_SPOT_LIGHT_COUNT];         // xyz = world position, w = radius
     glm::vec4 spotLightDirAngle[SHARED_SPOT_LIGHT_COUNT];          // xyz = world direction, w = outer cone cosine
     glm::vec4 spotLightColorIntensity[SHARED_SPOT_LIGHT_COUNT];    // rgb = linear color, w = intensity
+    glm::vec4 islandPosRadius[SHARED_ISLAND_COUNT];                // xy = waterline ellipse center, zw = half-axes (0 = unused)
+    glm::vec4 islandRotation[SHARED_ISLAND_COUNT];                 // x = cos(rotation), y = sin(rotation), zw reserved
 };
 
 struct PostPushConstants {

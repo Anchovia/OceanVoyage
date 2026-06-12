@@ -1088,6 +1088,19 @@ void populatePortLighting(UniformBufferObject& ubo,
                  520.0f * scale, kSpotCosOuter, {1.0f, 0.68f, 0.30f}, 7.4f);
     }
 }
+
+// Island waterline ellipses for the ocean shader (shore tint + shoreline
+// foam). Zero radius marks an unused slot, mirroring the light arrays.
+void populateIslandData(UniformBufferObject& ubo,
+                        int islandCount,
+                        const std::array<glm::vec4, SHARED_ISLAND_COUNT>& posRadius,
+                        const std::array<glm::vec4, SHARED_ISLAND_COUNT>& rotation) {
+    for (uint32_t i = 0; i < SHARED_ISLAND_COUNT; i++) {
+        const bool used = i < (uint32_t)islandCount;
+        ubo.islandPosRadius[i] = used ? posRadius[i] : glm::vec4(0.0f);
+        ubo.islandRotation[i]  = used ? rotation[i]  : glm::vec4(0.0f);
+    }
+}
 } // namespace
 
 void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& camera, float gameTime) {
@@ -1113,6 +1126,7 @@ void VulkanContext::updateUniformBuffer(uint32_t currentFrame, const Camera& cam
     ubo.temporalParams = glm::vec4(m_temporalHistoryFrames > 0 ? 1.0f : 0.0f,
                                    (float)m_reflectionModeHud, 0.0f, 0.0f);
     populatePortLighting(ubo, m_portInstanceCount, m_portInstances, gameTime);
+    populateIslandData(ubo, m_islandCount, m_islandPosRadius, m_islandRotation);
     // TAA reprojection: current NDC -> previous clip, shared with the SSR history matrices.
     m_taaReprojection = ubo.prevViewProj * ubo.invViewProj;
     m_prevViewProj = currentViewProj;
@@ -1140,6 +1154,7 @@ void VulkanContext::updateReflectionUniformBuffer(uint32_t currentFrame, const C
     ubo.prevViewProj = ubo.proj * ubo.view;
     ubo.temporalParams = glm::vec4(0.0f);
     populatePortLighting(ubo, m_portInstanceCount, m_portInstances, gameTime);
+    populateIslandData(ubo, m_islandCount, m_islandPosRadius, m_islandRotation);
     memcpy(m_reflectionUniformBuffers[currentFrame].mapped, &ubo, sizeof(ubo));
 }
 

@@ -26,6 +26,8 @@ layout(binding = 0) uniform UniformBufferObject {
     vec4 spotLightPosRadius[SHARED_SPOT_LIGHT_COUNT];
     vec4 spotLightDirAngle[SHARED_SPOT_LIGHT_COUNT];
     vec4 spotLightColorIntensity[SHARED_SPOT_LIGHT_COUNT];
+    vec4 islandPosRadius[SHARED_ISLAND_COUNT]; // xy = waterline ellipse center, zw = half-axes (0 = unused)
+    vec4 islandRotation[SHARED_ISLAND_COUNT];  // x = cos(rotation), y = sin(rotation)
 } ubo;
 
 layout(binding = 1) uniform sampler2D planarReflection;
@@ -244,6 +246,48 @@ OceanFrame oceanBaseFrame(vec2 worldXY) {
     frame.sourceXY = sourceXY;
     frame.slope    = grad;
     return frame;
+}
+
+// Approximate metric distance (metres) to the nearest island waterline
+// ellipse: normalize into ellipse space, then convert back along the radial
+// ray. Negative inside the waterline.
+float islandShoreDistance(vec2 worldXY) {
+    float best = 100000.0;
+    for (int i = 0; i < SHARED_ISLAND_COUNT; i++) {
+        vec4 pr = ubo.islandPosRadius[i];
+        if (pr.z <= 0.0) continue;
+
+        vec2 rel = worldXY - pr.xy;
+        vec2 rot = ubo.islandRotation[i].xy; // x = cos, y = sin
+        vec2 local = vec2( rel.x * rot.x + rel.y * rot.y,
+                          -rel.x * rot.y + rel.y * rot.x);
+        float dn = length(local / pr.zw);
+        float dist = (dn - 1.0) * length(local) / max(dn, 0.001);
+        best = min(best, dist);
+    }
+    return best;
+}
+
+// Shoreline foam: a breaking band driven by the analytic shore distance and
+// the live FFT wave state (crest elevation + fine whitecap seed), so the line
+// surges and recedes with the actual waves instead of being a static stripe.
+float shoreFoamCoverage(OceanFrame frame, float shoreDist, float viewDepth) {
+    float band = 1.0 - smoothstep(1.5, 24.0, shoreDist);
+    if (band <= 0.001) return 0.0;
+
+    float crest = oceanDispSum(frame.sourceXY).z;
+    float fine  = texture(oceanDisplacement, vec3(frame.sourceXY / CASCADE_L[2], 2.0)).w;
+    float surge = smoothstep(-0.25, 0.60, crest * 1.4 + fine * 0.8);
+
+    // Along-shore breakup, slowly advected so the band churns instead of
+    // reading as a uniform outline.
+    float churn = texture(oceanNormalB,
+        frame.sourceXY * 0.052 + vec2(0.011, -0.008) * ubo.animationParams.x).r;
+    float breakup = 0.45 + 0.55 * churn;
+
+    float waterline = 1.0 - smoothstep(0.0, 7.0, shoreDist);
+    float distanceFade = 1.0 - smoothstep(380.0, 860.0, viewDepth);
+    return saturate((band * band * surge * 0.78 + waterline * 0.50) * breakup) * distanceFade;
 }
 
 float oceanWhitecapCoverage(OceanFrame frame, float viewDepth) {
@@ -569,11 +613,20 @@ void main() {
     water = mix(water, shallowColor, shallowWater * facingScatter * 0.24);
     water = mix(water, scatterColor, sunScatter * facingScatter * mix(0.28, 0.42, shallowWater));
 
+    // Shore proximity tint: turquoise scattering toward island beaches, on top
+    // of the depth-anchored shallow terms (the skirt geometry supplies real
+    // depth; the analytic ellipse distance supplies the wide soft gradient).
+    float shoreDist = islandShoreDistance(fragWorldPos.xy);
+    float shoreProximity = 1.0 - smoothstep(3.0, 30.0, shoreDist);
+    water = mix(water, mix(shallowColor, scatterColor, 0.55),
+                shoreProximity * facingScatter * smoothstep(0.04, 0.60, dayFactor) * 0.34);
+
     float wakeCrestEnergy = max(wakeData.b, 0.0) + wakeData.a * 0.30 + wakeData.g * 0.16;
     float wakeFoamMask = smoothstep(0.048, 0.175, wakeData.r);
     float wakeCrestFoam = wakeFoamMask * smoothstep(0.040, 0.210, wakeCrestEnergy);
     float wakeFoam = wakeCrestFoam * 0.30;
-    float foamCoverage = saturate(oceanWhitecapCoverage(frame, fragViewDepth) + wakeFoam);
+    float shoreFoam = shoreFoamCoverage(frame, shoreDist, fragViewDepth);
+    float foamCoverage = saturate(oceanWhitecapCoverage(frame, fragViewDepth) + wakeFoam + shoreFoam);
     float foamSun = smoothstep(0.0, 0.92, NdotL) * dayFactor;
     vec3 foamColor = mix(vec3(0.28, 0.36, 0.39), vec3(0.88, 0.94, 0.90),
                          smoothstep(0.02, 0.85, dayFactor));

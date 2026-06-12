@@ -25,4 +25,7 @@
 #define SHARED_LOCAL_LIGHT_COUNT     8
 #define SHARED_SPOT_LIGHT_COUNT      4
 
+// Island waterline ellipses shared with the ocean shader (shore tint + foam)
+#define SHARED_ISLAND_COUNT          4
+
 #endif // SHARED_CONSTANTS_H

@@ -198,9 +198,13 @@ void main() {
     color += evaluateLocalLights(fragWorldPos, N, V, albedo, dayFactor);
     color += evaluateSpotLights(fragWorldPos, N, V, albedo, dayFactor);
 
-    const float FOG_START = 140.0;
-    const float FOG_END = 760.0;
-    float fogFactor = clamp((FOG_END - fragViewDepth) / (FOG_END - FOG_START), 0.0, 1.0);
+    // Long-range atmospheric extinction, same curve as the ocean shader —
+    // islands/ports must sink into the haze at the same rate as the water
+    // around them (the old 140-760 m linear fog washed distant islands out
+    // while the sea stayed clear).
+    const float FOG_DENSITY = 0.00078;
+    float fogDepth = fragViewDepth * FOG_DENSITY;
+    float fogFactor = exp2(-fogDepth * fogDepth * 1.442695);
     fogFactor = mix(fogFactor, 1.0, beaconGate * 0.35);
     outColor = vec4(mix(ubo.fogColor.rgb, color, fogFactor), 1.0);
 }

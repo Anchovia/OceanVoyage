@@ -6,6 +6,13 @@ Vulkan 공부 겸 엔진 개발 기록.
 
 ## 구현 기록
 
+### 2026-06-12 — 얕은 물 틴트 + shoreline foam + 안개 통일 (ROADMAP Phase 5-2c)
+
+- 공유 UBO 끝에 섬 워터라인 ellipse 배열 추가(`SHARED_ISLAND_COUNT`=4, posRadius/rotation — 뒤에 붙여 기존 셰이더 prefix 레이아웃 불변). `setIslands()`가 미러링하고 메인/반사 UBO에 채움(라이트 배열처럼 반경 0 = 빈 슬롯). **빌드·동작 검증 완료.**
+- `ocean.frag`: `islandShoreDistance()` — 섬 4개 한도의 해석적 ellipse 근사 거리(per-pixel ALU, distance field 텍스처 베이크 불필요 규모) → ① 해안 30m 청록 산란 틴트(스커트 지오메트리의 깊이 앵커 항 위에 추가, 낮 게이트로 밤 과명 방지) ② `shoreFoamCoverage()` — 해안 거리 밴드(~24m) × FFT 파도 상태(displacement 크레스트 + fine whitecap 시드)로 파도 따라 출렁이는 거품선 + 워터라인 포화선 + 천천히 이류하는 along-shore 브레이크업. 정적 노이즈 띠 아님(원칙). 기존 whitecap/wake foam 합산 경로 사용.
+- 안개 통일: `port.frag`의 단거리 선형 안개(140~760m, 농장 잔재)를 ocean.frag와 동일한 장거리 지수 안개로 교체 — 같은 거리에서 바다는 또렷한데 섬/항구만 허옇게 씻기던 불일치 해소(600m 가시성 26%→80%). 등대 beacon 안개 관통 보정 유지.
+- 비용: 해안 24m 밴드 안에서만 텍스처 5샘플 추가, 그 외 ALU 4회 루프 — 무시 가능.
+
 ### 2026-06-12 — 섬·해안선 1차 + ellipse 충돌 (ROADMAP Phase 5-2)
 
 - `OceanWorld`에 `Island { center, radiusX, radiusY, rotation }`(워터라인 ellipse) + 섬 3개 입주 — BRISTOL→LIVERPOOL 항로(y=-185)를 가로지르는 해협 페어(통과 폭 ~50m) + BRISTOL 남쪽 풍경 섬. **빌드·동작 검증 완료(충돌 슬라이드·워터라인·그림자/플래너/등대 조명 정상).**

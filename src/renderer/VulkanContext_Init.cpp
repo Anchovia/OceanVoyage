@@ -1213,6 +1213,16 @@ void VulkanContext::setIslands(const IslandRenderInstance* islands, int count) {
     if (!islands || count <= 0)
         return;
 
+    // Mirror the waterline ellipses for the ocean shader (shore tint + foam).
+    m_islandCount = std::min(count, (int)SHARED_ISLAND_COUNT);
+    for (int i = 0; i < m_islandCount; i++) {
+        m_islandPosRadius[(size_t)i] = glm::vec4(
+            islands[i].position.x, islands[i].position.y,
+            islands[i].radiusX, islands[i].radiusY);
+        m_islandRotation[(size_t)i] = glm::vec4(
+            std::cos(islands[i].rotation), std::sin(islands[i].rotation), 0.0f, 0.0f);
+    }
+
     constexpr int   kSectors   = 48;
     constexpr int   kDomeRings = 7;            // rho 0..1 (waterline at rho = 1)
     constexpr float kTwoPi     = 6.28318530f;

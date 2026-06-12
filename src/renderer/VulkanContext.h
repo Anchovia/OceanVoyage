@@ -588,6 +588,12 @@ private:
     std::array<MarketRowHud, 8> m_marketRowsHud{};       // copied from FrameRenderData (names are static literals)
     int                      m_portInstanceCount = 0;
     std::array<PortRenderInstance, 16> m_portInstances{};
+
+    // Island waterline ellipses mirrored into the shared UBO for the ocean
+    // shader (shore tint + shoreline foam). Filled once by setIslands.
+    int                                          m_islandCount = 0;
+    std::array<glm::vec4, SHARED_ISLAND_COUNT>   m_islandPosRadius{}; // xy = center, zw = half-axes
+    std::array<glm::vec4, SHARED_ISLAND_COUNT>   m_islandRotation{};  // x = cos, y = sin
     std::array<float, 4>     m_skyColor        = {0.08f, 0.08f, 0.12f, 1.0f};
 
     VkImage                      m_depthImage           = VK_NULL_HANDLE;
