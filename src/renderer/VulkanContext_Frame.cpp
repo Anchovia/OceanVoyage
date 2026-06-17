@@ -47,27 +47,67 @@ void VulkanContext::buildDevUi(const FrameRenderData& frame) {
     if (!m_devFrameStarted) beginDevFrame();
 
     if (m_devUiVisible) {
-        ImGui::SetNextWindowSize(ImVec2(360.0f, 260.0f), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(360.0f, 420.0f), ImGuiCond_FirstUseEver);
         if (ImGui::Begin("OceanVoyage Dev", &m_devUiVisible)) {
             ImGui::TextUnformatted("F3 toggles this panel");
             ImGui::Separator();
+
+            // Frame rate (ImGui keeps a rolling average of the frame delta).
+            const float fps = ImGui::GetIO().Framerate;
+            ImGui::Text("FPS: %.0f  (%.2f ms/frame)", fps, fps > 0.0f ? 1000.0f / fps : 0.0f);
+            ImGui::Text("Resolution: %ux%u  VSync: %s",
+                m_swapchainExtent.width, m_swapchainExtent.height,
+                frame.vsyncEnabled ? "ON" : "OFF");
+            static const char* kAaNames[]   = {"OFF", "FXAA", "SMAA", "TAA"};
+            static const char* kReflNames[] = {"SKY", "SSR", "PLANAR", "FULL"};
+            const int aaIdx   = (frame.aaMode >= 0 && frame.aaMode < 4) ? frame.aaMode : 0;
+            const int reflIdx = (frame.reflectionMode >= 0 && frame.reflectionMode < 4)
+                              ? frame.reflectionMode : 0;
+            ImGui::Text("AA: %s  REFL: %s", kAaNames[aaIdx], kReflNames[reflIdx]);
+            ImGui::Separator();
+
             ImGui::Text("Time of day: %.3f", frame.timeOfDay);
             ImGui::Text("Ship: %.2f, %.2f, %.2f",
                 frame.shipPosition.x, frame.shipPosition.y, frame.shipPosition.z);
             ImGui::Text("Heading: %.1f deg  Thr: %.2f  Rud: %.2f",
                 frame.shipHeading * 57.2957795f, frame.shipThrottle, frame.shipRudder);
+            ImGui::Text("Speed: %.2f m/s  Wind: %.1f m/s from %.0f deg",
+                glm::length(frame.shipVelocity), frame.windSpeed,
+                std::fmod(std::atan2(-frame.windDir.x, -frame.windDir.y)
+                    * 57.2957795f + 360.0f, 360.0f));
             ImGui::SliderFloat("Move speed", &m_devMoveSpeedMultiplier, 1.0f, 8.0f, "%.1fx");
             ImGui::Separator();
+
+            // Time-of-day jump: slider + SET, or one-click presets. main.cpp
+            // consumes the request and rebases the game clock within the
+            // current day (0 = midnight, 0.5 = noon).
+            ImGui::SliderFloat("Time", &m_devTimeSlider, 0.0f, 1.0f, "%.2f");
+            ImGui::SameLine();
+            if (ImGui::Button("SET"))   m_devTimeJumpRequest = m_devTimeSlider;
+            if (ImGui::Button("DAWN"))  m_devTimeJumpRequest = 0.27f;
+            ImGui::SameLine();
+            if (ImGui::Button("NOON"))  m_devTimeJumpRequest = 0.50f;
+            ImGui::SameLine();
+            if (ImGui::Button("DUSK"))  m_devTimeJumpRequest = 0.75f;
+            ImGui::SameLine();
+            if (ImGui::Button("NIGHT")) m_devTimeJumpRequest = 0.02f;
+            // Jump the ship next to the port picked with the T key.
+            if (ImGui::Button("Teleport to DST")) m_devTeleportRequest = true;
+            ImGui::Separator();
+
             if (!m_devTimingSupported) {
                 ImGui::TextUnformatted("GPU timing: unavailable");
             } else if (!m_devGpuTiming.valid) {
                 ImGui::TextUnformatted("GPU timing: waiting for first frame");
             } else {
                 ImGui::Text("GPU total:  %.3f ms", m_devGpuTiming.totalMs);
-                ImGui::Text("  shadow:   %.3f ms", m_devGpuTiming.shadowMs);
-                ImGui::Text("  scene:    %.3f ms", m_devGpuTiming.sceneMs);
-                ImGui::Text("  post:     %.3f ms", m_devGpuTiming.postMs);
-                ImGui::Text("  imgui:    %.3f ms", m_devGpuTiming.imguiMs);
+                ImGui::Text("  ocean sim: %.3f ms", m_devGpuTiming.oceanMs);
+                ImGui::Text("  shadow:    %.3f ms", m_devGpuTiming.shadowMs);
+                ImGui::Text("  planar:    %.3f ms", m_devGpuTiming.planarMs);
+                ImGui::Text("  opaque:    %.3f ms", m_devGpuTiming.opaqueMs);
+                ImGui::Text("  water:     %.3f ms", m_devGpuTiming.waterMs);
+                ImGui::Text("  post/AA:   %.3f ms", m_devGpuTiming.postMs);
+                ImGui::Text("  ui:        %.3f ms", m_devGpuTiming.uiMs);
             }
         }
         ImGui::End();
@@ -94,11 +134,14 @@ void VulkanContext::readDevGpuTimings(uint32_t frameIndex) {
             (double)m_devTimestampPeriod / 1000000.0);
     };
     m_devGpuTiming.valid    = true;
-    m_devGpuTiming.totalMs  = ms(0, 4);
-    m_devGpuTiming.shadowMs = ms(0, 1);
-    m_devGpuTiming.sceneMs  = ms(1, 2);
-    m_devGpuTiming.postMs   = ms(2, 3);
-    m_devGpuTiming.imguiMs  = ms(3, 4);
+    m_devGpuTiming.totalMs  = ms(0, 7);
+    m_devGpuTiming.oceanMs  = ms(0, 1);
+    m_devGpuTiming.shadowMs = ms(1, 2);
+    m_devGpuTiming.planarMs = ms(2, 3);
+    m_devGpuTiming.opaqueMs = ms(3, 4);
+    m_devGpuTiming.waterMs  = ms(4, 5);
+    m_devGpuTiming.postMs   = ms(5, 6);
+    m_devGpuTiming.uiMs     = ms(6, 7);
     m_devQueriesWritten[frameIndex] = false;
 }
 
@@ -353,6 +396,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     // the render passes. Runs on the graphics queue; barriers order it ahead of sampling.
     if (worldVisible)
         recordOceanFFT(cmd);
+#ifdef PASTEL_DEV_BUILD
+    writeDevTimestamp(cmd, 1);
+#endif
 
     // Shadow pass — render the scene depth into each cascade layer from the sun's view.
     for (uint32_t cascade = 0; cascade < CSM_CASCADES; cascade++) {
@@ -391,7 +437,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdEndRenderPass(cmd);
     }
 #ifdef PASTEL_DEV_BUILD
-    writeDevTimestamp(cmd, 1);
+    writeDevTimestamp(cmd, 2);
 #endif
 
     // Planar reflection pass — render the scene once from a camera mirrored across the
@@ -441,6 +487,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
 
         vkCmdEndRenderPass(cmd);
     }
+#ifdef PASTEL_DEV_BUILD
+    writeDevTimestamp(cmd, 3);
+#endif
 
     VkClearValue clearValues[2];
     clearValues[0].color        = {{m_skyColor[0], m_skyColor[1], m_skyColor[2], 1.0f}};
@@ -490,6 +539,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
     vkCmdEndRenderPass(cmd); // end pre-water opaque pass
     copySceneColorForWater(cmd);
     copySceneDepthForWater(cmd);
+#ifdef PASTEL_DEV_BUILD
+    writeDevTimestamp(cmd, 4);
+#endif
 
     VkRenderPassBeginInfo waterRp = rp;
     waterRp.renderPass      = m_sceneLoadRenderPass;
@@ -557,7 +609,7 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdEndRenderPass(cmd);
     }
 #ifdef PASTEL_DEV_BUILD
-    writeDevTimestamp(cmd, 2);
+    writeDevTimestamp(cmd, 5);
 #endif
 
     // TAA resolve (aaMode 3) — blend the HDR scene against the reprojected history
@@ -718,6 +770,9 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
         vkCmdPushConstants(cmd, postLayout, VK_SHADER_STAGE_FRAGMENT_BIT,
             0, sizeof(PostPushConstants), &postPc);
         vkCmdDraw(cmd, 3, 1, 0, 0); // fullscreen triangle
+#ifdef PASTEL_DEV_BUILD
+        writeDevTimestamp(cmd, 6);
+#endif
 
         // UI overlay draws after post AA so pixel text remains crisp.
         if (m_uiVertexCount > 0) {
@@ -728,13 +783,12 @@ void VulkanContext::recordCommandBuffer(VkCommandBuffer cmd, uint32_t imageIndex
             vkCmdDraw(cmd, m_uiVertexCount, 1, 0, 0);
         }
 #ifdef PASTEL_DEV_BUILD
-        writeDevTimestamp(cmd, 3);
         if (ImGui::GetCurrentContext()) {
             ImDrawData* drawData = ImGui::GetDrawData();
             if (drawData && drawData->CmdListsCount > 0)
                 ImGui_ImplVulkan_RenderDrawData(drawData, cmd);
         }
-        writeDevTimestamp(cmd, 4);
+        writeDevTimestamp(cmd, 7);
 #endif
 
         vkCmdEndRenderPass(cmd);

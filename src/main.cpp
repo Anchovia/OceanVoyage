@@ -318,6 +318,27 @@ int main() {
                 ctx.toggleDevUi();
             applyDevUiInputCapture(input, ctx);
             input.moveSpeedMultiplier = ctx.devMoveSpeedMultiplier();
+
+            // Dev panel one-shot requests: time-of-day jump and teleport to
+            // the route destination picked with the T key.
+            float devTimeOfDay = 0.0f;
+            if (ctx.devConsumeTimeJump(devTimeOfDay) && worldSessionStarted) {
+                const float dayBase =
+                    std::floor(gameState.time() / DAY_DURATION) * DAY_DURATION;
+                gameState.setTime(dayBase + devTimeOfDay * DAY_DURATION);
+            }
+            if (ctx.devConsumeTeleportToRoute() && worldSessionStarted) {
+                if (const Port* dst = gameState.routeTarget()) {
+                    ShipState s = gameState.ship();
+                    s.position = dst->position + glm::vec2(0.0f, -(dst->radius + 20.0f));
+                    s.velocity = glm::vec2(0.0f);
+                    s.yawRate  = 0.0f;
+                    s.throttle = 0.0f;
+                    s.rudder   = 0.0f;
+                    gameState.setShipState(s);
+                    camera.snapToTarget(gameState.shipWorldPosition(), orbitAngle);
+                }
+            }
 #endif
 
             if (app.consumeMarketEscape(input.quit, gameState.marketOpen()))

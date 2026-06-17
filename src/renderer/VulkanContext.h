@@ -180,6 +180,22 @@ public:
     bool devWantsKeyboard() const;
     void toggleDevUi();
     float devMoveSpeedMultiplier() const { return m_devMoveSpeedMultiplier; }
+
+    // One-shot dev panel requests, consumed by main once per frame.
+    // Returns true and fills the requested time of day (0..1) if SET/preset
+    // buttons were pressed since the last call.
+    bool devConsumeTimeJump(float& outTimeOfDay) {
+        if (m_devTimeJumpRequest < 0.0f) return false;
+        outTimeOfDay = m_devTimeJumpRequest;
+        m_devTimeJumpRequest = -1.0f;
+        return true;
+    }
+    // True once if "teleport to route destination" was pressed.
+    bool devConsumeTeleportToRoute() {
+        const bool requested = m_devTeleportRequest;
+        m_devTeleportRequest = false;
+        return requested;
+    }
 #endif
 
 private:
@@ -653,15 +669,19 @@ private:
     uint32_t                 m_currentFrame     = 0;
 
 #ifdef PASTEL_DEV_BUILD
-    static constexpr uint32_t DEV_TIMESTAMP_COUNT = 5; // start, shadow, scene, post, imgui/end
+    // start, ocean compute, shadow, planar, opaque+copy, water+beam, post/AA, end(UI+imgui)
+    static constexpr uint32_t DEV_TIMESTAMP_COUNT = 8;
 
     struct DevGpuTiming {
         bool  valid    = false;
         float totalMs  = 0.0f;
-        float shadowMs = 0.0f;
-        float sceneMs  = 0.0f;
-        float postMs   = 0.0f;
-        float imguiMs  = 0.0f;
+        float oceanMs  = 0.0f; // FFT spectrum/IFFT/assemble + wake + buoyancy compute
+        float shadowMs = 0.0f; // CSM cascades
+        float planarMs = 0.0f; // planar reflection pass
+        float opaqueMs = 0.0f; // sky + ports/islands + pre-water ship + scene copies
+        float waterMs  = 0.0f; // ocean surface + final ship + lighthouse beam
+        float postMs   = 0.0f; // TAA/SMAA resolve + tone map
+        float uiMs     = 0.0f; // HUD verts + ImGui
     };
 
     VkDescriptorPool m_devDescriptorPool = VK_NULL_HANDLE;
@@ -671,6 +691,9 @@ private:
     bool             m_devUiVisible       = true;
     bool             m_devFrameStarted    = false;
     float            m_devMoveSpeedMultiplier = 1.0f;
+    float            m_devTimeSlider      = 0.5f;  // panel slider value (time of day)
+    float            m_devTimeJumpRequest = -1.0f; // >= 0 = requested time of day
+    bool             m_devTeleportRequest = false; // teleport-to-route pressed
     DevGpuTiming     m_devGpuTiming;
     std::array<bool, MAX_FRAMES_IN_FLIGHT> m_devQueriesWritten{};
 #endif
